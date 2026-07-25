@@ -9,7 +9,7 @@ $failures = New-Object Collections.Generic.List[string]
 
 $tokens = $null
 $parseErrors = $null
-[void][Management.Automation.Language.Parser]::ParseFile($tool, [ref]$tokens, [ref]$parseErrors)
+$toolAst = [Management.Automation.Language.Parser]::ParseFile($tool, [ref]$tokens, [ref]$parseErrors)
 if (@($parseErrors).Count -gt 0) {
     foreach ($errorItem in $parseErrors) {
         $failures.Add("Parse: $($errorItem.Message)")
@@ -69,9 +69,64 @@ if ($sourceText -notmatch 'Read-IntegrityProtectedJson -Path \$matchingTaskManif
     $failures.Add('Check does not validate recovery-manifest integrity before offering cleanup.')
 }
 
+foreach ($functionName in @('Write-IntegrityProtectedJson', 'Read-IntegrityProtectedJson')) {
+    $functionAst = @(
+        $toolAst.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq $functionName
+        }, $true)
+    ) | Select-Object -First 1
+    if ($null -eq $functionAst) {
+        $failures.Add("Required function '$functionName' was not found for the manifest integrity test.")
+    }
+    else {
+        Invoke-Expression $functionAst.Extent.Text
+    }
+}
+
+$integrityTestRoot = Join-Path ([IO.Path]::GetTempPath()) ('Lacksan-ZBookPerformance-IntegrityTest-' + [guid]::NewGuid().ToString('N'))
+$integrityTestPath = Join-Path $integrityTestRoot 'restart-state.json'
+try {
+    New-Item -ItemType Directory -Path $integrityTestRoot -ErrorAction Stop | Out-Null
+    $testState = [ordered]@{
+        SchemaVersion = 1
+        StateId = 'integrity-test-state'
+        TaskName = 'Lacksan-ZBookPerformance-Resume'
+    }
+    Write-IntegrityProtectedJson -Value $testState -Path $integrityTestPath
+    $roundTrip = Read-IntegrityProtectedJson -Path $integrityTestPath
+    if (
+        [string]$roundTrip.StateId -cne [string]$testState.StateId -or
+        [string]$roundTrip.TaskName -cne [string]$testState.TaskName
+    ) {
+        $failures.Add('Recovery-manifest integrity round trip changed the state identity.')
+    }
+
+    [IO.File]::AppendAllText($integrityTestPath, [Environment]::NewLine)
+    $corruptionRejected = $false
+    try {
+        [void](Read-IntegrityProtectedJson -Path $integrityTestPath)
+    }
+    catch {
+        $corruptionRejected = $true
+    }
+    if (-not $corruptionRejected) {
+        $failures.Add('Recovery-manifest checksum validation accepted a modified JSON file.')
+    }
+}
+catch {
+    $failures.Add("Recovery-manifest integrity test failed: $($_.Exception.Message)")
+}
+finally {
+    Remove-Item -LiteralPath ($integrityTestPath + '.sha256') -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $integrityTestPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $integrityTestRoot -Force -ErrorAction SilentlyContinue
+}
+
 if ($failures.Count -gt 0) {
     $failures | ForEach-Object { Write-Error $_ }
     exit 1
 }
 
-Write-Host 'All static and read-only integration tests passed.'
+Write-Host 'All static and non-destructive integration tests passed.'
