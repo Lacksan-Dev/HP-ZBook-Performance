@@ -85,8 +85,9 @@ themselves as `PreProtocolScreening` with `FormalBaselineEligible` set to
 formal baseline and its medians by the
 [approved experiment protocol](../experiment-protocol.md). Aggregate and
 comparison commands reject inputs without both markers, so older unclassified
-files must not be relabeled as current screening evidence; run a new Benchmark
-when a comparable classified input is needed.
+files must not be relabeled as current screening evidence. Automatic Compare
+selection skips those incompatible files and uses the newest eligible
+untuned/tuned pair; run a new Benchmark when no classified input exists.
 
 ## One-time automatic sign-in
 

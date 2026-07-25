@@ -136,7 +136,7 @@ if (([regex]::Matches($sourceText, 'Test-IsPreProtocolScreeningRecord -Record'))
     $failures.Add('Derived benchmark records do not consistently validate input evidence provenance.')
 }
 
-foreach ($functionName in @('Write-IntegrityProtectedJson', 'Read-IntegrityProtectedJson', 'Get-Median', 'Test-IsPreProtocolScreeningRecord', 'Merge-BenchmarkBlocks')) {
+foreach ($functionName in @('Write-IntegrityProtectedJson', 'Read-IntegrityProtectedJson', 'Get-Median', 'Test-IsPreProtocolScreeningRecord', 'Merge-BenchmarkBlocks', 'Find-LatestScreeningBenchmarkFile')) {
     $functionAst = @(
         $toolAst.FindAll({
             param($node)
@@ -261,6 +261,20 @@ try {
     }
     if (-not $unclassifiedRejected) {
         $failures.Add('Benchmark aggregation accepted an input without explicit screening provenance.')
+    }
+
+    $validSelectionPath = Join-Path $aggregateTestRoot 'valid-screening-before.json'
+    $invalidSelectionPath = Join-Path $aggregateTestRoot 'newer-unclassified-before.json'
+    $validSelectionRecord = (New-SyntheticBenchmarkBlock -Id 'valid-screening-before' -ConfigurationState 'Untuned' -PendingSettingCount 3).Record
+    $invalidSelectionRecord = (New-SyntheticBenchmarkBlock -Id 'newer-unclassified-before' -ConfigurationState 'Untuned' -PendingSettingCount 3).Record
+    $invalidSelectionRecord.PSObject.Properties.Remove('FormalBaselineEligible')
+    [IO.File]::WriteAllText($validSelectionPath, ($validSelectionRecord | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText($invalidSelectionPath, ($invalidSelectionRecord | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
+    (Get-Item -LiteralPath $validSelectionPath).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(1)
+    (Get-Item -LiteralPath $invalidSelectionPath).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(2)
+    $selectedBeforeFile = Find-LatestScreeningBenchmarkFile -Root $aggregateTestRoot -ConfigurationState Untuned
+    if ($null -eq $selectedBeforeFile -or $selectedBeforeFile.FullName -cne $validSelectionPath) {
+        $failures.Add('Automatic comparison selection did not skip the newer unclassified benchmark file.')
     }
 
     $inconsistentBlocks = @(

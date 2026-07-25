@@ -1711,6 +1711,28 @@ function Merge-BenchmarkBlocks {
     return [pscustomobject]@{ Record = [pscustomobject]$aggregate; Path = $path }
 }
 
+function Find-LatestScreeningBenchmarkFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][ValidateSet('Untuned', 'Tuned')][string]$ConfigurationState
+    )
+    $eligibleFiles = @(
+        Get-ChildItem -LiteralPath $Root -Filter '*.json' -File |
+            Sort-Object LastWriteTime -Descending |
+            Where-Object {
+                try {
+                    $candidate = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+                    $candidate.ConfigurationState -ceq $ConfigurationState -and
+                        (Test-IsPreProtocolScreeningRecord -Record $candidate)
+                }
+                catch {
+                    $false
+                }
+            }
+    )
+    return $eligibleFiles | Select-Object -First 1
+}
+
 function Show-BenchmarkComparison {
     param(
         [string]$BeforePath,
@@ -1719,21 +1741,11 @@ function Show-BenchmarkComparison {
 
     $root = Get-BenchmarkRoot
     if ([string]::IsNullOrWhiteSpace($BeforePath)) {
-        $beforeFile = Get-ChildItem -LiteralPath $root -Filter '*.json' -File |
-            Sort-Object LastWriteTime -Descending |
-            Where-Object {
-                try { (Get-Content $_.FullName -Raw | ConvertFrom-Json).ConfigurationState -eq 'Untuned' } catch { $false }
-            } |
-            Select-Object -First 1
+        $beforeFile = Find-LatestScreeningBenchmarkFile -Root $root -ConfigurationState Untuned
         if ($beforeFile) { $BeforePath = $beforeFile.FullName }
     }
     if ([string]::IsNullOrWhiteSpace($AfterPath)) {
-        $afterFile = Get-ChildItem -LiteralPath $root -Filter '*.json' -File |
-            Sort-Object LastWriteTime -Descending |
-            Where-Object {
-                try { (Get-Content $_.FullName -Raw | ConvertFrom-Json).ConfigurationState -eq 'Tuned' } catch { $false }
-            } |
-            Select-Object -First 1
+        $afterFile = Find-LatestScreeningBenchmarkFile -Root $root -ConfigurationState Tuned
         if ($afterFile) { $AfterPath = $afterFile.FullName }
     }
     if ([string]::IsNullOrWhiteSpace($BeforePath) -or [string]::IsNullOrWhiteSpace($AfterPath)) {
