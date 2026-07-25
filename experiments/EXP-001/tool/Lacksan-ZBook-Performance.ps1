@@ -879,18 +879,46 @@ function Get-RestartSafetyState {
                 Where-Object { Test-Path -LiteralPath $_ }
         )
     }
-    $matchingTaskStatePresent = (
-        $taskPresent -and
-        -not [string]::IsNullOrWhiteSpace($taskStateId) -and
-        (Test-Path -LiteralPath (Join-Path (Join-Path $stateRoot $taskStateId) 'restart-state.json'))
-    )
+    $matchingTaskStatePresent = $false
+    $matchingTaskStateValid = $false
+    $matchingTaskStateStatus = 'NotApplicable'
+    if ($taskPresent) {
+        if ([string]::IsNullOrWhiteSpace($taskStateId)) {
+            $matchingTaskStateStatus = 'TaskStateIdMissing'
+        }
+        else {
+            $matchingTaskManifestPath = Join-Path (Join-Path $stateRoot $taskStateId) 'restart-state.json'
+            $matchingTaskStatePresent = Test-Path -LiteralPath $matchingTaskManifestPath
+            if (-not $matchingTaskStatePresent) {
+                $matchingTaskStateStatus = 'ManifestMissing'
+            }
+            else {
+                try {
+                    $matchingTaskState = Read-IntegrityProtectedJson -Path $matchingTaskManifestPath
+                    if (
+                        [string]$matchingTaskState.StateId -cne $taskStateId -or
+                        [string]$matchingTaskState.TaskName -cne $taskName
+                    ) {
+                        $matchingTaskStateStatus = 'IdentityMismatch'
+                    }
+                    else {
+                        $matchingTaskStateValid = $true
+                        $matchingTaskStateStatus = 'Valid'
+                    }
+                }
+                catch {
+                    $matchingTaskStateStatus = 'IntegrityInvalid'
+                }
+            }
+        }
+    }
 
     $registryPrepared = (
         $autoAdmin.ValueExists -and
         [string]$autoAdmin.Value -eq '1'
     )
     $recoveryNeeded = $registryPrepared -or $taskPresent
-    $toolRecoveryAvailable = $taskPresent -and $matchingTaskStatePresent
+    $toolRecoveryAvailable = $taskPresent -and $matchingTaskStateValid
 
     return [pscustomobject]@{
         RecoveryNeeded = $recoveryNeeded
@@ -898,6 +926,8 @@ function Get-RestartSafetyState {
         ResumeTaskPresent = $taskPresent
         ResumeTaskVisibility = $taskVisibility
         MatchingTaskStatePresent = $matchingTaskStatePresent
+        MatchingTaskStateValid = $matchingTaskStateValid
+        MatchingTaskStateStatus = $matchingTaskStateStatus
         ToolRecoveryAvailable = $toolRecoveryAvailable
         PreservedStateRecordCount = $stateRecords.Count
     }
@@ -925,6 +955,8 @@ function Show-Audit {
         ResumeTaskPresent = $restartSafety.ResumeTaskPresent
         ResumeTaskVisibility = $restartSafety.ResumeTaskVisibility
         MatchingTaskStatePresent = $restartSafety.MatchingTaskStatePresent
+        MatchingTaskStateValid = $restartSafety.MatchingTaskStateValid
+        MatchingTaskStateStatus = $restartSafety.MatchingTaskStateStatus
         ToolRecoveryAvailable = $restartSafety.ToolRecoveryAvailable
         PreservedStateRecordCount = $restartSafety.PreservedStateRecordCount
     }
