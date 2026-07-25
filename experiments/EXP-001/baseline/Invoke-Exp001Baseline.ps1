@@ -90,7 +90,7 @@ function Get-Exp001Inventory {
     }
     $processes = @('OUTLOOK','msedge','OneDrive','ms-teams','Teams') | ForEach-Object {
         $items = @(Get-Process -Name $_ -ErrorAction SilentlyContinue)
-        [ordered]@{ Name=$_; Count=$items.Count; Ids=@($items.Id) }
+        [ordered]@{ Name=$_; Count=$items.Count; Ids=@($items | Select-Object -ExpandProperty Id) }
     }
 
     [ordered]@{
