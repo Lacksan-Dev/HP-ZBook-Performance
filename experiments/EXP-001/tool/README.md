@@ -76,9 +76,11 @@ ProgramData log folder cannot be written).
 Quick benchmark JSON and comparison files are stored under the adjacent
 `Benchmarks` folder. `FullTest` uses both A-B-B-A and B-A-A-B orderings, waits
 for low background CPU/disk activity, retains all successful and failed raw
-runs, reports medians, and leaves the selected Tune state active. The current
-screening metrics are process startup and a fixed CPU burst; they are useful for
-iteration but do not replace the nine customer-workflow protocol.
+runs, reports medians, and leaves the selected Tune state active. Aggregation
+derives its pending-setting count from the raw blocks and stops if block state
+or counts disagree. The current screening metrics are process startup and a
+fixed CPU burst; they are useful for iteration but do not replace the nine
+customer-workflow protocol.
 
 ## One-time automatic sign-in
 

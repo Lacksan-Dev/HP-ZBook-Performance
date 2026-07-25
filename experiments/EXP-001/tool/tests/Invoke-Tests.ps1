@@ -98,8 +98,17 @@ if ($sourceText -match '17 of 17 checks pass') {
 if ($sourceText -notmatch "Write-LabEvent -Event 'ConfigurationState'") {
     $failures.Add('Check does not structured-log its calculated configuration state.')
 }
+if ($sourceText -match 'PendingSettingCount = if \(\$Label -eq ''Before''\)') {
+    $failures.Add('Benchmark aggregation still hard-codes the untuned pending-setting count.')
+}
+if ($sourceText -notmatch 'pending-setting counts are inconsistent') {
+    $failures.Add('Benchmark aggregation does not reject inconsistent configuration counts.')
+}
+if ($sourceText -notmatch 'do not report configuration state') {
+    $failures.Add('Benchmark aggregation does not reject mislabeled configuration blocks.')
+}
 
-foreach ($functionName in @('Write-IntegrityProtectedJson', 'Read-IntegrityProtectedJson')) {
+foreach ($functionName in @('Write-IntegrityProtectedJson', 'Read-IntegrityProtectedJson', 'Get-Median', 'Merge-BenchmarkBlocks')) {
     $functionAst = @(
         $toolAst.FindAll({
             param($node)
@@ -152,6 +161,78 @@ finally {
     Remove-Item -LiteralPath ($integrityTestPath + '.sha256') -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $integrityTestPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $integrityTestRoot -Force -ErrorAction SilentlyContinue
+}
+
+$aggregateTestRoot = Join-Path ([IO.Path]::GetTempPath()) ('Lacksan-ZBookPerformance-AggregateTest-' + [guid]::NewGuid().ToString('N'))
+function Get-BenchmarkRoot {
+    return $aggregateTestRoot
+}
+function New-SyntheticBenchmarkBlock {
+    param(
+        [Parameter(Mandatory = $true)][string]$Id,
+        [Parameter(Mandatory = $true)][string]$ConfigurationState,
+        [Parameter(Mandatory = $true)][int]$PendingSettingCount
+    )
+    return [pscustomobject]@{
+        Record = [pscustomobject]@{
+            BenchmarkId = $Id
+            ConfigurationState = $ConfigurationState
+            PendingSettingCount = $PendingSettingCount
+            Environment = [pscustomobject]@{ TestFixture = $true }
+            Metrics = @(
+                [pscustomobject]@{
+                    Id = 'Synthetic'
+                    Name = 'Synthetic metric'
+                    Runs = @(
+                        [pscustomobject]@{
+                            Run = 1
+                            Status = 'Pass'
+                            Milliseconds = 1.0
+                            Error = $null
+                        }
+                    )
+                }
+            )
+        }
+    }
+}
+try {
+    New-Item -ItemType Directory -Path $aggregateTestRoot -ErrorAction Stop | Out-Null
+    $script:ToolVersion = 'test'
+    $script:RunId = [guid]::NewGuid().ToString('N')
+    $consistentBlocks = @(
+        New-SyntheticBenchmarkBlock -Id 'before-1' -ConfigurationState 'Untuned' -PendingSettingCount 3
+        New-SyntheticBenchmarkBlock -Id 'before-2' -ConfigurationState 'Untuned' -PendingSettingCount 3
+    )
+    $aggregateResult = Merge-BenchmarkBlocks -Blocks $consistentBlocks -Label Before
+    if ([int]$aggregateResult.Record.PendingSettingCount -ne 3) {
+        $failures.Add('Benchmark aggregation did not preserve the observed pending-setting count.')
+    }
+
+    $inconsistentBlocks = @(
+        New-SyntheticBenchmarkBlock -Id 'before-3' -ConfigurationState 'Untuned' -PendingSettingCount 3
+        New-SyntheticBenchmarkBlock -Id 'before-4' -ConfigurationState 'Untuned' -PendingSettingCount 2
+    )
+    $inconsistentRejected = $false
+    try {
+        [void](Merge-BenchmarkBlocks -Blocks $inconsistentBlocks -Label Before)
+    }
+    catch {
+        $inconsistentRejected = $_.Exception.Message -match 'pending-setting counts are inconsistent'
+    }
+    if (-not $inconsistentRejected) {
+        $failures.Add('Benchmark aggregation accepted inconsistent pending-setting counts.')
+    }
+}
+catch {
+    $failures.Add("Benchmark aggregate test failed: $($_.Exception.Message)")
+}
+finally {
+    if (Test-Path -LiteralPath $aggregateTestRoot) {
+        Get-ChildItem -LiteralPath $aggregateTestRoot -File -ErrorAction SilentlyContinue |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath $aggregateTestRoot -Force -ErrorAction SilentlyContinue
+    }
 }
 
 if ($failures.Count -gt 0) {

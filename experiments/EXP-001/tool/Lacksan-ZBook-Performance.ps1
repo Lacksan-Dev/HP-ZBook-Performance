@@ -1612,6 +1612,27 @@ function Merge-BenchmarkBlocks {
     if ($Blocks.Count -lt 2) {
         throw 'At least two benchmark blocks are required for an aggregate.'
     }
+    $expectedConfigurationState = if ($Label -eq 'Before') { 'Untuned' } else { 'Tuned' }
+    $blockRecords = @($Blocks | ForEach-Object { $_.Record })
+    $stateMismatches = @($blockRecords | Where-Object { $_.ConfigurationState -cne $expectedConfigurationState })
+    if ($stateMismatches.Count -gt 0) {
+        throw "Cannot aggregate $Label blocks because $($stateMismatches.Count) block(s) do not report configuration state '$expectedConfigurationState'."
+    }
+    $pendingCounts = @(
+        $blockRecords |
+            ForEach-Object { [int]$_.PendingSettingCount } |
+            Sort-Object -Unique
+    )
+    if ($pendingCounts.Count -ne 1) {
+        throw "Cannot aggregate $Label blocks because their pending-setting counts are inconsistent."
+    }
+    $aggregatePendingCount = [int]$pendingCounts[0]
+    if (
+        ($expectedConfigurationState -eq 'Tuned' -and $aggregatePendingCount -ne 0) -or
+        ($expectedConfigurationState -eq 'Untuned' -and $aggregatePendingCount -lt 1)
+    ) {
+        throw "Cannot aggregate $Label blocks because pending-setting count $aggregatePendingCount conflicts with configuration state '$expectedConfigurationState'."
+    }
     $first = $Blocks[0].Record
     $metrics = foreach ($metric in $first.Metrics) {
         $combined = @()
@@ -1646,8 +1667,8 @@ function Merge-BenchmarkBlocks {
         BenchmarkId = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffZ') + '-aggregate-' + $script:RunId.Substring(0, 8)
         CapturedUtc = (Get-Date).ToUniversalTime().ToString('o')
         Label = $Label
-        ConfigurationState = if ($Label -eq 'Before') { 'Untuned' } else { 'Tuned' }
-        PendingSettingCount = if ($Label -eq 'Before') { 1 } else { 0 }
+        ConfigurationState = $expectedConfigurationState
+        PendingSettingCount = $aggregatePendingCount
         RunCountRequested = @($metrics | Select-Object -First 1).Runs.Count
         Environment = $first.Environment
         SourceBenchmarkIds = @($Blocks | ForEach-Object { $_.Record.BenchmarkId })
