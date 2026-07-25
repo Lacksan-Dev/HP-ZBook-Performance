@@ -93,6 +93,13 @@ function Get-Exp001Inventory {
         [ordered]@{ Name=$_; Count=$items.Count; Ids=@($items | Select-Object -ExpandProperty Id) }
     }
 
+    $secureBoot = $null
+    $defender = $null
+    $bitLocker = $null
+    try { $secureBoot = Confirm-SecureBootUEFI } catch { }
+    try { $defender = Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled,AntivirusSignatureVersion } catch { }
+    try { $bitLocker = @(Get-BitLockerVolume | Select-Object MountPoint,VolumeStatus,ProtectionStatus,EncryptionMethod) } catch { }
+
     [ordered]@{
         CapturedUtc=[DateTime]::UtcNow.ToString('o')
         ComputerName=$env:COMPUTERNAME
@@ -108,9 +115,9 @@ function Get-Exp001Inventory {
         Processes=@($processes)
         PowerScheme=((& powercfg /getactivescheme 2>&1 | Out-String).Trim())
         SupportedSleepStates=((& powercfg /a 2>&1 | Out-String).Trim())
-        SecureBoot=(try { Confirm-SecureBootUEFI } catch { $null })
-        Defender=(try { Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled,AntivirusSignatureVersion } catch { $null })
-        BitLocker=(try { Get-BitLockerVolume | Select-Object MountPoint,VolumeStatus,ProtectionStatus,EncryptionMethod } catch { $null })
+        SecureBoot=$secureBoot
+        Defender=$defender
+        BitLocker=$bitLocker
     }
 }
 
