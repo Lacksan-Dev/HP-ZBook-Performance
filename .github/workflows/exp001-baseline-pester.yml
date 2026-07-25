@@ -1,0 +1,41 @@
+name: EXP-001 Baseline Pester
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/EXP-001/baseline/**'
+      - '.github/workflows/exp001-baseline-pester.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pester:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force
+      - name: Run EXP-001 tests
+        shell: pwsh
+        run: |
+          $config = New-PesterConfiguration
+          $config.Run.Path = 'experiments/EXP-001/baseline/tests'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = 'experiments/EXP-001/baseline/TestResults.xml'
+          $config.TestResult.OutputFormat = 'NUnitXml'
+          Invoke-Pester -Configuration $config
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exp001-pester-results
+          path: experiments/EXP-001/baseline/TestResults.xml
+          if-no-files-found: warn
