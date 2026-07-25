@@ -74,6 +74,12 @@ if ($sourceText -notmatch 'if \(-not \$safety\.ToolRecoveryAvailable\)') {
 if ($sourceText -notmatch 'Get-RestartStateManifestPath -StateId \$safety\.TaskStateId') {
     $failures.Add('StopAutoLogin does not use the state ID from the active resume task.')
 }
+if ($sourceText -notmatch "Write-LabEvent -Event 'AutoLoginCleanupVerification' -Status 'Failure'") {
+    $failures.Add('Auto-login cleanup does not preserve a structured verification failure.')
+}
+if ($sourceText -notmatch "Write-LabEvent -Event 'AutoLoginCleanupVerification' -Status 'Pass'") {
+    $failures.Add('Auto-login cleanup does not record successful post-restore verification.')
+}
 
 foreach ($functionName in @('Write-IntegrityProtectedJson', 'Read-IntegrityProtectedJson')) {
     $functionAst = @(

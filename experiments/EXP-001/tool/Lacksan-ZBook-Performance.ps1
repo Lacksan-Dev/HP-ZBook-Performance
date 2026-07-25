@@ -2012,6 +2012,55 @@ function Restore-AutoLoginState {
         Restore-RegistryState -Entry $entry
     }
     Unregister-ScheduledTask -TaskName $State.TaskName -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
+
+    $verificationFailures = New-Object Collections.Generic.List[string]
+    try {
+        if ([LacksanAutoLogonNative]::HasDefaultPassword()) {
+            $verificationFailures.Add('LsaSecretStillPresent')
+        }
+    }
+    catch {
+        $verificationFailures.Add('LsaSecretVerificationUnavailable')
+    }
+    foreach ($entry in $State.Registry) {
+        try {
+            $current = Get-RegistryState -Path $entry.Path -Name $entry.Name
+            $matchesOriginal = $current.ValueExists -eq $entry.Original.ValueExists
+            if ($matchesOriginal -and $entry.Original.ValueExists) {
+                $matchesOriginal = (
+                    [string]$current.Type -ceq [string]$entry.Original.Type -and
+                    (Test-EquivalentValue -Actual $current.Value -Expected $entry.Original.Value -Type $entry.Original.Type)
+                )
+            }
+            if (-not $matchesOriginal) {
+                $verificationFailures.Add($entry.Id)
+            }
+        }
+        catch {
+            $verificationFailures.Add("$($entry.Id).VerificationUnavailable")
+        }
+    }
+    try {
+        if (Get-ScheduledTask -TaskName $State.TaskName -TaskPath '\' -ErrorAction SilentlyContinue) {
+            $verificationFailures.Add('ResumeTaskStillPresent')
+        }
+    }
+    catch {
+        $verificationFailures.Add('ResumeTaskVerificationUnavailable')
+    }
+    if ($verificationFailures.Count -gt 0) {
+        Write-LabEvent -Event 'AutoLoginCleanupVerification' -Status 'Failure' -Data @{
+            StateId = $State.StateId
+            Failures = @($verificationFailures)
+        }
+        throw "One-time auto-login cleanup could not be verified: $(@($verificationFailures) -join ', ')."
+    }
+    Write-LabEvent -Event 'AutoLoginCleanupVerification' -Status 'Pass' -Data @{
+        StateId = $State.StateId
+        RegistryValueCount = @($State.Registry).Count
+        LsaSecretPresent = $false
+        ResumeTaskPresent = $false
+    }
     Write-LabEvent -Event 'OneTimeAutoLoginRemoved' -Status 'Pass' -Data @{ StateId = $State.StateId; TaskName = $State.TaskName }
 }
 

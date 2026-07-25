@@ -18,7 +18,9 @@ resume task's exact state ID has an integrity-valid, identity-matched recovery
 record; externally configured auto-login and damaged recovery records are
 reported but never claimed or changed. `StopAutoLogin` enforces the same
 ownership check even when it is run directly, so an old record cannot be used
-to overwrite unrelated Windows auto-login configuration. Tune refuses
+to overwrite unrelated Windows auto-login configuration. Cleanup is only
+reported as successful after the LSA secret is absent, every captured Winlogon
+value matches its original state, and the resume task is gone. Tune refuses
 other hardware/build/BIOS
 combinations and genuinely managed devices by default. A generic Microsoft
 `MDMMaintenenceTask` without domain/Entra join, MDM URL, or enrollment-specific
