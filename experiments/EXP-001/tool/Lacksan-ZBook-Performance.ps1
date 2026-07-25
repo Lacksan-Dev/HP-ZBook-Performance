@@ -1610,6 +1610,24 @@ function Invoke-QuickBenchmark {
     return [pscustomobject]@{ Record = [pscustomobject]$record; Path = $path }
 }
 
+function Test-IsPreProtocolScreeningRecord {
+    param(
+        [Parameter(Mandatory = $true)][object]$Record
+    )
+    $propertyNames = @($Record.PSObject.Properties.Name)
+    if (
+        $propertyNames -notcontains 'EvidenceClass' -or
+        $propertyNames -notcontains 'FormalBaselineEligible'
+    ) {
+        return $false
+    }
+    return (
+        [string]$Record.EvidenceClass -ceq $script:ScreeningEvidenceClass -and
+        $Record.FormalBaselineEligible -is [bool] -and
+        $Record.FormalBaselineEligible -eq $script:FormalBaselineEligible
+    )
+}
+
 function Merge-BenchmarkBlocks {
     param(
         [Parameter(Mandatory = $true)][object[]]$Blocks,
@@ -1620,6 +1638,10 @@ function Merge-BenchmarkBlocks {
     }
     $expectedConfigurationState = if ($Label -eq 'Before') { 'Untuned' } else { 'Tuned' }
     $blockRecords = @($Blocks | ForEach-Object { $_.Record })
+    $provenanceMismatches = @($blockRecords | Where-Object { -not (Test-IsPreProtocolScreeningRecord -Record $_) })
+    if ($provenanceMismatches.Count -gt 0) {
+        throw "Cannot aggregate $Label blocks because $($provenanceMismatches.Count) block(s) lack explicit pre-protocol screening provenance."
+    }
     $stateMismatches = @($blockRecords | Where-Object { $_.ConfigurationState -cne $expectedConfigurationState })
     if ($stateMismatches.Count -gt 0) {
         throw "Cannot aggregate $Label blocks because $($stateMismatches.Count) block(s) do not report configuration state '$expectedConfigurationState'."
@@ -1720,6 +1742,12 @@ function Show-BenchmarkComparison {
 
     $before = Get-Content -LiteralPath $BeforePath -Raw | ConvertFrom-Json
     $after = Get-Content -LiteralPath $AfterPath -Raw | ConvertFrom-Json
+    if (
+        -not (Test-IsPreProtocolScreeningRecord -Record $before) -or
+        -not (Test-IsPreProtocolScreeningRecord -Record $after)
+    ) {
+        throw 'The selected files cannot be compared because both must carry explicit pre-protocol screening provenance.'
+    }
     $rows = foreach ($beforeMetric in $before.Metrics) {
         $afterMetric = @($after.Metrics | Where-Object { $_.Id -eq $beforeMetric.Id }) | Select-Object -First 1
         if (-not $afterMetric -or $null -eq $beforeMetric.Median -or $null -eq $afterMetric.Median) {

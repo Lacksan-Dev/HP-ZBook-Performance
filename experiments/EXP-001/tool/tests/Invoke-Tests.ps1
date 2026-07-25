@@ -132,8 +132,11 @@ if (([regex]::Matches($sourceText, 'EvidenceClass = \$script:ScreeningEvidenceCl
 if (([regex]::Matches($sourceText, 'FormalBaselineEligible = \$script:FormalBaselineEligible')).Count -lt 3) {
     $failures.Add('Raw, aggregate, and comparison records do not all carry formal-baseline eligibility.')
 }
+if (([regex]::Matches($sourceText, 'Test-IsPreProtocolScreeningRecord -Record')).Count -lt 2) {
+    $failures.Add('Derived benchmark records do not consistently validate input evidence provenance.')
+}
 
-foreach ($functionName in @('Write-IntegrityProtectedJson', 'Read-IntegrityProtectedJson', 'Get-Median', 'Merge-BenchmarkBlocks')) {
+foreach ($functionName in @('Write-IntegrityProtectedJson', 'Read-IntegrityProtectedJson', 'Get-Median', 'Test-IsPreProtocolScreeningRecord', 'Merge-BenchmarkBlocks')) {
     $functionAst = @(
         $toolAst.FindAll({
             param($node)
@@ -203,6 +206,8 @@ function New-SyntheticBenchmarkBlock {
             BenchmarkId = $Id
             ConfigurationState = $ConfigurationState
             PendingSettingCount = $PendingSettingCount
+            EvidenceClass = 'PreProtocolScreening'
+            FormalBaselineEligible = $false
             Environment = [pscustomobject]@{ TestFixture = $true }
             Metrics = @(
                 [pscustomobject]@{
@@ -240,6 +245,22 @@ try {
         $aggregateResult.Record.FormalBaselineEligible -ne $false
     ) {
         $failures.Add('Benchmark aggregate was not explicitly excluded from the formal baseline.')
+    }
+
+    $unclassifiedBlocks = @(
+        New-SyntheticBenchmarkBlock -Id 'before-unclassified-1' -ConfigurationState 'Untuned' -PendingSettingCount 3
+        New-SyntheticBenchmarkBlock -Id 'before-unclassified-2' -ConfigurationState 'Untuned' -PendingSettingCount 3
+    )
+    $unclassifiedBlocks[1].Record.PSObject.Properties.Remove('EvidenceClass')
+    $unclassifiedRejected = $false
+    try {
+        [void](Merge-BenchmarkBlocks -Blocks $unclassifiedBlocks -Label Before)
+    }
+    catch {
+        $unclassifiedRejected = $_.Exception.Message -match 'lack explicit pre-protocol screening provenance'
+    }
+    if (-not $unclassifiedRejected) {
+        $failures.Add('Benchmark aggregation accepted an input without explicit screening provenance.')
     }
 
     $inconsistentBlocks = @(

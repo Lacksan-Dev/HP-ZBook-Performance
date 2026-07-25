@@ -83,7 +83,10 @@ fixed CPU burst. New raw, aggregate, and comparison JSON records identify
 themselves as `PreProtocolScreening` with `FormalBaselineEligible` set to
 `false`. They are useful for iteration, but are excluded from the nine-workflow
 formal baseline and its medians by the
-[approved experiment protocol](../experiment-protocol.md).
+[approved experiment protocol](../experiment-protocol.md). Aggregate and
+comparison commands reject inputs without both markers, so older unclassified
+files must not be relabeled as current screening evidence; run a new Benchmark
+when a comparable classified input is needed.
 
 ## One-time automatic sign-in
 
