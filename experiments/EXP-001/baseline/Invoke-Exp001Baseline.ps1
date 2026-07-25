@@ -204,9 +204,9 @@ function Invoke-Exp001Capture {
         Files=@()
     }
     Save-JsonFile $manifest (Join-Path $runPath 'manifest.json')
+    Write-ExpLog -Path $logPath -Event 'CaptureComplete' -Data @{ Workflow=$Workflow; Classification='screening' }
     $manifest.Files = @(Get-ChildItem -LiteralPath $runPath -File | Where-Object Name -ne 'manifest.json' | ForEach-Object { Get-FileHashRecord $_.FullName })
     Save-JsonFile $manifest (Join-Path $runPath 'manifest.json')
-    Write-ExpLog -Path $logPath -Event 'CaptureComplete' -Data @{ Workflow=$Workflow; Classification='screening' }
     $runPath
 }
 
