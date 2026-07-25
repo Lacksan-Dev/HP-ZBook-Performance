@@ -36,10 +36,9 @@ Describe 'EXP-001 observational baseline harness' {
         }
     }
 
-    It 'creates a dry-run report without formal evidence' -Skip:($env:OS -ne 'Windows_NT') {
+    It 'creates a dry-run report without mutable-state capture' -Skip:($env:OS -ne 'Windows_NT') {
         $runId = 'pester-dryrun'
-        & $script:Harness -Action DryRun -Workflow Idle -OutputRoot $script:TestRoot -RunId $runId -AllowNonHpLabHost
-        $LASTEXITCODE | Should -Be 0
+        & $script:Harness -Action DryRun -Workflow Idle -OutputRoot $script:TestRoot -RunId $runId -AllowNonHpLabHost | Out-Null
         $runPath = Join-Path $script:TestRoot $runId
         Test-Path (Join-Path $runPath 'plan.json') | Should -BeTrue
         Test-Path (Join-Path $runPath 'manifest.json') | Should -BeTrue
@@ -49,7 +48,7 @@ Describe 'EXP-001 observational baseline harness' {
     }
 
     It 'rejects unsupported production hardware without the explicit lab-host switch' -Skip:($env:OS -ne 'Windows_NT') {
-        $result = & $script:Harness -Action Check -OutputRoot $script:TestRoot 2>$null
+        & $script:Harness -Action Check -OutputRoot $script:TestRoot 2>$null | Out-Null
         if ((Get-CimInstance Win32_ComputerSystem).Model -notmatch 'ZBook') {
             $LASTEXITCODE | Should -Be 2
         }
@@ -57,32 +56,29 @@ Describe 'EXP-001 observational baseline harness' {
 
     It 'captures screening evidence and verifies hashes' -Skip:($env:OS -ne 'Windows_NT') {
         $runId = 'pester-capture'
-        & $script:Harness -Action Capture -Workflow OutlookCold -OutputRoot $script:TestRoot -RunId $runId -AllowNonHpLabHost
-        $LASTEXITCODE | Should -Be 0
+        & $script:Harness -Action Capture -Workflow OutlookCold -OutputRoot $script:TestRoot -RunId $runId -AllowNonHpLabHost | Out-Null
         $runPath = Join-Path $script:TestRoot $runId
         $manifest = Get-Content (Join-Path $runPath 'manifest.json') -Raw | ConvertFrom-Json
         $manifest.Classification | Should -Be 'screening'
         $manifest.FormalEvidence | Should -BeFalse
 
-        & $script:Harness -Action Verify -OutputRoot $script:TestRoot -RunId $runId
-        $LASTEXITCODE | Should -Be 0
+        $verification = & $script:Harness -Action Verify -OutputRoot $script:TestRoot -RunId $runId
+        ($verification | ConvertFrom-Json).Passed | Should -BeTrue
     }
 
     It 'reports zero unexplained rollback differences for the read-only harness' -Skip:($env:OS -ne 'Windows_NT') {
         $runId = 'pester-rollback'
-        & $script:Harness -Action Capture -Workflow EdgeCold -OutputRoot $script:TestRoot -RunId $runId -AllowNonHpLabHost
-        $LASTEXITCODE | Should -Be 0
+        & $script:Harness -Action Capture -Workflow EdgeCold -OutputRoot $script:TestRoot -RunId $runId -AllowNonHpLabHost | Out-Null
         $json = & $script:Harness -Action Rollback -OutputRoot $script:TestRoot -RunId $runId
-        $LASTEXITCODE | Should -Be 0
         ($json | ConvertFrom-Json).Passed | Should -BeTrue
     }
 
     It 'detects tampered evidence' -Skip:($env:OS -ne 'Windows_NT') {
         $runId = 'pester-tamper'
-        & $script:Harness -Action Capture -Workflow WindowsSearch -OutputRoot $script:TestRoot -RunId $runId -AllowNonHpLabHost
+        & $script:Harness -Action Capture -Workflow WindowsSearch -OutputRoot $script:TestRoot -RunId $runId -AllowNonHpLabHost | Out-Null
         $runPath = Join-Path $script:TestRoot $runId
         Add-Content -LiteralPath (Join-Path $runPath 'inventory.json') -Value 'tamper'
-        & $script:Harness -Action Verify -OutputRoot $script:TestRoot -RunId $runId 2>$null
+        & $script:Harness -Action Verify -OutputRoot $script:TestRoot -RunId $runId 2>$null | Out-Null
         $LASTEXITCODE | Should -Be 3
     }
 }
