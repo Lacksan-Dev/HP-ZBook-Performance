@@ -3,7 +3,8 @@
 ## Control
 
 - Date: 2026-07-25
-- Tool version: `0.1.0-experimental`
+- Tool version initially validated: `0.1.0-experimental`
+- Current tool version: `0.2.0-experimental`
 - Device: HP ZBook Firefly 14 inch G8 Mobile Workstation PC
 - CPU: 11th Gen Intel Core i5-1145G7
 - Memory: 31.7 GB observed
@@ -12,12 +13,13 @@
 - Graphics: Intel Iris Xe, driver 32.0.101.7085
 - Power source: AC during apply/rollback validation
 - Active plan at initial capture: Balanced
-- Performance measurements: none
+- Performance measurements: quick screening only; nine-workflow measurements remain pending
 - Reboot-persistence result: pending
 
-This is configuration transaction validation, not a responsiveness benchmark.
-No ambient temperature, package temperature, instrumentation-overhead result,
-application workload result, or performance gain was measured.
+This began as configuration transaction validation. Version 0.2 adds a quick
+process/CPU screening benchmark, but no ambient temperature, package
+temperature, instrumentation-overhead result, customer application workflow, or
+performance gain has been established.
 
 ## Documented facts used by the run
 
@@ -94,6 +96,84 @@ Sources and retrieval dates are in
 - A second elevated Apply on the compliant state exited successfully, created
   no backup, and performed no write. Backup count remained 2 before and after.
 
+### Version 0.2 usability and management fix
+
+- Root cause of the `-AllowManagedDevice` bug: the elevated audit counted the
+  generic Microsoft `MDMMaintenenceTask` as active enrollment while the
+  non-elevated audit could not see it.
+- The corrected gate treats that generic task as informational. Domain/Entra
+  join, a published MDM URL, or enrollment-specific EnterpriseMgmt tasks still
+  stop Tune by default.
+- Elevated one-word `Tune` succeeded on the personal lab PC with no override
+  flag. Because the selected state was already compliant, it made zero writes
+  and created no backup.
+- The user-facing actions are now `Check`, `Benchmark`, `Tune`, `FullTest`,
+  `Compare`, `Undo`, and `RestartTest`; old `-Mode` commands remain compatible.
+- `Check` now reports `READY TO TUNE: YES/NO` with a plain-language reason and
+  tuning state rather than a vague `Supported: False`.
+- Native AC-line detection replaced the ambiguous `Win32_Battery.BatteryStatus`
+  interpretation. Before/after comparisons stop when the AC-only candidate is
+  being evaluated on battery.
+
+### Quick benchmark measurements
+
+All files below remain under
+`%ProgramData%\Lacksan\ZBookPerformance\Benchmarks`.
+
+The first ordered seven-run comparison placed balanced `PERFEPP=33` first and
+aggressive `PERFEPP=0` second. All 21 observations per configuration succeeded;
+the second configuration was slower by 33.5% for PowerShell startup, 21.1% for
+Command Prompt startup, and 6.4% for the CPU burst. This was preserved but
+rejected as a decision result because order/background bias was uncontrolled.
+
+A counterbalanced A-B-B-A session with 14 valid runs per metric/configuration
+still placed value 0 in the middle B blocks. Value 0 was slower by 2.8%, 2.5%,
+and 3.7%, respectively. A reversed session then placed value 33 in the middle B
+blocks; value 33 was 2.5% slower for PowerShell, 1.7% faster for Command Prompt,
+and 10.1% slower for the CPU burst. Every one of the 84 observations in that
+session succeeded.
+
+Combining both counterbalanced sessions by actual AC value produced 28 valid
+runs per configuration and metric:
+
+| Metric | `PERFEPP=0` median | `PERFEPP=33` median | Value 33 versus 0 |
+|---|---:|---:|---:|
+| PowerShell startup | 138.731 ms | 138.382 ms | 0.3% faster |
+| Command Prompt startup | 22.869 ms | 22.452 ms | 1.8% faster |
+| SHA-256 CPU burst | 107.576 ms | 115.752 ms | 7.6% slower |
+
+The crossover is mixed: neither value improved every screening metric.
+Process-start differences are small, while value 0 improved this synthetic CPU
+burst at the cost of the documented heat/energy bias. The general Tune baseline
+therefore retains the measured balanced value 33 rather than claiming that the
+most aggressive value improves responsiveness.
+
+Version 0.2 `FullTest` now runs both A-B-B-A and B-A-A-B orderings in one
+command, waits for low CPU/disk activity before each block, aggregates 28 raw
+runs per configuration/metric, and leaves Tune active.
+
+The completed orchestration validation used three runs in each of eight blocks,
+for 12 runs per configuration/metric and 72 successful observations overall.
+There were no failed runs. In that short run the selected value 33 was 1.5%
+slower for PowerShell startup, 3.9% slower for Command Prompt startup, and 0.7%
+slower for the CPU burst. This conflicts with parts of the earlier crossover
+and reinforces the unresolved conclusion: no reproducible general-performance
+improvement has been demonstrated for either energy-preference value.
+
+### One-time auto-login implementation
+
+- Elevated read-only compilation and LSA-secret detection passed.
+- `RestartTest` captures original Winlogon state, validates a masked password,
+  stores it with `LsaStorePrivateData`, registers a one-time current-user resume
+  task, and schedules restart.
+- The resume path verifies a new boot, checks all 17 settings, runs a
+  post-restart benchmark, clears the LSA secret, restores captured Winlogon
+  values, and removes its task even when verification fails.
+- Existing auto-login configuration is never overwritten.
+- The state-changing restart path has not yet been executed; reboot persistence
+  and cleanup remain pending until the user enters the password in the masked
+  prompt.
+
 ## Preserved failures and inconclusive events
 
 1. An elevated Backup run stopped at the active-management safety gate before
@@ -114,12 +194,13 @@ because they contain machine-local metadata.
 
 ## Hypotheses
 
-- Setting AC energy-performance preference to 0 may reduce response latency for
-  bursty plugged-in workloads on this device.
-- Any benefit may be small or absent because firmware, Intel/HP thermal policy,
-  existing low-latency profiles, or workload bottlenecks can dominate.
-- The candidate may increase package temperature, fan activity, and AC energy
-  use.
+- Setting AC energy-performance preference to 0 may improve sustained synthetic
+  CPU work, but the crossover did not show a consistent process-start benefit.
+- Any workload benefit may be small or absent because firmware, Intel/HP thermal
+  policy, existing low-latency profiles, background activity, or workload
+  bottlenecks can dominate.
+- The aggressive candidate may increase package temperature, fan activity, and
+  AC energy use.
 
 These are untested hypotheses, not findings.
 

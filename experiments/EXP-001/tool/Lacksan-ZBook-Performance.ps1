@@ -20,18 +20,25 @@
 
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [ValidateSet('Interactive', 'Audit', 'Preview', 'Backup', 'Apply', 'Verify', 'Rollback', 'ListBackups', 'Configuration', 'SelfTest')]
-    [string]$Mode = 'Interactive',
+    [Parameter(Position = 0)]
+    [Alias('Mode')]
+    [string]$Action = 'Menu',
 
     [string]$BackupId,
 
+    # Retained as no-op compatibility switches for version 0.1 commands.
     [switch]$AcceptExperimentalRisk,
 
     [switch]$AllowNoRestorePoint,
 
     [switch]$AllowManagedDevice,
 
-    [switch]$NoPrompt,
+    [ValidateRange(3, 21)]
+    [int]$BenchmarkRuns = 7,
+
+    [Security.SecureString]$AutoLoginPassword,
+
+    [string]$RestartStateId,
 
     [string]$DataRoot
 )
@@ -40,7 +47,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:ToolName = 'Lacksan ZBook Performance'
-$script:ToolVersion = '0.1.0-experimental'
+$script:ToolVersion = '0.2.0-experimental'
 $script:SchemaVersion = 1
 $script:Expected = [ordered]@{
     Manufacturer = 'HP'
@@ -53,6 +60,8 @@ $script:Expected = [ordered]@{
 if ([string]::IsNullOrWhiteSpace($DataRoot)) {
     $DataRoot = Join-Path $env:ProgramData 'Lacksan\ZBookPerformance'
 }
+$script:OriginalScriptPath = $PSCommandPath
+$script:OriginalScriptText = $MyInvocation.MyCommand.Definition
 
 $script:RegistrySettings = @(
     [pscustomobject]@{
@@ -170,9 +179,9 @@ $script:PowerSettings = @(
     [pscustomobject]@{
         Id = 'Power.AcEnergyPreference'
         Guid = [guid]'36687f9e-e3a5-4dbf-b1dc-15eb381c6863'
-        DesiredAC = [uint32]0
+        DesiredAC = [uint32]33
         Label = 'Processor energy performance preference (AC)'
-        Tradeoff = 'Highest AC responsiveness preference; may increase heat, fan noise, and energy use.'
+        Tradeoff = 'Retains the measured balanced AC value; crossover screening found no consistent responsiveness benefit from the more aggressive value 0.'
     },
     [pscustomobject]@{
         Id = 'Power.AcCoreParkingMinimum'
@@ -269,6 +278,8 @@ function Get-JoinState {
         WorkplaceJoined = $false
         MdmUrlPresent = $false
         EnterpriseMgmtTaskCount = 0
+        EnrollmentSpecificTaskCount = 0
+        GenericMaintenanceTaskPresent = $false
     }
 
     try {
@@ -286,10 +297,22 @@ function Get-JoinState {
     }
 
     try {
-        $tasks = Get-ScheduledTask -ErrorAction Stop | Where-Object {
+        $tasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object {
             $_.TaskPath -like '\Microsoft\Windows\EnterpriseMgmt\*'
-        }
+        })
         $values.EnterpriseMgmtTaskCount = @($tasks).Count
+        $generic = @($tasks | Where-Object {
+            $_.TaskPath -eq '\Microsoft\Windows\EnterpriseMgmt\' -and
+            $_.TaskName -eq 'MDMMaintenenceTask'
+        })
+        $values.GenericMaintenanceTaskPresent = $generic.Count -gt 0
+        $enrollmentSpecific = @($tasks | Where-Object {
+            -not (
+                $_.TaskPath -eq '\Microsoft\Windows\EnterpriseMgmt\' -and
+                $_.TaskName -eq 'MDMMaintenenceTask'
+            )
+        })
+        $values.EnrollmentSpecificTaskCount = $enrollmentSpecific.Count
     }
     catch {
         Write-LabEvent -Event 'EnterpriseManagementTaskRead' -Status 'Warning' -Data @{ Error = $_.Exception.Message }
@@ -300,7 +323,7 @@ function Get-JoinState {
         $values.EnterpriseJoined -or
         $values.DomainJoined -or
         $values.MdmUrlPresent -or
-        $values.EnterpriseMgmtTaskCount -gt 0
+        $values.EnrollmentSpecificTaskCount -gt 0
     )
 
     return [pscustomobject]@{
@@ -310,6 +333,8 @@ function Get-JoinState {
         WorkplaceJoined = $values.WorkplaceJoined
         MdmUrlPresent = $values.MdmUrlPresent
         EnterpriseMgmtTaskCount = $values.EnterpriseMgmtTaskCount
+        EnrollmentSpecificTaskCount = $values.EnrollmentSpecificTaskCount
+        GenericMaintenanceTaskPresent = $values.GenericMaintenanceTaskPresent
         EnterpriseMgmtTaskVisibility = if ($taskVisibilityAuthoritative) { 'Authoritative' } else { 'LimitedUntilElevated' }
         ActiveManagementDetected = $activeManagement
     }
@@ -323,7 +348,6 @@ function Get-SystemSnapshot {
     $gpu = @(Get-CimInstance -ClassName Win32_VideoController | ForEach-Object {
         [pscustomobject]@{ Name = $_.Name; DriverVersion = $_.DriverVersion }
     })
-    $battery = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue
     $join = Get-JoinState
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 
@@ -341,7 +365,7 @@ function Get-SystemSnapshot {
         BiosVersion = [string]$bios.SMBIOSBIOSVersion
         BiosReleaseDate = if ($bios.ReleaseDate) { ([datetime]$bios.ReleaseDate).ToString('o') } else { $null }
         Graphics = $gpu
-        OnBattery = if ($battery) { [int]$battery.BatteryStatus -eq 1 } else { $false }
+        OnBattery = Get-IsOnBattery
         JoinState = $join
     }
 }
@@ -369,7 +393,7 @@ function Test-SupportedSystem {
         $reasons.Add("BIOS '$($Snapshot.BiosVersion)' is not validated '$($script:Expected.BiosVersion)'.")
     }
     if ($Snapshot.JoinState.ActiveManagementDetected -and -not $PermitManaged) {
-        $reasons.Add('Active domain, Entra, MDM, or EnterpriseMgmt control was detected. Use -AllowManagedDevice only with administrator approval.')
+        $reasons.Add('This PC appears to be controlled by a domain or device-management service. Tuning stopped to avoid conflicting with organization policy.')
     }
 
     [pscustomobject]@{
@@ -389,6 +413,20 @@ using System.Runtime.InteropServices;
 
 public static class LacksanPowerNative
 {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SYSTEM_POWER_STATUS
+    {
+        public byte ACLineStatus;
+        public byte BatteryFlag;
+        public byte BatteryLifePercent;
+        public byte SystemStatusFlag;
+        public uint BatteryLifeTime;
+        public uint BatteryFullLifeTime;
+    }
+
+    [DllImport("kernel32.dll")]
+    public static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS Status);
+
     [DllImport("powrprof.dll")]
     public static extern uint PowerGetActiveScheme(IntPtr UserRootPowerKey, out IntPtr ActivePolicyGuid);
 
@@ -414,6 +452,188 @@ public static class LacksanPowerNative
     Add-Type -TypeDefinition $source -Language CSharp
 }
 
+function Initialize-AutoLogonNative {
+    if ('LacksanAutoLogonNative' -as [type]) {
+        return
+    }
+
+    $source = @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public static class LacksanAutoLogonNative
+{
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LSA_OBJECT_ATTRIBUTES
+    {
+        public int Length;
+        public IntPtr RootDirectory;
+        public IntPtr ObjectName;
+        public uint Attributes;
+        public IntPtr SecurityDescriptor;
+        public IntPtr SecurityQualityOfService;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LSA_UNICODE_STRING
+    {
+        public ushort Length;
+        public ushort MaximumLength;
+        public IntPtr Buffer;
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool LogonUser(
+        string lpszUsername,
+        string lpszDomain,
+        string lpszPassword,
+        int dwLogonType,
+        int dwLogonProvider,
+        out IntPtr phToken);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("advapi32.dll", PreserveSig = true)]
+    private static extern uint LsaOpenPolicy(
+        IntPtr SystemName,
+        ref LSA_OBJECT_ATTRIBUTES ObjectAttributes,
+        uint DesiredAccess,
+        out IntPtr PolicyHandle);
+
+    [DllImport("advapi32.dll", PreserveSig = true)]
+    private static extern uint LsaStorePrivateData(
+        IntPtr PolicyHandle,
+        ref LSA_UNICODE_STRING KeyName,
+        IntPtr PrivateData);
+
+    [DllImport("advapi32.dll", PreserveSig = true)]
+    private static extern uint LsaRetrievePrivateData(
+        IntPtr PolicyHandle,
+        ref LSA_UNICODE_STRING KeyName,
+        out IntPtr PrivateData);
+
+    [DllImport("advapi32.dll")]
+    private static extern uint LsaNtStatusToWinError(uint Status);
+
+    [DllImport("advapi32.dll")]
+    private static extern uint LsaClose(IntPtr PolicyHandle);
+
+    [DllImport("advapi32.dll")]
+    private static extern uint LsaFreeMemory(IntPtr Buffer);
+
+    private const uint POLICY_CREATE_SECRET = 0x00000020;
+    private const uint POLICY_GET_PRIVATE_INFORMATION = 0x00000004;
+
+    private static LSA_UNICODE_STRING AllocateString(string value)
+    {
+        LSA_UNICODE_STRING result = new LSA_UNICODE_STRING();
+        result.Buffer = Marshal.StringToHGlobalUni(value);
+        result.Length = checked((ushort)(value.Length * 2));
+        result.MaximumLength = checked((ushort)((value.Length + 1) * 2));
+        return result;
+    }
+
+    private static void FreeString(ref LSA_UNICODE_STRING value)
+    {
+        if (value.Buffer != IntPtr.Zero)
+        {
+            Marshal.ZeroFreeGlobalAllocUnicode(value.Buffer);
+            value.Buffer = IntPtr.Zero;
+        }
+    }
+
+    private static IntPtr OpenPolicy(uint access)
+    {
+        LSA_OBJECT_ATTRIBUTES attributes = new LSA_OBJECT_ATTRIBUTES();
+        attributes.Length = Marshal.SizeOf(typeof(LSA_OBJECT_ATTRIBUTES));
+        IntPtr policy;
+        uint status = LsaOpenPolicy(IntPtr.Zero, ref attributes, access, out policy);
+        if (status != 0)
+        {
+            throw new Win32Exception((int)LsaNtStatusToWinError(status));
+        }
+        return policy;
+    }
+
+    public static bool ValidateCredential(string user, string domain, string password)
+    {
+        IntPtr token;
+        bool valid = LogonUser(user, domain, password, 2, 0, out token);
+        if (valid && token != IntPtr.Zero)
+        {
+            CloseHandle(token);
+        }
+        return valid;
+    }
+
+    public static void StoreDefaultPassword(string password)
+    {
+        IntPtr policy = OpenPolicy(POLICY_CREATE_SECRET);
+        LSA_UNICODE_STRING key = AllocateString("DefaultPassword");
+        LSA_UNICODE_STRING secret = new LSA_UNICODE_STRING();
+        IntPtr secretPointer = IntPtr.Zero;
+        try
+        {
+            if (password != null)
+            {
+                secret = AllocateString(password);
+                secretPointer = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(LSA_UNICODE_STRING)));
+                Marshal.StructureToPtr(secret, secretPointer, false);
+            }
+            uint status = LsaStorePrivateData(policy, ref key, secretPointer);
+            if (status != 0)
+            {
+                throw new Win32Exception((int)LsaNtStatusToWinError(status));
+            }
+        }
+        finally
+        {
+            if (secretPointer != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(secretPointer);
+            }
+            FreeString(ref secret);
+            FreeString(ref key);
+            LsaClose(policy);
+        }
+    }
+
+    public static bool HasDefaultPassword()
+    {
+        IntPtr policy = OpenPolicy(POLICY_GET_PRIVATE_INFORMATION);
+        LSA_UNICODE_STRING key = AllocateString("DefaultPassword");
+        IntPtr privateData = IntPtr.Zero;
+        try
+        {
+            uint status = LsaRetrievePrivateData(policy, ref key, out privateData);
+            if (status == 0)
+            {
+                return privateData != IntPtr.Zero;
+            }
+            uint win32 = LsaNtStatusToWinError(status);
+            if (win32 == 2)
+            {
+                return false;
+            }
+            throw new Win32Exception((int)win32);
+        }
+        finally
+        {
+            if (privateData != IntPtr.Zero)
+            {
+                LsaFreeMemory(privateData);
+            }
+            FreeString(ref key);
+            LsaClose(policy);
+        }
+    }
+}
+'@
+    Add-Type -TypeDefinition $source -Language CSharp
+}
+
 function Get-ActivePowerScheme {
     Initialize-PowerNative
     $pointer = [IntPtr]::Zero
@@ -427,6 +647,18 @@ function Get-ActivePowerScheme {
     finally {
         [void][LacksanPowerNative]::LocalFree($pointer)
     }
+}
+
+function Get-IsOnBattery {
+    Initialize-PowerNative
+    $status = New-Object LacksanPowerNative+SYSTEM_POWER_STATUS
+    if (-not [LacksanPowerNative]::GetSystemPowerStatus([ref]$status)) {
+        throw 'Windows could not report the current AC/battery state.'
+    }
+    if ($status.ACLineStatus -eq 255) {
+        throw 'Windows reports an unknown AC/battery state.'
+    }
+    return $status.ACLineStatus -eq 0
 }
 
 function Get-PowerValue {
@@ -629,20 +861,40 @@ function Show-Audit {
         JoinState = $snapshot.JoinState
     }
 
+    $states = Get-ConfigurationState
+    $pending = @($states | Where-Object { -not $_.Compliant })
     Write-Host ''
     Write-Host "$($script:ToolName) $($script:ToolVersion)"
-    Write-Host "Computer:     $($snapshot.Manufacturer) $($snapshot.Model)"
-    Write-Host "CPU:          $(@($snapshot.Cpu) -join '; ')"
-    Write-Host "Windows:      $($snapshot.OsCaption), build $($snapshot.OsBuild)"
-    Write-Host "BIOS:         $($snapshot.BiosVersion)"
-    Write-Host "Managed:      $($snapshot.JoinState.ActiveManagementDetected)"
-    Write-Host "Work account: $($snapshot.JoinState.WorkplaceJoined)"
-    Write-Host "Mgmt audit:   $($snapshot.JoinState.EnterpriseMgmtTaskVisibility)"
-    Write-Host "Supported:    $($support.Supported)"
-    foreach ($reason in $support.Reasons) {
-        Write-Host "  - $reason" -ForegroundColor Yellow
+    Write-Host ''
+    if ($support.Supported) {
+        Write-Host 'READY TO TUNE: YES' -ForegroundColor Green
+        Write-Host 'This is the HP ZBook model and Windows version validated by the lab.'
     }
-    Write-Host "Log:          $($script:CurrentLog)"
+    else {
+        Write-Host 'READY TO TUNE: NO' -ForegroundColor Red
+        foreach ($reason in $support.Reasons) {
+            Write-Host "Why: $reason" -ForegroundColor Yellow
+        }
+    }
+    Write-Host ''
+    Write-Host "Computer: $($snapshot.Model)"
+    Write-Host "Windows:  build $($snapshot.OsBuild), BIOS $($snapshot.BiosVersion)"
+    if ($snapshot.JoinState.ActiveManagementDetected) {
+        Write-Host 'Device control: organization management detected; Tune will stop unless explicitly overridden.' -ForegroundColor Yellow
+    }
+    elseif ($snapshot.JoinState.WorkplaceJoined) {
+        Write-Host 'Device control: personal PC checks passed; a work account is connected but no active management endpoint was found.'
+    }
+    else {
+        Write-Host 'Device control: personal/unmanaged checks passed.'
+    }
+    if ($pending.Count -eq 0) {
+        Write-Host 'Tuning state: APPLIED (17 of 17 checks pass)' -ForegroundColor Green
+    }
+    else {
+        Write-Host "Tuning state: NOT YET APPLIED ($($pending.Count) change(s) available)" -ForegroundColor Cyan
+    }
+    Write-Host "Details log: $($script:CurrentLog)"
     return [pscustomobject]@{ Snapshot = $snapshot; Support = $support }
 }
 
@@ -885,9 +1137,6 @@ function Assert-ApplyPrerequisites {
     if (-not $support.Supported) {
         throw "Support detection failed: $(@($support.Reasons) -join ' ')"
     }
-    if (-not $AcceptExperimentalRisk) {
-        throw 'Apply requires -AcceptExperimentalRisk. This baseline is experimental and may increase heat, fan noise, and AC energy use.'
-    }
 }
 
 function Invoke-LabApply {
@@ -975,6 +1224,773 @@ function Invoke-LabVerify {
     Write-Host 'All allow-listed settings verify successfully.'
 }
 
+function Get-Median {
+    param([Parameter(Mandatory = $true)][double[]]$Values)
+    if ($Values.Count -eq 0) {
+        return $null
+    }
+    $sorted = @($Values | Sort-Object)
+    $middle = [math]::Floor($sorted.Count / 2)
+    if ($sorted.Count % 2 -eq 1) {
+        return [double]$sorted[$middle]
+    }
+    return ([double]$sorted[$middle - 1] + [double]$sorted[$middle]) / 2
+}
+
+function Measure-ProcessLaunch {
+    param(
+        [Parameter(Mandatory = $true)][string]$FileName,
+        [Parameter(Mandatory = $true)][string]$Arguments
+    )
+
+    $startInfo = New-Object Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FileName
+    $startInfo.Arguments = $Arguments
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        if (-not $process.Start()) {
+            throw "Could not start '$FileName'."
+        }
+        if (-not $process.WaitForExit(30000)) {
+            try { $process.Kill() } catch {}
+            throw "'$FileName' did not exit within 30 seconds."
+        }
+        $watch.Stop()
+        if ($process.ExitCode -ne 0) {
+            throw "'$FileName' exited with code $($process.ExitCode)."
+        }
+        return [double]$watch.Elapsed.TotalMilliseconds
+    }
+    finally {
+        $watch.Stop()
+        $process.Dispose()
+    }
+}
+
+function Measure-CpuBurst {
+    param([Parameter(Mandatory = $true)][byte[]]$Buffer)
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        for ($index = 0; $index -lt 48; $index++) {
+            [void]$algorithm.ComputeHash($Buffer)
+        }
+        $watch.Stop()
+        return [double]$watch.Elapsed.TotalMilliseconds
+    }
+    finally {
+        $watch.Stop()
+        $algorithm.Dispose()
+    }
+}
+
+function Get-BenchmarkRoot {
+    $preferred = Join-Path $DataRoot 'Benchmarks'
+    try {
+        New-Item -ItemType Directory -Path $preferred -Force -ErrorAction Stop | Out-Null
+        return $preferred
+    }
+    catch {
+        $fallback = Join-Path $env:LOCALAPPDATA 'Lacksan\ZBookPerformance\Benchmarks'
+        New-Item -ItemType Directory -Path $fallback -Force | Out-Null
+        return $fallback
+    }
+}
+
+function Wait-BenchmarkReady {
+    param(
+        [int]$StableSamplesRequired = 3,
+        [int]$TimeoutSeconds = 30
+    )
+    $samples = @()
+    $stable = 0
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    Write-Host 'Waiting briefly for low background activity...'
+    while ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds -and $stable -lt $StableSamplesRequired) {
+        $entry = [ordered]@{
+            TimestampUtc = (Get-Date).ToUniversalTime().ToString('o')
+            CpuPercent = $null
+            DiskPercent = $null
+            Status = 'Observed'
+            Error = $null
+        }
+        try {
+            $cpu = Get-CimInstance -ClassName Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop
+            $disk = Get-CimInstance -ClassName Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop
+            $entry.CpuPercent = [double]$cpu.PercentProcessorTime
+            $entry.DiskPercent = [double]$disk.PercentDiskTime
+            if ($entry.CpuPercent -le 20 -and $entry.DiskPercent -le 20) {
+                $stable++
+            }
+            else {
+                $stable = 0
+            }
+        }
+        catch {
+            $entry.Status = 'Unavailable'
+            $entry.Error = $_.Exception.Message
+            $stable++
+        }
+        $samples += [pscustomobject]$entry
+        if ($stable -lt $StableSamplesRequired) {
+            Start-Sleep -Seconds 1
+        }
+    }
+    $watch.Stop()
+    return [pscustomobject]@{
+        Satisfied = $stable -ge $StableSamplesRequired
+        StableSamplesRequired = $StableSamplesRequired
+        TimeoutSeconds = $TimeoutSeconds
+        WaitedSeconds = [math]::Round($watch.Elapsed.TotalSeconds, 2)
+        Samples = $samples
+    }
+}
+
+function Invoke-QuickBenchmark {
+    param([ValidateSet('Current', 'Before', 'After', 'BeforeRestart', 'AfterRestart')][string]$Label = 'Current')
+
+    $snapshot = Get-SystemSnapshot
+    $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$AllowManagedDevice
+    if (-not $support.Supported) {
+        throw "Benchmark stopped: $(@($support.Reasons) -join ' ')"
+    }
+    if ($snapshot.OnBattery -and $Label -in @('Before', 'After')) {
+        throw 'Plug in the ZBook before a before/after test. The candidate processor tuning changes AC power only.'
+    }
+    if ($snapshot.OnBattery) {
+        Write-Host 'Power note: running on battery. This result cannot evaluate the AC-only tuning change.' -ForegroundColor Yellow
+    }
+    $readiness = Wait-BenchmarkReady
+    $configuration = Get-ConfigurationState
+    $pending = @($configuration | Where-Object { -not $_.Compliant })
+    $configurationState = if ($pending.Count -eq 0) { 'Tuned' } else { 'Untuned' }
+    $buffer = New-Object byte[] (4MB)
+    for ($index = 0; $index -lt $buffer.Length; $index += 4096) {
+        $buffer[$index] = [byte](($index / 4096) % 251)
+    }
+
+    $definitions = @(
+        [pscustomobject]@{
+            Id = 'Process.PowerShellStart'
+            Name = 'PowerShell startup'
+            Measure = {
+                Measure-ProcessLaunch -FileName "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Arguments '-NoLogo -NoProfile -NonInteractive -Command "exit 0"'
+            }
+        },
+        [pscustomobject]@{
+            Id = 'Process.CommandPromptStart'
+            Name = 'Command Prompt startup'
+            Measure = {
+                Measure-ProcessLaunch -FileName "$env:SystemRoot\System32\cmd.exe" -Arguments '/d /c exit 0'
+            }
+        },
+        [pscustomobject]@{
+            Id = 'Cpu.Sha256Burst'
+            Name = 'CPU burst'
+            Measure = {
+                Measure-CpuBurst -Buffer $buffer
+            }
+        }
+    )
+
+    Write-Host ''
+    Write-Host "Running quick benchmark: $Label / $configurationState"
+    Write-Host "$BenchmarkRuns measured runs per test. Lower time is better."
+
+    $metrics = foreach ($definition in $definitions) {
+        $warmup = [ordered]@{ Status = 'Pass'; Milliseconds = $null; Error = $null }
+        try {
+            $warmup.Milliseconds = [math]::Round([double](& $definition.Measure), 3)
+        }
+        catch {
+            $warmup.Status = 'Failure'
+            $warmup.Error = $_.Exception.Message
+        }
+
+        $rawRuns = @()
+        for ($run = 1; $run -le $BenchmarkRuns; $run++) {
+            $entry = [ordered]@{
+                Run = $run
+                Status = 'Pass'
+                Milliseconds = $null
+                Error = $null
+            }
+            try {
+                $entry.Milliseconds = [math]::Round([double](& $definition.Measure), 3)
+            }
+            catch {
+                $entry.Status = 'Failure'
+                $entry.Error = $_.Exception.Message
+            }
+            $rawRuns += [pscustomobject]$entry
+        }
+        $valid = @($rawRuns | Where-Object { $_.Status -eq 'Pass' } | Select-Object -ExpandProperty Milliseconds)
+        $median = if ($valid.Count -gt 0) { [math]::Round((Get-Median -Values $valid), 3) } else { $null }
+        [pscustomobject]@{
+            Id = $definition.Id
+            Name = $definition.Name
+            Unit = 'ms'
+            LowerIsBetter = $true
+            Warmup = [pscustomobject]$warmup
+            Runs = $rawRuns
+            ValidRunCount = $valid.Count
+            FailedRunCount = $BenchmarkRuns - $valid.Count
+            Median = $median
+        }
+    }
+
+    $record = [ordered]@{
+        SchemaVersion = 1
+        ToolVersion = $script:ToolVersion
+        BenchmarkId = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffZ') + '-' + $script:RunId.Substring(0, 8)
+        CapturedUtc = (Get-Date).ToUniversalTime().ToString('o')
+        Label = $Label
+        ConfigurationState = $configurationState
+        PendingSettingCount = $pending.Count
+        RunCountRequested = $BenchmarkRuns
+        Environment = $snapshot
+        Readiness = $readiness
+        Metrics = @($metrics)
+        Interpretation = 'Quick screening benchmark only. It does not replace the nine controlled EXP-001 workflows.'
+    }
+    $root = Get-BenchmarkRoot
+    $path = Join-Path $root "$($record.BenchmarkId)-$Label-$configurationState.json"
+    [IO.File]::WriteAllText($path, ($record | ConvertTo-Json -Depth 18), (New-Object Text.UTF8Encoding($false)))
+    Write-LabEvent -Event 'QuickBenchmark' -Status $(if (@($metrics | Where-Object { $_.ValidRunCount -lt $BenchmarkRuns }).Count -eq 0) { 'Pass' } else { 'Warning' }) -Data @{
+        BenchmarkId = $record.BenchmarkId
+        Label = $Label
+        ConfigurationState = $configurationState
+        Path = $path
+        Medians = @($metrics | Select-Object Id, Median, ValidRunCount, FailedRunCount)
+    }
+
+    Write-Host ''
+    $metrics | Select-Object Name, Median, Unit, ValidRunCount, FailedRunCount | Format-Table -AutoSize | Out-Host
+    Write-Host "Raw results: $path"
+    Write-Host 'These quick checks are useful for iteration, but they are not yet a customer performance claim.'
+    return [pscustomobject]@{ Record = [pscustomobject]$record; Path = $path }
+}
+
+function Merge-BenchmarkBlocks {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Blocks,
+        [Parameter(Mandatory = $true)][ValidateSet('Before', 'After')][string]$Label
+    )
+    if ($Blocks.Count -lt 2) {
+        throw 'At least two benchmark blocks are required for an aggregate.'
+    }
+    $first = $Blocks[0].Record
+    $metrics = foreach ($metric in $first.Metrics) {
+        $combined = @()
+        for ($blockIndex = 0; $blockIndex -lt $Blocks.Count; $blockIndex++) {
+            $matching = @($Blocks[$blockIndex].Record.Metrics | Where-Object { $_.Id -eq $metric.Id }) | Select-Object -First 1
+            foreach ($run in $matching.Runs) {
+                $combined += [pscustomobject]@{
+                    Block = $blockIndex + 1
+                    Run = $run.Run
+                    Status = $run.Status
+                    Milliseconds = $run.Milliseconds
+                    Error = $run.Error
+                }
+            }
+        }
+        $valid = @($combined | Where-Object { $_.Status -eq 'Pass' } | Select-Object -ExpandProperty Milliseconds)
+        [pscustomobject]@{
+            Id = $metric.Id
+            Name = $metric.Name
+            Unit = 'ms'
+            LowerIsBetter = $true
+            Warmup = $null
+            Runs = $combined
+            ValidRunCount = $valid.Count
+            FailedRunCount = $combined.Count - $valid.Count
+            Median = if ($valid.Count -gt 0) { [math]::Round((Get-Median -Values $valid), 3) } else { $null }
+        }
+    }
+    $aggregate = [ordered]@{
+        SchemaVersion = 1
+        ToolVersion = $script:ToolVersion
+        BenchmarkId = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffZ') + '-aggregate-' + $script:RunId.Substring(0, 8)
+        CapturedUtc = (Get-Date).ToUniversalTime().ToString('o')
+        Label = $Label
+        ConfigurationState = if ($Label -eq 'Before') { 'Untuned' } else { 'Tuned' }
+        PendingSettingCount = if ($Label -eq 'Before') { 1 } else { 0 }
+        RunCountRequested = @($metrics | Select-Object -First 1).Runs.Count
+        Environment = $first.Environment
+        SourceBenchmarkIds = @($Blocks | ForEach-Object { $_.Record.BenchmarkId })
+        Metrics = @($metrics)
+        Interpretation = 'Counterbalanced aggregate of two raw blocks. Screening evidence only.'
+    }
+    $root = Get-BenchmarkRoot
+    $path = Join-Path $root "$($aggregate.BenchmarkId)-$Label-$($aggregate.ConfigurationState).json"
+    [IO.File]::WriteAllText($path, ($aggregate | ConvertTo-Json -Depth 18), (New-Object Text.UTF8Encoding($false)))
+    return [pscustomobject]@{ Record = [pscustomobject]$aggregate; Path = $path }
+}
+
+function Show-BenchmarkComparison {
+    param(
+        [string]$BeforePath,
+        [string]$AfterPath
+    )
+
+    $root = Get-BenchmarkRoot
+    if ([string]::IsNullOrWhiteSpace($BeforePath)) {
+        $beforeFile = Get-ChildItem -LiteralPath $root -Filter '*.json' -File |
+            Sort-Object LastWriteTime -Descending |
+            Where-Object {
+                try { (Get-Content $_.FullName -Raw | ConvertFrom-Json).ConfigurationState -eq 'Untuned' } catch { $false }
+            } |
+            Select-Object -First 1
+        if ($beforeFile) { $BeforePath = $beforeFile.FullName }
+    }
+    if ([string]::IsNullOrWhiteSpace($AfterPath)) {
+        $afterFile = Get-ChildItem -LiteralPath $root -Filter '*.json' -File |
+            Sort-Object LastWriteTime -Descending |
+            Where-Object {
+                try { (Get-Content $_.FullName -Raw | ConvertFrom-Json).ConfigurationState -eq 'Tuned' } catch { $false }
+            } |
+            Select-Object -First 1
+        if ($afterFile) { $AfterPath = $afterFile.FullName }
+    }
+    if ([string]::IsNullOrWhiteSpace($BeforePath) -or [string]::IsNullOrWhiteSpace($AfterPath)) {
+        throw 'A before/after pair was not found. Run Benchmark before Tune, run it again after Tune, then use Compare.'
+    }
+
+    $before = Get-Content -LiteralPath $BeforePath -Raw | ConvertFrom-Json
+    $after = Get-Content -LiteralPath $AfterPath -Raw | ConvertFrom-Json
+    $rows = foreach ($beforeMetric in $before.Metrics) {
+        $afterMetric = @($after.Metrics | Where-Object { $_.Id -eq $beforeMetric.Id }) | Select-Object -First 1
+        if (-not $afterMetric -or $null -eq $beforeMetric.Median -or $null -eq $afterMetric.Median) {
+            continue
+        }
+        $change = if ([double]$beforeMetric.Median -ne 0) {
+            [math]::Round((([double]$afterMetric.Median - [double]$beforeMetric.Median) / [double]$beforeMetric.Median) * 100, 1)
+        }
+        else { $null }
+        $result = if ($null -eq $change) { 'Not comparable' }
+            elseif ($change -lt 0) { "$([math]::Abs($change))% faster" }
+            elseif ($change -gt 0) { "$change% slower" }
+            else { 'No change' }
+        [pscustomobject]@{
+            Test = $beforeMetric.Name
+            BeforeMs = [double]$beforeMetric.Median
+            AfterMs = [double]$afterMetric.Median
+            Result = $result
+            ChangePercent = $change
+        }
+    }
+    if (@($rows).Count -eq 0) {
+        throw 'The selected benchmark files have no comparable successful metrics.'
+    }
+
+    Write-Host ''
+    Write-Host 'Quick before/after comparison'
+    $rows | Select-Object Test, BeforeMs, AfterMs, Result | Format-Table -AutoSize | Out-Host
+    Write-Host 'Negative time is faster. Treat this as screening evidence until the controlled workflow protocol is complete.'
+
+    $comparison = [ordered]@{
+        SchemaVersion = 1
+        CreatedUtc = (Get-Date).ToUniversalTime().ToString('o')
+        BeforeBenchmarkId = $before.BenchmarkId
+        AfterBenchmarkId = $after.BenchmarkId
+        BeforePath = $BeforePath
+        AfterPath = $AfterPath
+        Results = @($rows)
+        Decision = 'No design or customer claim from this quick comparison alone.'
+    }
+    $comparisonPath = Join-Path $root "$((Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffZ'))-comparison.json"
+    [IO.File]::WriteAllText($comparisonPath, ($comparison | ConvertTo-Json -Depth 12), (New-Object Text.UTF8Encoding($false)))
+    Write-Host "Comparison record: $comparisonPath"
+    Write-LabEvent -Event 'BenchmarkComparison' -Status 'Pass' -Data @{ Path = $comparisonPath; Results = @($rows) }
+    return [pscustomobject]@{ Record = [pscustomobject]$comparison; Path = $comparisonPath }
+}
+
+function Invoke-FullBeforeAfterTest {
+    if (-not (Test-IsAdministrator)) {
+        throw 'FullTest requires administrator rights.'
+    }
+    $snapshot = Get-SystemSnapshot
+    $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$AllowManagedDevice
+    if (-not $support.Supported) {
+        throw "Before/after test stopped: $(@($support.Reasons) -join ' ')"
+    }
+
+    $initialState = Get-ConfigurationState
+    $startedTuned = @($initialState | Where-Object { -not $_.Compliant }).Count -eq 0
+    $beforeBlocks = @()
+    $afterBlocks = @()
+    try {
+        if ($startedTuned) {
+            Write-Host 'Restoring the latest protected pre-tune state for the before measurement...'
+            Invoke-RestoreBackup -Path (Get-BackupPath)
+            $restoredState = Get-ConfigurationState
+            if (@($restoredState | Where-Object { -not $_.Compliant }).Count -eq 0) {
+                throw 'The latest backup is already tuned, so it cannot provide a valid before state.'
+            }
+        }
+
+        Write-Host 'Block A1: untuned'
+        $beforeBlocks += Invoke-QuickBenchmark -Label Before
+        Invoke-LabApply
+        Write-Host 'Block B1: tuned'
+        $afterBlocks += Invoke-QuickBenchmark -Label After
+        Write-Host 'Block B2: tuned repeat'
+        $afterBlocks += Invoke-QuickBenchmark -Label After
+
+        Write-Host 'Restoring the protected pre-tune state for counterbalanced block A2...'
+        Invoke-RestoreBackup -Path (Get-BackupPath)
+        Write-Host 'Block A2: untuned repeat'
+        $beforeBlocks += Invoke-QuickBenchmark -Label Before
+
+        Write-Host 'Block B3: tuned, reversed-order session'
+        Invoke-LabApply
+        $afterBlocks += Invoke-QuickBenchmark -Label After
+        Write-Host 'Block A3: untuned, reversed-order session'
+        Invoke-RestoreBackup -Path (Get-BackupPath)
+        $beforeBlocks += Invoke-QuickBenchmark -Label Before
+        Write-Host 'Block A4: untuned repeat'
+        $beforeBlocks += Invoke-QuickBenchmark -Label Before
+        Write-Host 'Block B4: final tuned state'
+        Invoke-LabApply
+        $afterBlocks += Invoke-QuickBenchmark -Label After
+        $beforeAggregate = Merge-BenchmarkBlocks -Blocks $beforeBlocks -Label Before
+        $afterAggregate = Merge-BenchmarkBlocks -Blocks $afterBlocks -Label After
+        [void](Show-BenchmarkComparison -BeforePath $beforeAggregate.Path -AfterPath $afterAggregate.Path)
+        Write-Host ''
+        Write-Host 'The aggregate uses both A-B-B-A and B-A-A-B orderings to reduce position bias.'
+        Write-Host 'The tuned state is active. No restart was required for the quick CPU/process tests.'
+        Write-Host 'Use RestartTest separately to validate settings that reload at sign-in.'
+    }
+    catch {
+        $originalError = $_.Exception.Message
+        if ($startedTuned) {
+            try {
+                $current = Get-ConfigurationState
+                if (@($current | Where-Object { -not $_.Compliant }).Count -gt 0) {
+                    Invoke-LabApply
+                }
+            }
+            catch {
+                throw "$originalError The test also could not restore the initial tuned state: $($_.Exception.Message)"
+            }
+        }
+        throw $originalError
+    }
+}
+
+function Get-PersistentScriptPath {
+    if (-not [string]::IsNullOrWhiteSpace($script:OriginalScriptPath) -and (Test-Path -LiteralPath $script:OriginalScriptPath)) {
+        return (Resolve-Path -LiteralPath $script:OriginalScriptPath).Path
+    }
+    if ([string]::IsNullOrWhiteSpace($script:OriginalScriptText) -or $script:OriginalScriptText.Length -lt 10000) {
+        throw 'This action must run from the downloaded .ps1 file so Windows can resume it after restart.'
+    }
+    $cache = Join-Path $env:LOCALAPPDATA 'Lacksan\ZBookPerformance\Lacksan-ZBook-Performance.ps1'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $cache) -Force | Out-Null
+    [IO.File]::WriteAllText($cache, $script:OriginalScriptText, (New-Object Text.UTF8Encoding($false)))
+    return $cache
+}
+
+function Invoke-ElevatedRelaunch {
+    param([Parameter(Mandatory = $true)][string]$RequestedAction)
+    if (Test-IsAdministrator) {
+        return $false
+    }
+    $scriptPath = Get-PersistentScriptPath
+    $argumentLine = '-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + $scriptPath + '" -Action "' + $RequestedAction + '" -BenchmarkRuns ' + $BenchmarkRuns
+    if (-not [string]::IsNullOrWhiteSpace($BackupId)) {
+        $argumentLine += ' -BackupId "' + $BackupId + '"'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($DataRoot)) {
+        $argumentLine += ' -DataRoot "' + $DataRoot + '"'
+    }
+    Write-Host 'Opening the administrator run...'
+    $process = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+        -Verb RunAs `
+        -ArgumentList $argumentLine `
+        -WindowStyle Normal `
+        -Wait `
+        -PassThru
+    if ($process.ExitCode -ne 0) {
+        throw "The administrator run ended with code $($process.ExitCode). Check the latest log for details."
+    }
+    return $true
+}
+
+function Get-RestartStateRoot {
+    $root = Join-Path $DataRoot 'RestartTests'
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    return $root
+}
+
+function Write-IntegrityProtectedJson {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    [IO.File]::WriteAllText($Path, ($Value | ConvertTo-Json -Depth 18), (New-Object Text.UTF8Encoding($false)))
+    $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    [IO.File]::WriteAllText($Path + '.sha256', $hash + [Environment]::NewLine, (New-Object Text.ASCIIEncoding))
+}
+
+function Read-IntegrityProtectedJson {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path) -or -not (Test-Path -LiteralPath ($Path + '.sha256'))) {
+        throw "Restart state is incomplete at '$Path'."
+    }
+    $expected = (Get-Content -LiteralPath ($Path + '.sha256') -Raw).Trim()
+    $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    if ($actual -cne $expected) {
+        throw "Restart state integrity verification failed at '$Path'."
+    }
+    return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+}
+
+function Get-AutoLoginRegistryCapture {
+    $path = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    foreach ($name in @('AutoAdminLogon', 'DefaultUserName', 'DefaultDomainName', 'AutoLogonCount', 'DefaultPassword')) {
+        [pscustomobject]@{
+            Id = "AutoLogin.$name"
+            Path = $path
+            Name = $name
+            Original = Get-RegistryState -Path $path -Name $name
+        }
+    }
+}
+
+function Register-RestartResumeTask {
+    param(
+        [Parameter(Mandatory = $true)][string]$ScriptPath,
+        [Parameter(Mandatory = $true)][string]$StateId,
+        [Parameter(Mandatory = $true)][string]$TaskName
+    )
+    if (Get-ScheduledTask -TaskName $TaskName -TaskPath '\' -ErrorAction SilentlyContinue) {
+        throw "The restart-resume task '$TaskName' already exists. Use StopAutoLogin before starting another restart test."
+    }
+    $quotedScript = '"' + $ScriptPath + '"'
+    $quotedRoot = '"' + $DataRoot + '"'
+    $arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File $quotedScript -Action Resume -RestartStateId $StateId -BenchmarkRuns $BenchmarkRuns -DataRoot $quotedRoot"
+    $taskAction = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument $arguments
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User ([Security.Principal.WindowsIdentity]::GetCurrent().Name)
+    $principal = New-ScheduledTaskPrincipal `
+        -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) `
+        -LogonType Interactive `
+        -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 20)
+    Register-ScheduledTask `
+        -TaskName $TaskName `
+        -TaskPath '\' `
+        -Action $taskAction `
+        -Trigger $trigger `
+        -Principal $principal `
+        -Settings $settings `
+        -Description 'One-time Lacksan ZBook post-restart verification and autologon cleanup.' `
+        -Force | Out-Null
+}
+
+function Enable-OneTimeAutoLogin {
+    param([Security.SecureString]$Password)
+    if (-not (Test-IsAdministrator)) {
+        throw 'RestartTest requires administrator rights.'
+    }
+    Initialize-AutoLogonNative
+    $registryCapture = @(Get-AutoLoginRegistryCapture)
+    $autoAdmin = $registryCapture | Where-Object { $_.Name -eq 'AutoAdminLogon' } | Select-Object -First 1
+    $plainDefaultPassword = $registryCapture | Where-Object { $_.Name -eq 'DefaultPassword' } | Select-Object -First 1
+    if (
+        ($autoAdmin.Original.ValueExists -and [string]$autoAdmin.Original.Value -eq '1') -or
+        $plainDefaultPassword.Original.ValueExists -or
+        [LacksanAutoLogonNative]::HasDefaultPassword()
+    ) {
+        throw 'Windows auto-login is already configured. The tool will not overwrite an existing credential secret.'
+    }
+    if ($null -eq $Password) {
+        $Password = Read-Host 'Enter this Windows account password (masked; never logged)' -AsSecureString
+    }
+    if ($null -eq $Password -or $Password.Length -eq 0) {
+        throw 'A Windows account password is required for automatic sign-in.'
+    }
+
+    $scriptPath = Get-PersistentScriptPath
+    $stateId = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffZ') + '-' + $script:RunId.Substring(0, 8)
+    $taskName = 'Lacksan-ZBookPerformance-Resume'
+    $stateFolder = Join-Path (Get-RestartStateRoot) $stateId
+    New-Item -ItemType Directory -Path $stateFolder -Force | Out-Null
+    $manifestPath = Join-Path $stateFolder 'restart-state.json'
+    $manifest = [ordered]@{
+        SchemaVersion = 1
+        StateId = $stateId
+        CreatedUtc = (Get-Date).ToUniversalTime().ToString('o')
+        BootTimeBefore = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
+        UserSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        UserName = $env:USERNAME
+        Domain = $env:USERDOMAIN
+        TaskName = $taskName
+        ScriptPath = $scriptPath
+        Registry = $registryCapture
+        ExistingLsaSecret = $false
+        Status = 'Prepared'
+    }
+    Write-IntegrityProtectedJson -Value $manifest -Path $manifestPath
+
+    $bstr = [IntPtr]::Zero
+    $plain = $null
+    try {
+        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password)
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+        if (-not [LacksanAutoLogonNative]::ValidateCredential($env:USERNAME, $env:USERDOMAIN, $plain)) {
+            throw 'Windows rejected the supplied account password. Auto-login was not enabled.'
+        }
+        [LacksanAutoLogonNative]::StoreDefaultPassword($plain)
+        $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+        Set-RegistryValueExact -Path $winlogon -Name 'AutoAdminLogon' -Type String -Value '1'
+        Set-RegistryValueExact -Path $winlogon -Name 'DefaultUserName' -Type String -Value $env:USERNAME
+        Set-RegistryValueExact -Path $winlogon -Name 'DefaultDomainName' -Type String -Value $env:USERDOMAIN
+        Set-RegistryValueExact -Path $winlogon -Name 'AutoLogonCount' -Type DWord -Value ([int]1)
+        if ((Get-RegistryState -Path $winlogon -Name 'DefaultPassword').ValueExists) {
+            Remove-ItemProperty -LiteralPath $winlogon -Name 'DefaultPassword' -Force
+        }
+        Register-RestartResumeTask -ScriptPath $scriptPath -StateId $stateId -TaskName $taskName
+        Write-LabEvent -Event 'OneTimeAutoLoginEnabled' -Status 'Change' -Data @{
+            StateId = $stateId
+            TaskName = $taskName
+            PasswordStorage = 'LSA secret'
+        }
+        return [pscustomobject]@{ StateId = $stateId; ManifestPath = $manifestPath; TaskName = $taskName }
+    }
+    catch {
+        try { [LacksanAutoLogonNative]::StoreDefaultPassword($null) } catch {}
+        foreach ($entry in $registryCapture) {
+            try { Restore-RegistryState -Entry $entry } catch {}
+        }
+        try { Unregister-ScheduledTask -TaskName $taskName -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+        throw
+    }
+    finally {
+        $plain = $null
+        if ($bstr -ne [IntPtr]::Zero) {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+    }
+}
+
+function Restore-AutoLoginState {
+    param([Parameter(Mandatory = $true)]$State)
+    Initialize-AutoLogonNative
+    [LacksanAutoLogonNative]::StoreDefaultPassword($null)
+    foreach ($entry in $State.Registry) {
+        Restore-RegistryState -Entry $entry
+    }
+    Unregister-ScheduledTask -TaskName $State.TaskName -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
+    Write-LabEvent -Event 'OneTimeAutoLoginRemoved' -Status 'Pass' -Data @{ StateId = $State.StateId; TaskName = $State.TaskName }
+}
+
+function Get-RestartStateManifestPath {
+    param([string]$StateId)
+    $root = Get-RestartStateRoot
+    if (-not [string]::IsNullOrWhiteSpace($StateId)) {
+        $candidate = Join-Path (Join-Path $root $StateId) 'restart-state.json'
+        if (-not (Test-Path -LiteralPath $candidate)) {
+            throw "Restart state '$StateId' was not found."
+        }
+        return $candidate
+    }
+    $latest = Get-ChildItem -LiteralPath $root -Directory |
+        Sort-Object Name -Descending |
+        ForEach-Object { Join-Path $_.FullName 'restart-state.json' } |
+        Where-Object { Test-Path -LiteralPath $_ } |
+        Select-Object -First 1
+    if (-not $latest) {
+        throw 'No restart-test state was found.'
+    }
+    return $latest
+}
+
+function Invoke-RestartResume {
+    if (-not (Test-IsAdministrator)) {
+        throw 'The post-restart verification task did not receive administrator rights.'
+    }
+    $manifestPath = Get-RestartStateManifestPath -StateId $RestartStateId
+    $state = Read-IntegrityProtectedJson -Path $manifestPath
+    $verificationError = $null
+    try {
+        $currentBoot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
+        if ($currentBoot -le [datetime]$state.BootTimeBefore) {
+            throw 'Windows has not rebooted since the restart test was prepared.'
+        }
+        Invoke-LabVerify
+        $benchmark = Invoke-QuickBenchmark -Label AfterRestart
+        $result = [ordered]@{
+            StateId = $state.StateId
+            CompletedUtc = (Get-Date).ToUniversalTime().ToString('o')
+            RebootObserved = $true
+            Verification = 'Pass'
+            BenchmarkPath = $benchmark.Path
+        }
+        Write-IntegrityProtectedJson -Value $result -Path (Join-Path (Split-Path -Parent $manifestPath) 'restart-result.json')
+        Write-LabEvent -Event 'RestartPersistenceVerification' -Status 'Pass' -Data $result
+    }
+    catch {
+        $verificationError = $_.Exception.Message
+        Write-LabEvent -Event 'RestartPersistenceVerification' -Status 'Failure' -Data @{ StateId = $state.StateId; Error = $verificationError }
+    }
+    finally {
+        Restore-AutoLoginState -State $state
+    }
+    if ($verificationError) {
+        throw $verificationError
+    }
+    Write-Host 'Restart verification passed. One-time auto-login was removed.'
+}
+
+function Invoke-StopAutoLogin {
+    if (-not (Test-IsAdministrator)) {
+        throw 'StopAutoLogin requires administrator rights.'
+    }
+    $manifestPath = Get-RestartStateManifestPath -StateId $RestartStateId
+    $state = Read-IntegrityProtectedJson -Path $manifestPath
+    Restore-AutoLoginState -State $state
+    Write-Host 'The one-time auto-login credential and resume task were removed.'
+}
+
+function Invoke-RestartTest {
+    if (-not (Test-IsAdministrator)) {
+        throw 'RestartTest requires administrator rights.'
+    }
+    $snapshot = Get-SystemSnapshot
+    $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$AllowManagedDevice
+    if (-not $support.Supported) {
+        throw "Restart test stopped: $(@($support.Reasons) -join ' ')"
+    }
+    $states = Get-ConfigurationState
+    if (@($states | Where-Object { -not $_.Compliant }).Count -gt 0) {
+        Invoke-LabApply
+    }
+    [void](Invoke-QuickBenchmark -Label BeforeRestart)
+    $prepared = Enable-OneTimeAutoLogin -Password $AutoLoginPassword
+    Write-Host ''
+    Write-Host 'One-time automatic sign-in is enabled with an LSA-protected credential.' -ForegroundColor Yellow
+    Write-Host 'Windows will restart in 30 seconds. Run shutdown /a to cancel the restart.'
+    Write-Host 'After sign-in, the tool will verify persistence, run a quick benchmark, remove auto-login, and delete its resume task.'
+    Write-LabEvent -Event 'RestartScheduled' -Status 'Change' -Data @{ StateId = $prepared.StateId; DelaySeconds = 30 }
+    & "$env:SystemRoot\System32\shutdown.exe" /r /t 30 /d p:0:0 /c 'Lacksan ZBook performance restart verification'
+    if ($LASTEXITCODE -ne 0) {
+        $state = Read-IntegrityProtectedJson -Path $prepared.ManifestPath
+        Restore-AutoLoginState -State $state
+        throw "Windows rejected the restart request with code $LASTEXITCODE. Auto-login was removed."
+    }
+}
+
 function Show-Configuration {
     Write-Host ''
     Write-Host 'Registry and preference settings'
@@ -1039,54 +2055,90 @@ function Invoke-SelfTest {
         throw "Self-test failed: $(@($failures) -join '; ')"
     }
     Initialize-PowerNative
+    Initialize-AutoLogonNative
     [void](Get-ActivePowerScheme)
+    if (Test-IsAdministrator) {
+        [void][LacksanAutoLogonNative]::HasDefaultPassword()
+    }
     Write-LabEvent -Event 'SelfTest' -Status 'Pass' -Data @{ SettingCount = $ids.Count }
     Write-Host "Self-test passed for $($ids.Count) allow-listed settings."
 }
 
+function Resolve-FriendlyAction {
+    param([string]$Requested)
+    switch ($Requested.ToLowerInvariant()) {
+        'menu' { return 'Menu' }
+        'interactive' { return 'Menu' }
+        'check' { return 'Check' }
+        'audit' { return 'Check' }
+        'benchmark' { return 'Benchmark' }
+        'tune' { return 'Tune' }
+        'apply' { return 'Tune' }
+        'fulltest' { return 'FullTest' }
+        'beforeafter' { return 'FullTest' }
+        'compare' { return 'Compare' }
+        'undo' { return 'Undo' }
+        'rollback' { return 'Undo' }
+        'restarttest' { return 'RestartTest' }
+        'resume' { return 'Resume' }
+        'stopautologin' { return 'StopAutoLogin' }
+        'backups' { return 'Backups' }
+        'listbackups' { return 'Backups' }
+        'settings' { return 'Settings' }
+        'configuration' { return 'Settings' }
+        'details' { return 'Details' }
+        'preview' { return 'Details' }
+        'test' { return 'Test' }
+        'selftest' { return 'Test' }
+        'backup' { return 'Backup' }
+        'verify' { return 'Check' }
+        default {
+            throw "Unknown action '$Requested'. Use Menu, Check, Benchmark, Tune, FullTest, Compare, Undo, RestartTest, StopAutoLogin, Backups, or Settings."
+        }
+    }
+}
+
 function Start-Interactive {
     do {
-        Clear-Host
+        Write-Host ''
         Write-Host "$($script:ToolName) $($script:ToolVersion) [EXPERIMENTAL]"
-        Write-Host '1. Audit this computer'
-        Write-Host '2. Preview baseline'
-        Write-Host '3. Apply baseline'
-        Write-Host '4. Verify baseline'
-        Write-Host '5. Roll back latest backup'
-        Write-Host '6. List backups'
-        Write-Host '7. Show configuration'
+        Write-Host '1. Run complete before/after test'
+        Write-Host '2. Run quick benchmark'
+        Write-Host '3. Tune this ZBook'
+        Write-Host '4. Check status'
+        Write-Host '5. Undo tuning'
+        Write-Host '6. Restart and verify automatically'
+        Write-Host '7. More: settings and backups'
         Write-Host '8. Exit'
         $choice = Read-Host 'Choose'
         try {
             switch ($choice) {
-                '1' { [void](Show-Audit) }
-                '2' { [void](Show-Preview) }
+                '1' {
+                    if (-not (Invoke-ElevatedRelaunch -RequestedAction FullTest)) {
+                        Invoke-FullBeforeAfterTest
+                    }
+                }
+                '2' { [void](Invoke-QuickBenchmark -Label Current) }
                 '3' {
-                    if (-not (Test-IsAdministrator)) {
-                        Write-Host 'Close this window and start Windows PowerShell with Run as administrator.' -ForegroundColor Yellow
-                    }
-                    else {
-                        $confirm = Read-Host 'Type APPLY to accept experimental AC heat/noise/energy tradeoffs'
-                        if ($confirm -ceq 'APPLY') {
-                            $script:AcceptExperimentalRisk = $true
-                            Invoke-LabApply
-                        }
+                    if (-not (Invoke-ElevatedRelaunch -RequestedAction Tune)) {
+                        Invoke-LabApply
                     }
                 }
-                '4' { Invoke-LabVerify }
+                '4' { [void](Show-Audit) }
                 '5' {
-                    if (-not (Test-IsAdministrator)) {
-                        Write-Host 'Rollback requires Windows PowerShell started with Run as administrator.' -ForegroundColor Yellow
-                    }
-                    else {
-                        $confirm = Read-Host 'Type ROLLBACK to restore the latest backup'
-                        if ($confirm -ceq 'ROLLBACK') {
-                            Invoke-RestoreBackup -Path (Get-BackupPath)
-                        }
+                    if (-not (Invoke-ElevatedRelaunch -RequestedAction Undo)) {
+                        Invoke-RestoreBackup -Path (Get-BackupPath)
                     }
                 }
-                '6' { Show-Backups }
-                '7' { Show-Configuration }
+                '6' {
+                    if (-not (Invoke-ElevatedRelaunch -RequestedAction RestartTest)) {
+                        Invoke-RestartTest
+                    }
+                }
+                '7' {
+                    Show-Configuration
+                    Show-Backups
+                }
                 '8' { return }
                 default { Write-Host 'Unknown selection.' -ForegroundColor Yellow }
             }
@@ -1095,23 +2147,41 @@ function Start-Interactive {
             Write-Host $_.Exception.Message -ForegroundColor Red
             Write-LabEvent -Event 'InteractiveActionFailed' -Status 'Failure' -Data @{ Error = $_.Exception.Message; Choice = $choice }
         }
-        if ($choice -ne '8') {
-            [void](Read-Host 'Press Enter to continue')
-        }
     } while ($true)
 }
 
-Initialize-LabLog -RequestedMode $Mode
+$resolvedAction = Resolve-FriendlyAction -Requested $Action
+Initialize-LabLog -RequestedMode $resolvedAction
 try {
-    if ($WhatIfPreference -and $Mode -in @('Apply', 'Backup', 'Rollback')) {
+    if ($WhatIfPreference -and $resolvedAction -in @('Tune', 'Backup', 'Undo', 'FullTest', 'RestartTest', 'StopAutoLogin')) {
         Write-Host '-WhatIf selected; showing the dry-run preview. No backup or setting is written.'
         [void](Show-Preview)
     }
     else {
-        switch ($Mode) {
-            'Interactive' { Start-Interactive }
-            'Audit' { [void](Show-Audit) }
-            'Preview' { [void](Show-Preview) }
+        $elevatedActions = @('Tune', 'Backup', 'Undo', 'FullTest', 'RestartTest', 'StopAutoLogin')
+        if ($resolvedAction -in $elevatedActions -and -not (Test-IsAdministrator)) {
+            if (Invoke-ElevatedRelaunch -RequestedAction $resolvedAction) {
+                Write-Host "$resolvedAction completed in the administrator window."
+                Write-LabEvent -Event 'ElevatedRelaunchCompleted' -Status 'Pass' -Data @{ Action = $resolvedAction }
+                Write-LabEvent -Event 'RunCompleted' -Status 'Pass' -Data @{ Action = $resolvedAction }
+                exit 0
+            }
+        }
+        switch ($resolvedAction) {
+            'Menu' { Start-Interactive }
+            'Check' { [void](Show-Audit) }
+            'Benchmark' { [void](Invoke-QuickBenchmark -Label Current) }
+            'Tune' { Invoke-LabApply }
+            'FullTest' { Invoke-FullBeforeAfterTest }
+            'Compare' { [void](Show-BenchmarkComparison) }
+            'Undo' { Invoke-RestoreBackup -Path (Get-BackupPath -RequestedId $BackupId) }
+            'RestartTest' { Invoke-RestartTest }
+            'Resume' { Invoke-RestartResume }
+            'StopAutoLogin' { Invoke-StopAutoLogin }
+            'Backups' { Show-Backups }
+            'Settings' { Show-Configuration }
+            'Details' { [void](Show-Preview) }
+            'Test' { Invoke-SelfTest }
             'Backup' {
                 $snapshot = Get-SystemSnapshot
                 $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$AllowManagedDevice
@@ -1119,18 +2189,12 @@ try {
                 $backup = New-LabBackup -Snapshot $snapshot -PermitNoRestorePoint:$AllowNoRestorePoint
                 Write-Host "Backup created: $($backup.Id)"
             }
-            'Apply' { Invoke-LabApply }
-            'Verify' { Invoke-LabVerify }
-            'Rollback' { Invoke-RestoreBackup -Path (Get-BackupPath -RequestedId $BackupId) }
-            'ListBackups' { Show-Backups }
-            'Configuration' { Show-Configuration }
-            'SelfTest' { Invoke-SelfTest }
         }
     }
-    Write-LabEvent -Event 'RunCompleted' -Status 'Pass' -Data @{ Mode = $Mode }
+    Write-LabEvent -Event 'RunCompleted' -Status 'Pass' -Data @{ Action = $resolvedAction }
 }
 catch {
-    Write-LabEvent -Event 'RunCompleted' -Status 'Failure' -Data @{ Mode = $Mode; Error = $_.Exception.Message }
+    Write-LabEvent -Event 'RunCompleted' -Status 'Failure' -Data @{ Action = $resolvedAction; Error = $_.Exception.Message }
     Write-Error $_.Exception.Message
     exit 1
 }

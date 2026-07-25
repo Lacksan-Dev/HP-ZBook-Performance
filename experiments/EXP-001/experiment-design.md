@@ -65,18 +65,47 @@ The active scheme is retained. Only its AC indices are candidates:
 
 | Setting | Candidate | Compatibility meaning |
 |---|---:|---|
-| `PERFEPP` | 0 | Favors performance on supported autonomous CPPC systems. |
+| `PERFEPP` | 33 | Retains the measured balanced AC value; value 0 remains a rejected/inconclusive screening candidate. |
 | `CPMINCORES` | 100% | Disables core parking for the applicable policy. |
 | `PROCTHROTTLEMAX` | 100% | Permits the maximum processor performance state. |
 | `PERFBOOSTMODE` | 2 | Aggressive boost for applicable P-state/CPPC behavior. |
 | `SYSCOOLPOL` | 1 | Active cooling policy. |
 
 Microsoft documents these interfaces and Windows 11 x64 support, but also notes
-that processor power policy is normally tuned by silicon vendors. The values
-are therefore experimental on this exact BIOS/driver/device combination.
-Firmware, Intel Dynamic Tuning, thermal limits, and HP policy may cap or override
-requested behavior. Higher AC heat, fan noise, and energy use are expected
-tradeoffs. Battery/DC values are captured and preserved.
+that processor power policy is normally tuned by silicon vendors. Initial and
+counterbalanced quick screening did not show a consistent responsiveness
+benefit from forcing `PERFEPP=0`; the implementation therefore retains the
+measured balanced value 33. Firmware, Intel Dynamic Tuning, thermal limits, and
+HP policy may cap or override requested behavior. Battery/DC values are
+captured and preserved.
+
+## Benchmark and restart design
+
+The customer surface uses simple actions:
+
+- `Check`: friendly support and tuning state;
+- `Benchmark`: seven raw runs and a median for each quick screening metric;
+- `Tune`: automatic elevation, backup, apply, and verification;
+- `FullTest`: A-B-B-A plus B-A-A-B blocks, 28 raw runs per configuration and
+  metric, median comparison, and final tuned state;
+- `Undo`: exact latest-backup rollback; and
+- `RestartTest`: one-time automatic sign-in, persistence verification,
+  post-restart benchmark, and automatic credential/task cleanup.
+
+The quick metrics measure PowerShell process startup, Command Prompt process
+startup, and a fixed SHA-256 CPU burst. Low CPU/disk readiness samples,
+warm-ups, every raw run, failures, medians, environment, and comparison are
+saved. They screen implementation candidates but do not substitute for the nine
+customer-facing workflows.
+
+For the personally owned lab PC, `RestartTest` stores the supplied password as
+a Windows LSA private-data secret, never as a plaintext Winlogon
+`DefaultPassword`. It captures original Winlogon values and refuses to overwrite
+existing auto-login configuration. A one-time highest-privilege task for the
+current interactive user verifies after reboot and then clears the secret,
+restores original state, and unregisters itself. A masked password entry is
+unavoidable because Windows cannot derive an account password from Windows
+Hello.
 
 ## Transaction and rollback design
 
@@ -135,4 +164,7 @@ All sources were retrieved 2026-07-25.
 - [Microsoft `PowerReadACValueIndex`](https://learn.microsoft.com/en-us/windows/win32/api/powrprof/nf-powrprof-powerreadacvalueindex)
 - [Microsoft `Checkpoint-Computer`](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/checkpoint-computer?view=powershell-5.1)
 - [Microsoft System Restore behavior](https://learn.microsoft.com/en-us/windows/win32/sr/restoring-the-system)
+- [Microsoft Sysinternals Autologon](https://learn.microsoft.com/en-us/sysinternals/downloads/autologon)
+- [Microsoft protecting the automatic-logon password](https://learn.microsoft.com/en-us/windows/win32/secauthn/protecting-the-automatic-logon-password)
+- [Microsoft automatic logon configuration and risks](https://learn.microsoft.com/en-us/troubleshoot/windows-server/user-profiles-and-logon/turn-on-automatic-logon)
 - [HP ZBook Firefly 14 G8 support page](https://support.hp.com/us-en/product/product-specs/hp-zbook-firefly-14-inch-g8-mobile-workstation-pc/model/2100000209)

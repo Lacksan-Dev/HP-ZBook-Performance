@@ -16,7 +16,7 @@ if (@($parseErrors).Count -gt 0) {
     }
 }
 
-foreach ($testMode in @('SelfTest', 'Audit', 'Preview', 'Configuration')) {
+foreach ($testMode in @('SelfTest', 'Audit', 'Preview', 'Configuration', 'Check', 'Settings', 'Backups')) {
     $output = & $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tool -Mode $testMode 2>&1
     if ($LASTEXITCODE -ne 0) {
         $failures.Add("$testMode exited $LASTEXITCODE`: $($output -join ' ')")
@@ -29,6 +29,32 @@ if ($LASTEXITCODE -ne 0) {
 }
 if (($whatIfOutput -join "`n") -notmatch 'No backup or setting is written') {
     $failures.Add('Apply -WhatIf did not report the dry-run safety boundary.')
+}
+
+foreach ($changingAction in @('FullTest', 'RestartTest', 'StopAutoLogin')) {
+    $output = & $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tool $changingAction -WhatIf 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $failures.Add("$changingAction -WhatIf exited $LASTEXITCODE`: $($output -join ' ')")
+    }
+    if (($output -join "`n") -notmatch 'No backup or setting is written') {
+        $failures.Add("$changingAction -WhatIf did not report the dry-run safety boundary.")
+    }
+}
+
+$benchmarkOutput = & $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tool Benchmark -BenchmarkRuns 3 2>&1
+if ($LASTEXITCODE -ne 0) {
+    $failures.Add("Benchmark exited $LASTEXITCODE`: $($benchmarkOutput -join ' ')")
+}
+if (($benchmarkOutput -join "`n") -notmatch 'Raw results:') {
+    $failures.Add('Benchmark did not preserve and report a raw-result file.')
+}
+
+$sourceText = Get-Content -LiteralPath $tool -Raw
+if ($sourceText -match "Name 'DefaultPassword' -Type String -Value") {
+    $failures.Add('Tool appears to write a plaintext Winlogon DefaultPassword.')
+}
+if ($sourceText -notmatch 'LsaStorePrivateData') {
+    $failures.Add('Tool does not contain the required LSA-secret storage path.')
 }
 
 if ($failures.Count -gt 0) {
