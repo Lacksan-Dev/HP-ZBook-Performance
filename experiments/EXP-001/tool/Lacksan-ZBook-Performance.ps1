@@ -925,6 +925,7 @@ function Get-RestartSafetyState {
         RegistryPrepared = $registryPrepared
         ResumeTaskPresent = $taskPresent
         ResumeTaskVisibility = $taskVisibility
+        TaskStateId = $taskStateId
         MatchingTaskStatePresent = $matchingTaskStatePresent
         MatchingTaskStateValid = $matchingTaskStateValid
         MatchingTaskStateStatus = $matchingTaskStateStatus
@@ -954,6 +955,7 @@ function Show-Audit {
         RegistryPrepared = $restartSafety.RegistryPrepared
         ResumeTaskPresent = $restartSafety.ResumeTaskPresent
         ResumeTaskVisibility = $restartSafety.ResumeTaskVisibility
+        TaskStateId = $restartSafety.TaskStateId
         MatchingTaskStatePresent = $restartSafety.MatchingTaskStatePresent
         MatchingTaskStateValid = $restartSafety.MatchingTaskStateValid
         MatchingTaskStateStatus = $restartSafety.MatchingTaskStateStatus
@@ -2075,7 +2077,20 @@ function Invoke-StopAutoLogin {
     if (-not (Test-IsAdministrator)) {
         throw 'StopAutoLogin requires administrator rights.'
     }
-    $manifestPath = Get-RestartStateManifestPath -StateId $RestartStateId
+    $safety = Get-RestartSafetyState
+    if (-not $safety.RecoveryNeeded) {
+        throw 'No active Lacksan restart test was found. Automatic sign-in was not changed.'
+    }
+    if (-not $safety.ToolRecoveryAvailable) {
+        throw 'Cleanup stopped because the active auto-login or resume task does not have a matching, valid Lacksan recovery record.'
+    }
+    if (
+        -not [string]::IsNullOrWhiteSpace($RestartStateId) -and
+        [string]$RestartStateId -cne [string]$safety.TaskStateId
+    ) {
+        throw "Cleanup stopped because requested state '$RestartStateId' does not match the active resume task."
+    }
+    $manifestPath = Get-RestartStateManifestPath -StateId $safety.TaskStateId
     $state = Read-IntegrityProtectedJson -Path $manifestPath
     Restore-AutoLoginState -State $state
     Write-Host 'The one-time auto-login credential and resume task were removed.'

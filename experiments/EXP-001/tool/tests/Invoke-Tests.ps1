@@ -68,6 +68,12 @@ if ($sourceText -notmatch 'MatchingTaskStateValid') {
 if ($sourceText -notmatch 'Read-IntegrityProtectedJson -Path \$matchingTaskManifestPath') {
     $failures.Add('Check does not validate recovery-manifest integrity before offering cleanup.')
 }
+if ($sourceText -notmatch 'if \(-not \$safety\.ToolRecoveryAvailable\)') {
+    $failures.Add('StopAutoLogin does not enforce recovery-record ownership at its action boundary.')
+}
+if ($sourceText -notmatch 'Get-RestartStateManifestPath -StateId \$safety\.TaskStateId') {
+    $failures.Add('StopAutoLogin does not use the state ID from the active resume task.')
+}
 
 foreach ($functionName in @('Write-IntegrityProtectedJson', 'Read-IntegrityProtectedJson')) {
     $functionAst = @(
