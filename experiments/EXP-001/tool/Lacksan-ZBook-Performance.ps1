@@ -852,7 +852,6 @@ function Get-RestartSafetyState {
     $taskName = 'Lacksan-ZBookPerformance-Resume'
     $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
     $autoAdmin = Get-RegistryState -Path $winlogon -Name 'AutoAdminLogon'
-    $autoLogonCount = Get-RegistryState -Path $winlogon -Name 'AutoLogonCount'
     $taskPresent = $false
     $taskVisibility = 'Available'
     try {
@@ -875,7 +874,7 @@ function Get-RestartSafetyState {
     $registryPrepared = (
         $autoAdmin.ValueExists -and
         [string]$autoAdmin.Value -eq '1'
-    ) -or $autoLogonCount.ValueExists
+    )
     $recoveryNeeded = $registryPrepared -or $taskPresent
 
     return [pscustomobject]@{
