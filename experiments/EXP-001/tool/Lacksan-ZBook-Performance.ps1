@@ -848,6 +848,45 @@ function Get-ConfigurationState {
     return @($registry) + @($power)
 }
 
+function Get-RestartSafetyState {
+    $taskName = 'Lacksan-ZBookPerformance-Resume'
+    $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    $autoAdmin = Get-RegistryState -Path $winlogon -Name 'AutoAdminLogon'
+    $autoLogonCount = Get-RegistryState -Path $winlogon -Name 'AutoLogonCount'
+    $taskPresent = $false
+    $taskVisibility = 'Available'
+    try {
+        $taskPresent = $null -ne (Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue)
+    }
+    catch {
+        $taskVisibility = 'Unavailable'
+    }
+
+    $stateRoot = Join-Path $DataRoot 'RestartTests'
+    $stateRecords = @()
+    if (Test-Path -LiteralPath $stateRoot) {
+        $stateRecords = @(
+            Get-ChildItem -LiteralPath $stateRoot -Directory -ErrorAction SilentlyContinue |
+                ForEach-Object { Join-Path $_.FullName 'restart-state.json' } |
+                Where-Object { Test-Path -LiteralPath $_ }
+        )
+    }
+
+    $registryPrepared = (
+        $autoAdmin.ValueExists -and
+        [string]$autoAdmin.Value -eq '1'
+    ) -or $autoLogonCount.ValueExists
+    $recoveryNeeded = $registryPrepared -or $taskPresent
+
+    return [pscustomobject]@{
+        RecoveryNeeded = $recoveryNeeded
+        RegistryPrepared = $registryPrepared
+        ResumeTaskPresent = $taskPresent
+        ResumeTaskVisibility = $taskVisibility
+        PreservedStateRecordCount = $stateRecords.Count
+    }
+}
+
 function Show-Audit {
     $snapshot = Get-SystemSnapshot
     $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$AllowManagedDevice
@@ -863,6 +902,14 @@ function Show-Audit {
 
     $states = Get-ConfigurationState
     $pending = @($states | Where-Object { -not $_.Compliant })
+    $restartSafety = Get-RestartSafetyState
+    Write-LabEvent -Event 'RestartSafetyState' -Status $(if ($restartSafety.RecoveryNeeded) { 'Warning' } else { 'Pass' }) -Data @{
+        RecoveryNeeded = $restartSafety.RecoveryNeeded
+        RegistryPrepared = $restartSafety.RegistryPrepared
+        ResumeTaskPresent = $restartSafety.ResumeTaskPresent
+        ResumeTaskVisibility = $restartSafety.ResumeTaskVisibility
+        PreservedStateRecordCount = $restartSafety.PreservedStateRecordCount
+    }
     Write-Host ''
     Write-Host "$($script:ToolName) $($script:ToolVersion)"
     Write-Host ''
@@ -894,8 +941,18 @@ function Show-Audit {
     else {
         Write-Host "Tuning state: NOT YET APPLIED ($($pending.Count) change(s) available)" -ForegroundColor Cyan
     }
+    if ($restartSafety.RecoveryNeeded) {
+        Write-Host 'Restart test: ATTENTION - one-time auto-login or its resume task is still prepared.' -ForegroundColor Yellow
+        Write-Host 'Recovery: run this tool with StopAutoLogin before leaving the computer unattended.' -ForegroundColor Yellow
+    }
+    elseif ($restartSafety.PreservedStateRecordCount -gt 0) {
+        Write-Host "Restart test: no active auto-login; $($restartSafety.PreservedStateRecordCount) preserved restart record(s)."
+    }
+    else {
+        Write-Host 'Restart test: NOT PREPARED (automatic sign-in is off).'
+    }
     Write-Host "Details log: $($script:CurrentLog)"
-    return [pscustomobject]@{ Snapshot = $snapshot; Support = $support }
+    return [pscustomobject]@{ Snapshot = $snapshot; Support = $support; RestartSafety = $restartSafety }
 }
 
 function Show-Preview {

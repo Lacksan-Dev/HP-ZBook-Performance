@@ -21,6 +21,9 @@ foreach ($testMode in @('SelfTest', 'Audit', 'Preview', 'Configuration', 'Check'
     if ($LASTEXITCODE -ne 0) {
         $failures.Add("$testMode exited $LASTEXITCODE`: $($output -join ' ')")
     }
+    if ($testMode -in @('Audit', 'Check') -and ($output -join "`n") -notmatch 'Restart test:') {
+        $failures.Add("$testMode did not report the one-time auto-login safety state.")
+    }
 }
 
 $whatIfOutput = & $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tool -Mode Apply -WhatIf 2>&1

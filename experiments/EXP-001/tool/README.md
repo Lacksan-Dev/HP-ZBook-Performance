@@ -11,7 +11,9 @@ Tune, FullTest, Compare, Undo, and RestartTest.
 - Windows 11 Pro build 26200
 - BIOS T76 01.24.02
 
-Check and Benchmark are read-only. Tune refuses other hardware/build/BIOS
+Check and Benchmark are read-only. Check also reports whether the one-time
+restart/auto-login workflow is inactive, has only a preserved record, or needs
+cleanup with `StopAutoLogin`. Tune refuses other hardware/build/BIOS
 combinations and genuinely managed devices by default. A generic Microsoft
 `MDMMaintenenceTask` without domain/Entra join, MDM URL, or enrollment-specific
 tasks is not treated as active management.
