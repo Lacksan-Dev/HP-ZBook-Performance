@@ -49,6 +49,8 @@ $ErrorActionPreference = 'Stop'
 $script:ToolName = 'Lacksan ZBook Performance'
 $script:ToolVersion = '0.2.0-experimental'
 $script:SchemaVersion = 1
+$script:ScreeningEvidenceClass = 'PreProtocolScreening'
+$script:FormalBaselineEligible = $false
 $script:Expected = [ordered]@{
     Manufacturer = 'HP'
     Model        = 'HP ZBook Firefly 14 inch G8 Mobile Workstation PC'
@@ -1581,10 +1583,12 @@ function Invoke-QuickBenchmark {
         ConfigurationState = $configurationState
         PendingSettingCount = $pending.Count
         RunCountRequested = $BenchmarkRuns
+        EvidenceClass = $script:ScreeningEvidenceClass
+        FormalBaselineEligible = $script:FormalBaselineEligible
         Environment = $snapshot
         Readiness = $readiness
         Metrics = @($metrics)
-        Interpretation = 'Quick screening benchmark only. It does not replace the nine controlled EXP-001 workflows.'
+        Interpretation = 'Pre-protocol screening only. Excluded from the EXP-001 formal observational baseline and its workflow medians.'
     }
     $root = Get-BenchmarkRoot
     $path = Join-Path $root "$($record.BenchmarkId)-$Label-$configurationState.json"
@@ -1593,6 +1597,8 @@ function Invoke-QuickBenchmark {
         BenchmarkId = $record.BenchmarkId
         Label = $Label
         ConfigurationState = $configurationState
+        EvidenceClass = $record.EvidenceClass
+        FormalBaselineEligible = $record.FormalBaselineEligible
         Path = $path
         Medians = @($metrics | Select-Object Id, Median, ValidRunCount, FailedRunCount)
     }
@@ -1600,7 +1606,7 @@ function Invoke-QuickBenchmark {
     Write-Host ''
     $metrics | Select-Object Name, Median, Unit, ValidRunCount, FailedRunCount | Format-Table -AutoSize | Out-Host
     Write-Host "Raw results: $path"
-    Write-Host 'These quick checks are useful for iteration, but they are not yet a customer performance claim.'
+    Write-Host 'Evidence class: PRE-PROTOCOL SCREENING - excluded from the EXP-001 formal baseline.'
     return [pscustomobject]@{ Record = [pscustomobject]$record; Path = $path }
 }
 
@@ -1670,10 +1676,12 @@ function Merge-BenchmarkBlocks {
         ConfigurationState = $expectedConfigurationState
         PendingSettingCount = $aggregatePendingCount
         RunCountRequested = @($metrics | Select-Object -First 1).Runs.Count
+        EvidenceClass = $script:ScreeningEvidenceClass
+        FormalBaselineEligible = $script:FormalBaselineEligible
         Environment = $first.Environment
         SourceBenchmarkIds = @($Blocks | ForEach-Object { $_.Record.BenchmarkId })
         Metrics = @($metrics)
-        Interpretation = 'Counterbalanced aggregate of two raw blocks. Screening evidence only.'
+        Interpretation = "Aggregate of $($Blocks.Count) raw blocks. Pre-protocol screening only; excluded from the EXP-001 formal baseline."
     }
     $root = Get-BenchmarkRoot
     $path = Join-Path $root "$($aggregate.BenchmarkId)-$Label-$($aggregate.ConfigurationState).json"
@@ -1745,6 +1753,8 @@ function Show-BenchmarkComparison {
     $comparison = [ordered]@{
         SchemaVersion = 1
         CreatedUtc = (Get-Date).ToUniversalTime().ToString('o')
+        EvidenceClass = $script:ScreeningEvidenceClass
+        FormalBaselineEligible = $script:FormalBaselineEligible
         BeforeBenchmarkId = $before.BenchmarkId
         AfterBenchmarkId = $after.BenchmarkId
         BeforePath = $BeforePath

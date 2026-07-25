@@ -63,6 +63,25 @@ if ($LASTEXITCODE -ne 0) {
 if (($benchmarkOutput -join "`n") -notmatch 'Raw results:') {
     $failures.Add('Benchmark did not preserve and report a raw-result file.')
 }
+$benchmarkText = $benchmarkOutput -join "`n"
+if ($benchmarkText -notmatch 'Evidence class: PRE-PROTOCOL SCREENING') {
+    $failures.Add('Benchmark did not visibly identify its pre-protocol evidence class.')
+}
+$rawResultMatch = [regex]::Match($benchmarkText, '(?m)^Raw results:\s+(.+?)\s*$')
+if ($rawResultMatch.Success) {
+    try {
+        $rawResultRecord = Get-Content -LiteralPath $rawResultMatch.Groups[1].Value.Trim() -Raw | ConvertFrom-Json
+        if ([string]$rawResultRecord.EvidenceClass -cne 'PreProtocolScreening') {
+            $failures.Add('Benchmark JSON did not identify itself as pre-protocol screening evidence.')
+        }
+        if ($rawResultRecord.FormalBaselineEligible -ne $false) {
+            $failures.Add('Benchmark JSON did not explicitly exclude itself from the formal baseline.')
+        }
+    }
+    catch {
+        $failures.Add("Benchmark evidence-class validation failed: $($_.Exception.Message)")
+    }
+}
 
 $sourceText = Get-Content -LiteralPath $tool -Raw
 if ($sourceText -match "Name 'DefaultPassword' -Type String -Value") {
@@ -106,6 +125,12 @@ if ($sourceText -notmatch 'pending-setting counts are inconsistent') {
 }
 if ($sourceText -notmatch 'do not report configuration state') {
     $failures.Add('Benchmark aggregation does not reject mislabeled configuration blocks.')
+}
+if (([regex]::Matches($sourceText, 'EvidenceClass = \$script:ScreeningEvidenceClass')).Count -lt 3) {
+    $failures.Add('Raw, aggregate, and comparison records do not all carry the screening evidence class.')
+}
+if (([regex]::Matches($sourceText, 'FormalBaselineEligible = \$script:FormalBaselineEligible')).Count -lt 3) {
+    $failures.Add('Raw, aggregate, and comparison records do not all carry formal-baseline eligibility.')
 }
 
 foreach ($functionName in @('Write-IntegrityProtectedJson', 'Read-IntegrityProtectedJson', 'Get-Median', 'Merge-BenchmarkBlocks')) {
@@ -200,6 +225,8 @@ try {
     New-Item -ItemType Directory -Path $aggregateTestRoot -ErrorAction Stop | Out-Null
     $script:ToolVersion = 'test'
     $script:RunId = [guid]::NewGuid().ToString('N')
+    $script:ScreeningEvidenceClass = 'PreProtocolScreening'
+    $script:FormalBaselineEligible = $false
     $consistentBlocks = @(
         New-SyntheticBenchmarkBlock -Id 'before-1' -ConfigurationState 'Untuned' -PendingSettingCount 3
         New-SyntheticBenchmarkBlock -Id 'before-2' -ConfigurationState 'Untuned' -PendingSettingCount 3
@@ -207,6 +234,12 @@ try {
     $aggregateResult = Merge-BenchmarkBlocks -Blocks $consistentBlocks -Label Before
     if ([int]$aggregateResult.Record.PendingSettingCount -ne 3) {
         $failures.Add('Benchmark aggregation did not preserve the observed pending-setting count.')
+    }
+    if (
+        [string]$aggregateResult.Record.EvidenceClass -cne 'PreProtocolScreening' -or
+        $aggregateResult.Record.FormalBaselineEligible -ne $false
+    ) {
+        $failures.Add('Benchmark aggregate was not explicitly excluded from the formal baseline.')
     }
 
     $inconsistentBlocks = @(

@@ -79,8 +79,11 @@ for low background CPU/disk activity, retains all successful and failed raw
 runs, reports medians, and leaves the selected Tune state active. Aggregation
 derives its pending-setting count from the raw blocks and stops if block state
 or counts disagree. The current screening metrics are process startup and a
-fixed CPU burst; they are useful for iteration but do not replace the nine
-customer-workflow protocol.
+fixed CPU burst. New raw, aggregate, and comparison JSON records identify
+themselves as `PreProtocolScreening` with `FormalBaselineEligible` set to
+`false`. They are useful for iteration, but are excluded from the nine-workflow
+formal baseline and its medians by the
+[approved experiment protocol](../experiment-protocol.md).
 
 ## One-time automatic sign-in
 
@@ -128,5 +131,6 @@ not assume a moving branch is unchanged.
   failure, firmware failure, or unrelated later changes.
 - Stable release requires explicit human approval.
 
-See [the implementation design](../experiment-design.md) and
-[validation protocol](../validation-protocol.md).
+See [the implementation design](../experiment-design.md),
+[validation protocol](../validation-protocol.md), and
+[approved experiment protocol](../experiment-protocol.md).
