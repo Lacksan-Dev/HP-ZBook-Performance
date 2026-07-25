@@ -59,6 +59,12 @@ if ($sourceText -match "Name 'DefaultPassword' -Type String -Value") {
 if ($sourceText -notmatch 'LsaStorePrivateData') {
     $failures.Add('Tool does not contain the required LSA-secret storage path.')
 }
+if ($sourceText -notmatch 'will not claim ownership or change that configuration automatically') {
+    $failures.Add('Check does not preserve externally configured automatic sign-in.')
+}
+if ($sourceText -notmatch 'MatchingTaskStatePresent') {
+    $failures.Add('Check does not correlate its resume task with a recovery state record.')
+}
 
 if ($failures.Count -gt 0) {
     $failures | ForEach-Object { Write-Error $_ }

@@ -854,8 +854,17 @@ function Get-RestartSafetyState {
     $autoAdmin = Get-RegistryState -Path $winlogon -Name 'AutoAdminLogon'
     $taskPresent = $false
     $taskVisibility = 'Available'
+    $taskStateId = $null
     try {
-        $taskPresent = $null -ne (Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue)
+        $task = Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue
+        $taskPresent = $null -ne $task
+        if ($taskPresent) {
+            $taskArguments = @($task.Actions | ForEach-Object { [string]$_.Arguments }) -join ' '
+            $stateMatch = [regex]::Match($taskArguments, '(?i)(?:^|\s)-RestartStateId\s+"?([A-Za-z0-9-]+)"?')
+            if ($stateMatch.Success) {
+                $taskStateId = $stateMatch.Groups[1].Value
+            }
+        }
     }
     catch {
         $taskVisibility = 'Unavailable'
@@ -870,18 +879,26 @@ function Get-RestartSafetyState {
                 Where-Object { Test-Path -LiteralPath $_ }
         )
     }
+    $matchingTaskStatePresent = (
+        $taskPresent -and
+        -not [string]::IsNullOrWhiteSpace($taskStateId) -and
+        (Test-Path -LiteralPath (Join-Path (Join-Path $stateRoot $taskStateId) 'restart-state.json'))
+    )
 
     $registryPrepared = (
         $autoAdmin.ValueExists -and
         [string]$autoAdmin.Value -eq '1'
     )
     $recoveryNeeded = $registryPrepared -or $taskPresent
+    $toolRecoveryAvailable = $taskPresent -and $matchingTaskStatePresent
 
     return [pscustomobject]@{
         RecoveryNeeded = $recoveryNeeded
         RegistryPrepared = $registryPrepared
         ResumeTaskPresent = $taskPresent
         ResumeTaskVisibility = $taskVisibility
+        MatchingTaskStatePresent = $matchingTaskStatePresent
+        ToolRecoveryAvailable = $toolRecoveryAvailable
         PreservedStateRecordCount = $stateRecords.Count
     }
 }
@@ -907,6 +924,8 @@ function Show-Audit {
         RegistryPrepared = $restartSafety.RegistryPrepared
         ResumeTaskPresent = $restartSafety.ResumeTaskPresent
         ResumeTaskVisibility = $restartSafety.ResumeTaskVisibility
+        MatchingTaskStatePresent = $restartSafety.MatchingTaskStatePresent
+        ToolRecoveryAvailable = $restartSafety.ToolRecoveryAvailable
         PreservedStateRecordCount = $restartSafety.PreservedStateRecordCount
     }
     Write-Host ''
@@ -940,9 +959,20 @@ function Show-Audit {
     else {
         Write-Host "Tuning state: NOT YET APPLIED ($($pending.Count) change(s) available)" -ForegroundColor Cyan
     }
-    if ($restartSafety.RecoveryNeeded) {
+    if ($restartSafety.RecoveryNeeded -and $restartSafety.ToolRecoveryAvailable) {
         Write-Host 'Restart test: ATTENTION - one-time auto-login or its resume task is still prepared.' -ForegroundColor Yellow
         Write-Host 'Recovery: run this tool with StopAutoLogin before leaving the computer unattended.' -ForegroundColor Yellow
+    }
+    elseif ($restartSafety.RegistryPrepared) {
+        Write-Host 'Restart test: ATTENTION - Windows automatic sign-in is enabled, but no matching Lacksan recovery task and state record were found.' -ForegroundColor Yellow
+        Write-Host 'Safety: this tool will not claim ownership or change that configuration automatically.' -ForegroundColor Yellow
+    }
+    elseif ($restartSafety.ResumeTaskPresent) {
+        Write-Host 'Restart test: ATTENTION - the Lacksan resume task exists without its matching recovery record.' -ForegroundColor Yellow
+        Write-Host 'Safety: automatic cleanup is not attempted because the original state cannot be verified.' -ForegroundColor Yellow
+    }
+    elseif ($restartSafety.ResumeTaskVisibility -eq 'Unavailable') {
+        Write-Host 'Restart test: UNKNOWN - scheduled-task status could not be read. Run Check from an administrator PowerShell window.' -ForegroundColor Yellow
     }
     elseif ($restartSafety.PreservedStateRecordCount -gt 0) {
         Write-Host "Restart test: no active auto-login; $($restartSafety.PreservedStateRecordCount) preserved restart record(s)."

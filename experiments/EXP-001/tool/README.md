@@ -13,7 +13,10 @@ Tune, FullTest, Compare, Undo, and RestartTest.
 
 Check and Benchmark are read-only. Check also reports whether the one-time
 restart/auto-login workflow is inactive, has only a preserved record, or needs
-cleanup with `StopAutoLogin`. Tune refuses other hardware/build/BIOS
+cleanup with `StopAutoLogin`. It only recommends automatic cleanup when the
+resume task's exact state ID has a matching recovery record; externally
+configured auto-login is reported but never claimed or changed. Tune refuses
+other hardware/build/BIOS
 combinations and genuinely managed devices by default. A generic Microsoft
 `MDMMaintenenceTask` without domain/Entra join, MDM URL, or enrollment-specific
 tasks is not treated as active management.
