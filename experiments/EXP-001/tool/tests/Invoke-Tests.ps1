@@ -199,11 +199,19 @@ function New-SyntheticBenchmarkBlock {
     param(
         [Parameter(Mandatory = $true)][string]$Id,
         [Parameter(Mandatory = $true)][string]$ConfigurationState,
-        [Parameter(Mandatory = $true)][int]$PendingSettingCount
+        [Parameter(Mandatory = $true)][int]$PendingSettingCount,
+        [string]$Label
     )
+    $recordLabel = if ([string]::IsNullOrWhiteSpace($Label)) {
+        if ($ConfigurationState -ceq 'Untuned') { 'Before' } else { 'After' }
+    }
+    else {
+        $Label
+    }
     return [pscustomobject]@{
         Record = [pscustomobject]@{
             BenchmarkId = $Id
+            Label = $recordLabel
             ConfigurationState = $ConfigurationState
             PendingSettingCount = $PendingSettingCount
             EvidenceClass = 'PreProtocolScreening'
@@ -275,6 +283,19 @@ try {
     $selectedBeforeFile = Find-LatestScreeningBenchmarkFile -Root $aggregateTestRoot -ConfigurationState Untuned
     if ($null -eq $selectedBeforeFile -or $selectedBeforeFile.FullName -cne $validSelectionPath) {
         $failures.Add('Automatic comparison selection did not skip the newer unclassified benchmark file.')
+    }
+
+    $validTunedPath = Join-Path $aggregateTestRoot 'valid-screening-after.json'
+    $restartTunedPath = Join-Path $aggregateTestRoot 'newer-after-restart.json'
+    $validTunedRecord = (New-SyntheticBenchmarkBlock -Id 'valid-screening-after' -ConfigurationState 'Tuned' -PendingSettingCount 0).Record
+    $restartTunedRecord = (New-SyntheticBenchmarkBlock -Id 'newer-after-restart' -ConfigurationState 'Tuned' -PendingSettingCount 0 -Label AfterRestart).Record
+    [IO.File]::WriteAllText($validTunedPath, ($validTunedRecord | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText($restartTunedPath, ($restartTunedRecord | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
+    (Get-Item -LiteralPath $validTunedPath).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(3)
+    (Get-Item -LiteralPath $restartTunedPath).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(4)
+    $selectedTunedFile = Find-LatestScreeningBenchmarkFile -Root $aggregateTestRoot -ConfigurationState Tuned
+    if ($null -eq $selectedTunedFile -or $selectedTunedFile.FullName -cne $validTunedPath) {
+        $failures.Add('Automatic comparison selection did not exclude the newer restart-test benchmark file.')
     }
 
     $inconsistentBlocks = @(

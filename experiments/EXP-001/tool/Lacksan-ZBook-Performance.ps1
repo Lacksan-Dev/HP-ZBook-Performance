@@ -1716,6 +1716,7 @@ function Find-LatestScreeningBenchmarkFile {
         [Parameter(Mandatory = $true)][string]$Root,
         [Parameter(Mandatory = $true)][ValidateSet('Untuned', 'Tuned')][string]$ConfigurationState
     )
+    $eligibleLabels = if ($ConfigurationState -ceq 'Untuned') { @('Current', 'Before') } else { @('Current', 'After') }
     $eligibleFiles = @(
         Get-ChildItem -LiteralPath $Root -Filter '*.json' -File |
             Sort-Object LastWriteTime -Descending |
@@ -1723,6 +1724,7 @@ function Find-LatestScreeningBenchmarkFile {
                 try {
                     $candidate = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
                     $candidate.ConfigurationState -ceq $ConfigurationState -and
+                        $candidate.Label -cin $eligibleLabels -and
                         (Test-IsPreProtocolScreeningRecord -Record $candidate)
                 }
                 catch {

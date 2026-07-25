@@ -87,7 +87,9 @@ formal baseline and its medians by the
 comparison commands reject inputs without both markers, so older unclassified
 files must not be relabeled as current screening evidence. Automatic Compare
 selection skips those incompatible files and uses the newest eligible
-untuned/tuned pair; run a new Benchmark when no classified input exists.
+untuned/tuned pair. It also excludes the separate `BeforeRestart` and
+`AfterRestart` records so restart validation cannot be mistaken for a tuning
+comparison. Run a new Benchmark when no classified input exists.
 
 ## One-time automatic sign-in
 
