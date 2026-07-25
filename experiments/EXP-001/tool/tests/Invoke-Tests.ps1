@@ -24,6 +24,18 @@ foreach ($testMode in @('SelfTest', 'Audit', 'Preview', 'Configuration', 'Check'
     if ($testMode -in @('Audit', 'Check') -and ($output -join "`n") -notmatch 'Restart test:') {
         $failures.Add("$testMode did not report the one-time auto-login safety state.")
     }
+    if ($testMode -in @('Audit', 'Check')) {
+        $stateMatch = [regex]::Match(($output -join "`n"), 'Tuning state: (APPLIED|NOT YET APPLIED) \((\d+) of (\d+) checks pass')
+        if (-not $stateMatch.Success) {
+            $failures.Add("$testMode did not report calculated passed/total tuning checks.")
+        }
+        elseif (
+            [int]$stateMatch.Groups[2].Value -gt [int]$stateMatch.Groups[3].Value -or
+            [int]$stateMatch.Groups[3].Value -lt 1
+        ) {
+            $failures.Add("$testMode reported an invalid passed/total tuning count.")
+        }
+    }
 }
 
 $whatIfOutput = & $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tool -Mode Apply -WhatIf 2>&1
@@ -79,6 +91,12 @@ if ($sourceText -notmatch "Write-LabEvent -Event 'AutoLoginCleanupVerification' 
 }
 if ($sourceText -notmatch "Write-LabEvent -Event 'AutoLoginCleanupVerification' -Status 'Pass'") {
     $failures.Add('Auto-login cleanup does not record successful post-restore verification.')
+}
+if ($sourceText -match '17 of 17 checks pass') {
+    $failures.Add('Check still contains a hard-coded tuning-state count.')
+}
+if ($sourceText -notmatch "Write-LabEvent -Event 'ConfigurationState'") {
+    $failures.Add('Check does not structured-log its calculated configuration state.')
 }
 
 foreach ($functionName in @('Write-IntegrityProtectedJson', 'Read-IntegrityProtectedJson')) {

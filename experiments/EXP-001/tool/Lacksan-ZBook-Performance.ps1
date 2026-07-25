@@ -949,6 +949,13 @@ function Show-Audit {
 
     $states = Get-ConfigurationState
     $pending = @($states | Where-Object { -not $_.Compliant })
+    $passedCount = $states.Count - $pending.Count
+    Write-LabEvent -Event 'ConfigurationState' -Status $(if ($pending.Count -eq 0) { 'Pass' } else { 'Info' }) -Data @{
+        PassedCount = $passedCount
+        TotalCount = $states.Count
+        PendingCount = $pending.Count
+        PendingIds = @($pending | Select-Object -ExpandProperty Id)
+    }
     $restartSafety = Get-RestartSafetyState
     Write-LabEvent -Event 'RestartSafetyState' -Status $(if ($restartSafety.RecoveryNeeded) { 'Warning' } else { 'Pass' }) -Data @{
         RecoveryNeeded = $restartSafety.RecoveryNeeded
@@ -988,10 +995,10 @@ function Show-Audit {
         Write-Host 'Device control: personal/unmanaged checks passed.'
     }
     if ($pending.Count -eq 0) {
-        Write-Host 'Tuning state: APPLIED (17 of 17 checks pass)' -ForegroundColor Green
+        Write-Host "Tuning state: APPLIED ($passedCount of $($states.Count) checks pass)" -ForegroundColor Green
     }
     else {
-        Write-Host "Tuning state: NOT YET APPLIED ($($pending.Count) change(s) available)" -ForegroundColor Cyan
+        Write-Host "Tuning state: NOT YET APPLIED ($passedCount of $($states.Count) checks pass; $($pending.Count) change(s) available)" -ForegroundColor Cyan
     }
     if ($restartSafety.RecoveryNeeded -and $restartSafety.ToolRecoveryAvailable) {
         Write-Host 'Restart test: ATTENTION - one-time auto-login or its resume task is still prepared.' -ForegroundColor Yellow
