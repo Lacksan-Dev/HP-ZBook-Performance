@@ -4,7 +4,7 @@
 Experimental
 
 ## Current stage
-Research Director
+Windows Research
 
 ## Customer problem
 Office users frequently experience delayed responsiveness after Windows sign-in and during Outlook, Edge, Windows Search, OneDrive, and Teams activity.
@@ -39,4 +39,9 @@ Measure the factory or current-state behavior of one representative HP ZBook bef
 Use repeated runs and report the median. Record raw results. No performance claims exist until measurements are supplied.
 
 ## Next handoff
-Research Director must refine the customer problem, business value, priority, supported platform, and research questions before Windows Research begins.
+Keep `stage:research` until the workflow probes, instrumentation-overhead
+profile, repeated raw runs, medians, reproducibility rule, and reboot-persistence
+check in [validation-protocol.md](validation-protocol.md) are complete and
+accepted. The experimental utility transaction is implemented and documented in
+[engineering-validation.md](engineering-validation.md); it does not yet support
+a performance claim or a design-stage handoff.
