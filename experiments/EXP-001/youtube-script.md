@@ -10,6 +10,43 @@
 
 **A Safer HP ZBook Performance Baseline: What We Built and What Still Needs Testing**
 
+## 2026-07-26 merged-development update
+
+Use this segment after the existing engineering checkpoint when briefing the
+merged pull request.
+
+**[On screen: "Screening evidence stays screening"]**
+
+The latest development merge makes the benchmark boundary explicit. Every new
+quick benchmark, aggregate, and comparison record says
+`PreProtocolScreening` and sets formal-baseline eligibility to false. The tool
+will not combine or compare files that lack those markers.
+
+Automatic Compare now skips older unclassified files and the separate
+before-restart and after-restart records. That prevents a restart-validation
+measurement from being presented as a tuning comparison. These are evidence
+handling improvements, not performance gains.
+
+**[On screen: "Cleanup must prove ownership"]**
+
+The one-time sign-in cleanup is stricter too. The active Lacksan resume task,
+its embedded state ID, and an integrity-checked recovery record must agree
+before cleanup can proceed. Success is reported only after the password secret
+is absent, every captured Winlogon value matches its original state, and the
+resume task is gone.
+
+No services, security controls, Windows Update components, drivers, firmware,
+or HP management features were disabled in this update. The full static and
+non-destructive test suite passed after merge. Physical reboot validation,
+formal customer-workflow runs, instrumentation overhead, thermal behavior, and
+reproducible performance evidence remain open.
+
+The corresponding development report lists the exact 12 registry preferences
+and five AC-only power settings, along with their support limits, sources, and
+rollback status. It also makes an important distinction: most settings were
+already compliant on the lab ZBook, and no service-stop candidate has passed
+the support and measurement gates yet.
+
 ## Script
 
 **[Opening — presenter on camera]**
