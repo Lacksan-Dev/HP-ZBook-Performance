@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "experiment": "EXP-001",
+  "layer": 1,
+  "layerName": "Physical and thermal health",
+  "capturedAtUtc": "2026-07-26T23:20:48.2273799Z",
+  "collectionMode": "observation-only, non-elevated",
+  "liveWindowsChanges": false,
+  "system": {
+    "manufacturer": "HP",
+    "model": "HP ZBook Firefly 14 inch G8 Mobile Workstation PC",
+    "windowsBuild": "26200",
+    "biosVersion": "T76 Ver. 01.24.02"
+  },
+  "thermalSurfaces": {
+    "win32TemperatureProbeInstanceCount": 0,
+    "win32FanInstanceCount": 0,
+    "batteryTemperatureInstanceCount": 0,
+    "msAcpiThermalZoneTemperatureResult": "access-denied-non-elevated",
+    "acpiThermalZoneDeviceCount": 7,
+    "acpiThermalZoneDriver": {
+      "provider": "Microsoft",
+      "version": "10.0.26100.1150",
+      "infName": "machine.inf",
+      "signed": true
+    },
+    "pwrTestAvailable": false,
+    "hpToolsVolumeDetected": false,
+    "hpPcHardwareDiagnosticsWindowsDetected": false,
+    "hpSupportAssistantDetected": false
+  },
+  "batteryObservation": {
+    "active": true,
+    "powerOnline": true,
+    "charging": false,
+    "discharging": false,
+    "critical": false,
+    "remainingCapacity": 41407,
+    "fullChargedCapacity": 41407,
+    "cycleCount": 101,
+    "voltage": 12560,
+    "designCapacityAvailable": false,
+    "batteryHealthPercentageCalculated": false
+  },
+  "platformThermalDrivers": [
+    {
+      "deviceName": "Intel(R) Dynamic Tuning Manager",
+      "provider": "Intel",
+      "version": "8.7.10802.26924",
+      "infName": "oem60.inf",
+      "signed": true
+    },
+    {
+      "deviceName": "Intel(R) Dynamic Tuning Generic Participant",
+      "instanceCount": 2,
+      "provider": "Intel",
+      "version": "8.7.10802.26924",
+      "infName": "oem60.inf",
+      "signed": true
+    },
+    {
+      "deviceName": "Intel(R) Dynamic Tuning Processor Participant",
+      "provider": "Intel",
+      "version": "8.7.10802.26924",
+      "infName": "oem98.inf",
+      "signed": true
+    }
+  ],
+  "outcome": "inconclusive",
+  "decision": "Do not create a thermal readiness band or change fan, DTT, cooling, firmware, or power settings from these observations.",
+  "reason": "No trustworthy CPU/package or ambient temperature and no fan state were available through the non-elevated inbox surfaces. Battery design capacity was also unavailable, so battery-health percentage was not inferred."
+}

@@ -11,6 +11,8 @@
 - Stage disposition: **keep `stage:research`**
 - Supplemental startup/community triage:
   [startup-community-research-2026-07-26.md](startup-community-research-2026-07-26.md)
+- Hourly layer 1 physical/thermal evidence:
+  [layer-01-physical-thermal-2026-07-27.md](layer-evidence/layer-01-physical-thermal-2026-07-27.md)
 
 This report covers one experiment only. It maps the Windows, application, driver,
 firmware, policy, service, scheduled-task, registry, and HP OEM surfaces that can
