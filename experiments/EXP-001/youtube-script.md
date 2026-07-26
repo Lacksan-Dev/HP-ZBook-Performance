@@ -75,14 +75,36 @@ before this can move toward release.
 
 **[Presenter on camera]**
 
+Since that first engineering checkpoint, we simplified the customer experience.
+Instead of technical modes and override flags, the normal commands are now
+Check, Benchmark, Tune, FullTest, Compare, Undo, and RestartTest. The personal
+lab PC is recognized correctly even though a work account and a generic
+Microsoft maintenance task are present.
+
+The new FullTest preserves raw runs and uses both A-B-B-A and B-A-A-B ordering
+to reduce position bias. The first crossover screening did not find a
+consistent general responsiveness win from forcing the most aggressive
+plugged-in processor preference. Process-start results were essentially tied,
+while the synthetic CPU burst favored the aggressive value. Because the more
+aggressive value also carries heat and energy tradeoffs, the general baseline
+now retains the measured balanced value. This is exactly why we benchmark before
+turning a popular tweak into a recommendation.
+
+The restart workflow can prepare a one-time automatic sign-in on this personal
+lab PC, verify the settings after Windows starts, run another quick benchmark,
+and then remove its credential and scheduled resume task. That state-changing
+restart test is still pending, and automatic sign-in is not intended for shared
+or managed customer computers.
+
 The configuration-focused experience was inspired by the tweaks and
 configuration sections of Chris Titus Tech’s WinUtil. We reviewed and credited
 that open-source project, while building separate support checks, backup,
 verification, logging, and rollback behavior for this specific experiment.
 
-Next, we will test persistence after reboot. The lab still needs repeated raw
-workflow runs, median results, instrumentation overhead measurements, and
-preserved failed or inconclusive runs.
+Next, we will execute and verify the persistence workflow after reboot. The lab
+still needs the full customer-workflow runs and instrumentation overhead
+measurements. All quick benchmark blocks, including misleading ordered results
+and mixed crossover results, are preserved rather than presented as a gain.
 
 Until those gates are complete, this remains an experimental engineering build,
 not a customer-ready performance release. A stable release will require an
@@ -90,6 +112,6 @@ explicit human approval decision.
 
 **[Closing card]**
 
-**EXP-001 status: controlled apply, transactional rollback, reapply, and
-immediate verification are complete; reboot persistence and measured
-performance validation remain pending.**
+**EXP-001 status: simplified utility, controlled apply/rollback, quick crossover
+screening, and immediate verification are complete; reboot persistence and
+customer-workflow performance validation remain pending.**
