@@ -24,6 +24,9 @@ foreach ($testMode in @('SelfTest', 'Audit', 'Preview', 'Configuration', 'Check'
     if ($testMode -in @('Audit', 'Check') -and ($output -join "`n") -notmatch 'Restart test:') {
         $failures.Add("$testMode did not report the one-time auto-login safety state.")
     }
+    if ($testMode -in @('Audit', 'Check') -and ($output -join "`n") -notmatch 'Sign-in details:') {
+        $failures.Add("$testMode did not report the low-friction sign-in privacy state.")
+    }
     if ($testMode -in @('Audit', 'Check')) {
         $stateMatch = [regex]::Match(($output -join "`n"), 'Tuning state: (APPLIED|NOT YET APPLIED) \((\d+) of (\d+) checks pass')
         if (-not $stateMatch.Success) {
@@ -46,7 +49,7 @@ if (($whatIfOutput -join "`n") -notmatch 'No backup or setting is written') {
     $failures.Add('Apply -WhatIf did not report the dry-run safety boundary.')
 }
 
-foreach ($changingAction in @('FullTest', 'RestartTest', 'StopAutoLogin')) {
+foreach ($changingAction in @('FullTest', 'RestartTest', 'StopAutoLogin', 'Privacy', 'UndoPrivacy')) {
     $output = & $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tool $changingAction -WhatIf 2>&1
     if ($LASTEXITCODE -ne 0) {
         $failures.Add("$changingAction -WhatIf exited $LASTEXITCODE`: $($output -join ' ')")
@@ -54,6 +57,18 @@ foreach ($changingAction in @('FullTest', 'RestartTest', 'StopAutoLogin')) {
     if (($output -join "`n") -notmatch 'No backup or setting is written') {
         $failures.Add("$changingAction -WhatIf did not report the dry-run safety boundary.")
     }
+}
+
+$privacyWhatIfOutput = & $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tool Privacy -WhatIf 2>&1
+if (
+    ($privacyWhatIfOutput -join "`n") -notmatch 'display name' -or
+    ($privacyWhatIfOutput -join "`n") -notmatch 'normal sign-in tile'
+) {
+    $failures.Add('Privacy -WhatIf did not clearly disclose that the display name remains visible.')
+}
+$privacyUndoWhatIfOutput = & $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tool UndoPrivacy -WhatIf 2>&1
+if (($privacyUndoWhatIfOutput -join "`n") -notmatch 'rollback preview') {
+    $failures.Add('UndoPrivacy -WhatIf did not show the dedicated rollback preview.')
 }
 
 $benchmarkOutput = & $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $tool Benchmark -BenchmarkRuns 3 2>&1
@@ -89,6 +104,22 @@ if ($sourceText -match "Name 'DefaultPassword' -Type String -Value") {
 }
 if ($sourceText -notmatch 'LsaStorePrivateData') {
     $failures.Add('Tool does not contain the required LSA-secret storage path.')
+}
+if ($sourceText -notmatch "Name = 'BlockUserFromShowingAccountDetailsOnSignin'") {
+    $failures.Add('Tool does not declare the documented account-details sign-in policy.')
+}
+if ($sourceText -match "Name = 'DontDisplayLastUserName'") {
+    $failures.Add('Low-friction privacy unexpectedly hides the full last-user identity.')
+}
+foreach ($privacyFunction in @('New-PrivacyBackup', 'Show-PrivacyPreview', 'Invoke-PrivacyApply', 'Invoke-PrivacyRollback')) {
+    if ($sourceText -notmatch ('function ' + [regex]::Escape($privacyFunction))) {
+        $failures.Add("Required sign-in privacy function '$privacyFunction' is missing.")
+    }
+}
+foreach ($privacyEvent in @('PrivacyBackupCreated', 'PrivacyApplyVerification', 'PrivacyRollbackVerification')) {
+    if ($sourceText -notmatch [regex]::Escape($privacyEvent)) {
+        $failures.Add("Required structured privacy event '$privacyEvent' is missing.")
+    }
 }
 if ($sourceText -notmatch 'will not claim ownership or change that configuration automatically') {
     $failures.Add('Check does not preserve externally configured automatic sign-in.')

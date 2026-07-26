@@ -49,7 +49,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:ToolName = 'Lacksan ZBook Performance'
-$script:ToolVersion = '0.2.1-experimental'
+$script:ToolVersion = '0.2.2-experimental'
 $script:SchemaVersion = 1
 $script:ScreeningEvidenceClass = 'PreProtocolScreening'
 $script:FormalBaselineEligible = $false
@@ -176,6 +176,19 @@ $script:RegistrySettings = @(
         Desired = [int]0
         Restart = 'Application restart'
         Basis = 'Windows per-user capture preference'
+    }
+)
+
+$script:PrivacySettings = @(
+    [pscustomobject]@{
+        Id = 'SignIn.HideAccountDetails'
+        Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
+        Name = 'BlockUserFromShowingAccountDetailsOnSignin'
+        Type = 'DWord'
+        Desired = [int]1
+        Restart = 'Sign out or restart'
+        Basis = 'Microsoft ADMX_Logon policy: Block user from showing account details on sign-in'
+        Source = 'https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-logon'
     }
 )
 
@@ -404,6 +417,28 @@ function Test-SupportedSystem {
     [pscustomobject]@{
         Supported = $reasons.Count -eq 0
         Reasons = @($reasons)
+    }
+}
+
+function Test-PrivacySupport {
+    param(
+        [Parameter(Mandatory = $true)]$Snapshot,
+        [switch]$PermitManaged
+    )
+
+    $base = Test-SupportedSystem -Snapshot $Snapshot -PermitManaged:$PermitManaged
+    $reasons = New-Object Collections.Generic.List[string]
+    foreach ($reason in @($base.Reasons)) {
+        $reasons.Add($reason)
+    }
+    if ([string]$Snapshot.OsCaption -notmatch '(?i)\b(Pro|Enterprise|Education|IoT Enterprise)\b') {
+        $reasons.Add("Windows edition '$($Snapshot.OsCaption)' is outside the documented policy support list.")
+    }
+    [pscustomobject]@{
+        Supported = $reasons.Count -eq 0
+        Reasons = @($reasons)
+        Policy = 'ADMX_Logon/BlockUserFromShowingAccountDetailsOnSignin'
+        DocumentedMinimum = 'Windows 11 version 21H2, build 22000'
     }
 }
 
@@ -882,6 +917,324 @@ function Restore-RegistryState {
     }
 }
 
+function Test-RegistryStateMatchesCapture {
+    param(
+        [Parameter(Mandatory = $true)]$Actual,
+        [Parameter(Mandatory = $true)]$Original
+    )
+
+    if ([bool]$Actual.ValueExists -ne [bool]$Original.ValueExists) {
+        return $false
+    }
+    if (-not $Original.ValueExists) {
+        return $true
+    }
+    return (
+        $Actual.Type -eq $Original.Type -and
+        (Test-EquivalentValue -Actual $Actual.Value -Expected $Original.Value -Type $Actual.Type)
+    )
+}
+
+function Get-PrivacyState {
+    foreach ($setting in $script:PrivacySettings) {
+        $current = Get-RegistryState -Path $setting.Path -Name $setting.Name
+        [pscustomobject]@{
+            Id = $setting.Id
+            Kind = 'RegistryPolicy'
+            Current = if ($current.ValueExists) { $current.Value } else { '<not configured>' }
+            Desired = $setting.Desired
+            Compliant = (
+                $current.ValueExists -and
+                $current.Type -eq $setting.Type -and
+                (Test-EquivalentValue -Actual $current.Value -Expected $setting.Desired -Type $setting.Type)
+            )
+            Detail = "$($setting.Path)\$($setting.Name)"
+            Effect = 'Hides email address or user-name details; the display name remains visible.'
+        }
+    }
+}
+
+function Get-PrivacyBackupRoot {
+    param([switch]$Create)
+    $root = Join-Path $DataRoot 'PrivacyBackups'
+    if ($Create) {
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+    }
+    return $root
+}
+
+function New-PrivacyBackup {
+    param([Parameter(Mandatory = $true)]$Snapshot)
+
+    if (-not (Test-IsAdministrator)) {
+        throw 'Sign-in privacy backup requires an elevated Windows PowerShell session.'
+    }
+
+    $root = Get-PrivacyBackupRoot -Create
+    $id = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffZ') + '-' + $script:RunId.Substring(0, 8)
+    $path = Join-Path $root "$id.json"
+    $registryState = foreach ($setting in $script:PrivacySettings) {
+        [pscustomobject]@{
+            Id = $setting.Id
+            Path = $setting.Path
+            Name = $setting.Name
+            Original = Get-RegistryState -Path $setting.Path -Name $setting.Name
+        }
+    }
+    $manifest = [ordered]@{
+        SchemaVersion = $script:SchemaVersion
+        ManifestType = 'SignInPrivacy'
+        ToolName = $script:ToolName
+        ToolVersion = $script:ToolVersion
+        BackupId = $id
+        CreatedUtc = (Get-Date).ToUniversalTime().ToString('o')
+        Machine = [ordered]@{
+            ComputerName = $Snapshot.ComputerName
+            Manufacturer = $Snapshot.Manufacturer
+            Model = $Snapshot.Model
+        }
+        Registry = @($registryState)
+    }
+    Write-IntegrityProtectedJson -Value $manifest -Path $path
+    Write-LabEvent -Event 'PrivacyBackupCreated' -Status 'Pass' -Data @{
+        BackupId = $id
+        Path = $path
+        SettingCount = @($registryState).Count
+    }
+    return [pscustomobject]@{ Id = $id; Path = $path; Manifest = $manifest }
+}
+
+function Get-PrivacyBackupPath {
+    param([string]$RequestedId)
+
+    $root = Get-PrivacyBackupRoot
+    if (-not (Test-Path -LiteralPath $root)) {
+        throw "No sign-in privacy backup folder exists at '$root'."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($RequestedId)) {
+        if ($RequestedId -match '[\\/]' -or $RequestedId -notmatch '^[A-Za-z0-9._-]+$') {
+            throw 'BackupId contains invalid characters.'
+        }
+        $fileName = if ($RequestedId.EndsWith('.json', [StringComparison]::OrdinalIgnoreCase)) {
+            $RequestedId
+        }
+        else {
+            "$RequestedId.json"
+        }
+        $selected = Join-Path $root $fileName
+        if (-not (Test-Path -LiteralPath $selected -PathType Leaf)) {
+            throw "Sign-in privacy backup '$RequestedId' was not found."
+        }
+        return $selected
+    }
+    $latest = Get-ChildItem -LiteralPath $root -Filter '*.json' -File |
+        Sort-Object Name -Descending |
+        Select-Object -First 1
+    if (-not $latest) {
+        throw "No sign-in privacy backups were found in '$root'."
+    }
+    return $latest.FullName
+}
+
+function Read-PrivacyBackup {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $manifest = Read-IntegrityProtectedJson -Path $Path
+    if ([int]$manifest.SchemaVersion -ne $script:SchemaVersion) {
+        throw "Unsupported sign-in privacy backup schema '$($manifest.SchemaVersion)'."
+    }
+    if ([string]$manifest.ManifestType -cne 'SignInPrivacy') {
+        throw "The selected file is not a sign-in privacy backup."
+    }
+    return $manifest
+}
+
+function Show-PrivacyPreview {
+    $snapshot = Get-SystemSnapshot
+    $support = Test-PrivacySupport -Snapshot $snapshot -PermitManaged:$script:AllowManagedDeviceForRun
+    $states = @(Get-PrivacyState)
+    $pending = @($states | Where-Object { -not $_.Compliant })
+
+    Write-Host ''
+    Write-Host 'Low-friction sign-in privacy preview'
+    $states | Select-Object Id, Current, Desired, Compliant, Effect | Format-Table -AutoSize -Wrap
+    if ($support.Supported) {
+        Write-Host 'Support: validated for this ZBook and Windows build.'
+    }
+    else {
+        Write-Host "Support: stopped - $(@($support.Reasons) -join ' ')" -ForegroundColor Yellow
+    }
+    Write-Host "$($pending.Count) of $($states.Count) policy setting(s) would change."
+    Write-Host 'This hides email address or user-name details. Windows still shows the display name and normal sign-in tile.'
+    Write-Host 'No password, Windows Hello, auto-login, service, task, security, update, or performance setting is changed.'
+    Write-LabEvent -Event 'PrivacyPreview' -Status 'Info' -Data @{
+        Supported = $support.Supported
+        SupportReasons = @($support.Reasons)
+        Policy = $support.Policy
+        PendingIds = @($pending.Id)
+        DisplayNameRemainsVisible = $true
+    }
+    return $states
+}
+
+function Show-PrivacyRollbackPreview {
+    $states = @(Get-PrivacyState)
+    $root = Get-PrivacyBackupRoot
+    $latest = $null
+    if (Test-Path -LiteralPath $root) {
+        $latest = Get-ChildItem -LiteralPath $root -Filter '*.json' -File |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+    }
+    Write-Host ''
+    Write-Host 'Sign-in privacy rollback preview'
+    $states | Select-Object Id, Current, Desired, Compliant, Effect | Format-Table -AutoSize -Wrap
+    if ($latest) {
+        Write-Host "Would restore the exact captured registry state from: $($latest.BaseName)"
+    }
+    else {
+        Write-Host 'No sign-in privacy backup exists; a live rollback would stop without changing Windows.'
+    }
+    Write-Host 'No setting or backup is written.'
+    Write-LabEvent -Event 'PrivacyRollbackPreview' -Status 'Info' -Data @{
+        BackupAvailable = $null -ne $latest
+        LatestBackupId = if ($latest) { $latest.BaseName } else { $null }
+    }
+    return $states
+}
+
+function Invoke-PrivacyRollback {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [switch]$Automatic
+    )
+
+    if (-not (Test-IsAdministrator)) {
+        throw 'Sign-in privacy rollback requires an elevated Windows PowerShell session.'
+    }
+    $manifest = Read-PrivacyBackup -Path $Path
+    $snapshot = Get-SystemSnapshot
+    if (
+        [string]$manifest.Machine.ComputerName -cne [string]$snapshot.ComputerName -or
+        [string]$manifest.Machine.Model -cne [string]$snapshot.Model
+    ) {
+        throw 'The sign-in privacy backup belongs to a different computer.'
+    }
+
+    foreach ($entry in $manifest.Registry) {
+        Restore-RegistryState -Entry $entry
+        Write-LabEvent -Event 'PrivacyRegistryRollback' -Status 'Change' -Data @{
+            Id = $entry.Id
+            Automatic = [bool]$Automatic
+        }
+    }
+
+    $failures = New-Object Collections.Generic.List[string]
+    foreach ($entry in $manifest.Registry) {
+        $actual = Get-RegistryState -Path $entry.Path -Name $entry.Name
+        if (-not (Test-RegistryStateMatchesCapture -Actual $actual -Original $entry.Original)) {
+            $failures.Add($entry.Id)
+        }
+    }
+    if ($failures.Count -gt 0) {
+        Write-LabEvent -Event 'PrivacyRollbackVerification' -Status 'Failure' -Data @{
+            BackupId = $manifest.BackupId
+            Failed = @($failures)
+            Automatic = [bool]$Automatic
+        }
+        throw "Sign-in privacy rollback verification failed for: $(@($failures) -join ', ')."
+    }
+    Write-LabEvent -Event 'PrivacyRollbackVerification' -Status 'Pass' -Data @{
+        BackupId = $manifest.BackupId
+        Automatic = [bool]$Automatic
+        RebootPersistence = 'Pending'
+    }
+    Write-Host "Sign-in account-detail policy restored and verified from backup '$($manifest.BackupId)'."
+    Write-Host 'The backup was retained. Sign out or restart Windows to verify the sign-in screen.'
+}
+
+function Invoke-PrivacyApply {
+    $snapshot = Get-SystemSnapshot
+    if (-not (Test-IsAdministrator)) {
+        throw 'Sign-in privacy apply requires an elevated Windows PowerShell session.'
+    }
+    $support = Test-PrivacySupport -Snapshot $snapshot -PermitManaged:$script:AllowManagedDeviceForRun
+    Write-LabEvent -Event 'PrivacySupportDetection' -Status $(if ($support.Supported) { 'Pass' } else { 'Failure' }) -Data @{
+        Supported = $support.Supported
+        Reasons = @($support.Reasons)
+        Policy = $support.Policy
+        DocumentedMinimum = $support.DocumentedMinimum
+        OsCaption = $snapshot.OsCaption
+        OsBuild = $snapshot.OsBuild
+        Model = $snapshot.Model
+        BiosVersion = $snapshot.BiosVersion
+        JoinState = $snapshot.JoinState
+    }
+    if (-not $support.Supported) {
+        throw "Support detection failed: $(@($support.Reasons) -join ' ')"
+    }
+
+    $states = @(Get-PrivacyState)
+    $pending = @($states | Where-Object { -not $_.Compliant })
+    if ($pending.Count -eq 0) {
+        Write-Host 'Sign-in account details are already hidden. No backup or write was needed.'
+        Write-LabEvent -Event 'PrivacyApplyIdempotent' -Status 'Pass' -Data @{
+            SettingCount = $states.Count
+        }
+        return
+    }
+
+    $backup = New-PrivacyBackup -Snapshot $snapshot
+    try {
+        foreach ($setting in $script:PrivacySettings) {
+            $before = Get-RegistryState -Path $setting.Path -Name $setting.Name
+            $compliant = (
+                $before.ValueExists -and
+                $before.Type -eq $setting.Type -and
+                (Test-EquivalentValue -Actual $before.Value -Expected $setting.Desired -Type $setting.Type)
+            )
+            if (-not $compliant) {
+                Set-RegistryValueExact -Path $setting.Path -Name $setting.Name -Type $setting.Type -Value $setting.Desired
+                Write-LabEvent -Event 'PrivacyRegistryApply' -Status 'Change' -Data @{
+                    Id = $setting.Id
+                    Before = $before
+                    Desired = $setting.Desired
+                }
+            }
+        }
+
+        $failed = @(Get-PrivacyState | Where-Object { -not $_.Compliant })
+        if ($failed.Count -gt 0) {
+            throw "Post-apply verification failed for: $(@($failed.Id) -join ', ')."
+        }
+        Write-LabEvent -Event 'PrivacyApplyVerification' -Status 'Pass' -Data @{
+            BackupId = $backup.Id
+            Changed = @($pending.Id)
+            DisplayNameRemainsVisible = $true
+            RebootPersistence = 'Pending'
+        }
+        Write-Host "Sign-in account details are hidden and the policy verified. Backup: $($backup.Id)"
+        Write-Host 'Your display name and normal sign-in tile remain visible. Sign out or restart Windows to verify the sign-in screen.'
+    }
+    catch {
+        Write-LabEvent -Event 'PrivacyApplyFailed' -Status 'Failure' -Data @{
+            Error = $_.Exception.Message
+            BackupId = $backup.Id
+        }
+        try {
+            Invoke-PrivacyRollback -Path $backup.Path -Automatic
+        }
+        catch {
+            Write-LabEvent -Event 'PrivacyAutomaticRollbackFailed' -Status 'Failure' -Data @{
+                Error = $_.Exception.Message
+                BackupId = $backup.Id
+            }
+            throw "Sign-in privacy apply failed and automatic rollback also failed. Backup '$($backup.Id)' is preserved. Rollback error: $($_.Exception.Message)"
+        }
+        throw 'Sign-in privacy apply failed; the captured state was automatically restored and verified.'
+    }
+}
+
 function Get-ConfigurationState {
     $scheme = Get-ActivePowerScheme
     $registry = foreach ($setting in $script:RegistrySettings) {
@@ -1021,6 +1374,13 @@ function Show-Audit {
         PendingCount = $pending.Count
         PendingIds = @($pending | Select-Object -ExpandProperty Id)
     }
+    $privacyStates = @(Get-PrivacyState)
+    $privacyPending = @($privacyStates | Where-Object { -not $_.Compliant })
+    Write-LabEvent -Event 'PrivacyState' -Status $(if ($privacyPending.Count -eq 0) { 'Pass' } else { 'Info' }) -Data @{
+        Hidden = $privacyPending.Count -eq 0
+        PendingIds = @($privacyPending.Id)
+        DisplayNameRemainsVisible = $true
+    }
     $restartSafety = Get-RestartSafetyState
     Write-LabEvent -Event 'RestartSafetyState' -Status $(if ($restartSafety.RecoveryNeeded) { 'Warning' } else { 'Pass' }) -Data @{
         RecoveryNeeded = $restartSafety.RecoveryNeeded
@@ -1065,6 +1425,12 @@ function Show-Audit {
     else {
         Write-Host "Tuning state: NOT YET APPLIED ($passedCount of $($states.Count) checks pass; $($pending.Count) change(s) available)" -ForegroundColor Cyan
     }
+    if ($privacyPending.Count -eq 0) {
+        Write-Host 'Sign-in details: HIDDEN (display name and sign-in tile remain visible).' -ForegroundColor Green
+    }
+    else {
+        Write-Host 'Sign-in details: USER CONTROLLED (run Privacy to hide email/user-name details).' -ForegroundColor Cyan
+    }
     if ($restartSafety.RecoveryNeeded -and $restartSafety.ToolRecoveryAvailable) {
         Write-Host 'Restart test: ATTENTION - one-time auto-login or its resume task is still prepared.' -ForegroundColor Yellow
         Write-Host 'Recovery: run this tool with StopAutoLogin before leaving the computer unattended.' -ForegroundColor Yellow
@@ -1087,7 +1453,12 @@ function Show-Audit {
         Write-Host 'Restart test: NOT PREPARED (automatic sign-in is off).'
     }
     Write-Host "Details log: $($script:CurrentLog)"
-    return [pscustomobject]@{ Snapshot = $snapshot; Support = $support; RestartSafety = $restartSafety }
+    return [pscustomobject]@{
+        Snapshot = $snapshot
+        Support = $support
+        RestartSafety = $restartSafety
+        Privacy = $privacyStates
+    }
 }
 
 function Show-Preview {
@@ -2017,12 +2388,12 @@ function Write-IntegrityProtectedJson {
 function Read-IntegrityProtectedJson {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path) -or -not (Test-Path -LiteralPath ($Path + '.sha256'))) {
-        throw "Restart state is incomplete at '$Path'."
+        throw "Integrity-protected state is incomplete at '$Path'."
     }
     $expected = (Get-Content -LiteralPath ($Path + '.sha256') -Raw).Trim()
     $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
     if ($actual -cne $expected) {
-        throw "Restart state integrity verification failed at '$Path'."
+        throw "State integrity verification failed at '$Path'."
     }
     return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
 }
@@ -2433,9 +2804,37 @@ function Show-Backups {
     $items | Format-Table -AutoSize
 }
 
+function Show-PrivacyBackups {
+    $root = Get-PrivacyBackupRoot
+    if (-not (Test-Path -LiteralPath $root)) {
+        Write-Host 'No sign-in privacy backups exist.'
+        return
+    }
+    $items = foreach ($file in Get-ChildItem -LiteralPath $root -Filter '*.json' -File | Sort-Object Name -Descending) {
+        try {
+            $manifest = Read-PrivacyBackup -Path $file.FullName
+            [pscustomobject]@{
+                BackupId = $manifest.BackupId
+                CreatedUtc = $manifest.CreatedUtc
+                Model = $manifest.Machine.Model
+                Integrity = 'Verified'
+            }
+        }
+        catch {
+            [pscustomobject]@{
+                BackupId = $file.BaseName
+                CreatedUtc = $null
+                Model = $null
+                Integrity = 'FAILED'
+            }
+        }
+    }
+    $items | Format-Table -AutoSize
+}
+
 function Invoke-SelfTest {
     $failures = New-Object Collections.Generic.List[string]
-    $ids = @($script:RegistrySettings.Id) + @($script:PowerSettings.Id)
+    $ids = @($script:RegistrySettings.Id) + @($script:PowerSettings.Id) + @($script:PrivacySettings.Id)
     foreach ($duplicate in $ids | Group-Object | Where-Object { $_.Count -gt 1 }) {
         $failures.Add("Duplicate setting id: $($duplicate.Name)")
     }
@@ -2444,6 +2843,10 @@ function Invoke-SelfTest {
         if ($setting.Type -notin @('String', 'ExpandString', 'Binary', 'DWord', 'MultiString', 'QWord')) {
             $failures.Add("Invalid registry type: $($setting.Id)")
         }
+    }
+    foreach ($setting in $script:PrivacySettings) {
+        if ($setting.Path -notmatch '^HKLM:\\') { $failures.Add("Invalid privacy registry hive: $($setting.Id)") }
+        if ($setting.Type -ne 'DWord') { $failures.Add("Invalid privacy registry type: $($setting.Id)") }
     }
     foreach ($setting in $script:PowerSettings) {
         if ($setting.Guid -eq [guid]::Empty) { $failures.Add("Empty power GUID: $($setting.Id)") }
@@ -2483,8 +2886,15 @@ function Resolve-FriendlyAction {
         'restarttest' { return 'RestartTest' }
         'resume' { return 'Resume' }
         'stopautologin' { return 'StopAutoLogin' }
+        'privacy' { return 'Privacy' }
+        'hidedetails' { return 'Privacy' }
+        'privatesignin' { return 'Privacy' }
+        'undoprivacy' { return 'UndoPrivacy' }
+        'showdetails' { return 'UndoPrivacy' }
+        'restoredetails' { return 'UndoPrivacy' }
         'backups' { return 'Backups' }
         'listbackups' { return 'Backups' }
+        'privacybackups' { return 'PrivacyBackups' }
         'settings' { return 'Settings' }
         'configuration' { return 'Settings' }
         'details' { return 'Details' }
@@ -2494,7 +2904,7 @@ function Resolve-FriendlyAction {
         'backup' { return 'Backup' }
         'verify' { return 'Check' }
         default {
-            throw "Unknown action '$Requested'. Use Menu, Check, Benchmark, Tune, FullTest, Compare, Undo, RestartTest, StopAutoLogin, Backups, or Settings."
+            throw "Unknown action '$Requested'. Use Menu, Check, Benchmark, Tune, FullTest, Compare, Undo, Privacy, UndoPrivacy, RestartTest, Backups, or Settings."
         }
     }
 }
@@ -2541,8 +2951,10 @@ function Start-Interactive {
         Write-Host '4. Check status'
         Write-Host '5. Undo tuning'
         Write-Host '6. Restart and verify automatically'
-        Write-Host '7. More: settings and backups'
-        Write-Host '8. Exit'
+        Write-Host '7. Hide email/user-name details at sign-in'
+        Write-Host '8. Restore sign-in account-detail choice'
+        Write-Host '9. More: settings and backups'
+        Write-Host '0. Exit'
         $choice = Read-Host 'Choose'
         try {
             switch ($choice) {
@@ -2563,10 +2975,21 @@ function Start-Interactive {
                     Invoke-InteractiveProtectedAction -RequestedAction RestartTest
                 }
                 '7' {
+                    if (-not (Invoke-ElevatedRelaunch -RequestedAction Privacy)) {
+                        Invoke-PrivacyApply
+                    }
+                }
+                '8' {
+                    if (-not (Invoke-ElevatedRelaunch -RequestedAction UndoPrivacy)) {
+                        Invoke-PrivacyRollback -Path (Get-PrivacyBackupPath -RequestedId $BackupId)
+                    }
+                }
+                '9' {
                     Show-Configuration
                     Show-Backups
+                    Show-PrivacyBackups
                 }
-                '8' { return }
+                '0' { return }
                 default { Write-Host 'Unknown selection.' -ForegroundColor Yellow }
             }
         }
@@ -2580,12 +3003,20 @@ function Start-Interactive {
 $resolvedAction = Resolve-FriendlyAction -Requested $Action
 Initialize-LabLog -RequestedMode $resolvedAction
 try {
-    if ($WhatIfPreference -and $resolvedAction -in @('Tune', 'Backup', 'Undo', 'FullTest', 'RestartTest', 'StopAutoLogin')) {
+    if ($WhatIfPreference -and $resolvedAction -in @('Tune', 'Backup', 'Undo', 'FullTest', 'RestartTest', 'StopAutoLogin', 'Privacy', 'UndoPrivacy')) {
         Write-Host '-WhatIf selected; showing the dry-run preview. No backup or setting is written.'
-        [void](Show-Preview)
+        if ($resolvedAction -eq 'Privacy') {
+            [void](Show-PrivacyPreview)
+        }
+        elseif ($resolvedAction -eq 'UndoPrivacy') {
+            [void](Show-PrivacyRollbackPreview)
+        }
+        else {
+            [void](Show-Preview)
+        }
     }
     else {
-        $elevatedActions = @('Tune', 'Backup', 'Undo', 'FullTest', 'RestartTest', 'StopAutoLogin')
+        $elevatedActions = @('Tune', 'Backup', 'Undo', 'FullTest', 'RestartTest', 'StopAutoLogin', 'Privacy', 'UndoPrivacy')
         if ($resolvedAction -in $elevatedActions -and -not (Test-IsAdministrator)) {
             if (Invoke-ElevatedRelaunch -RequestedAction $resolvedAction) {
                 Write-Host "$resolvedAction completed in the administrator window."
@@ -2626,7 +3057,10 @@ try {
             }
             'Resume' { Invoke-RestartResume }
             'StopAutoLogin' { Invoke-StopAutoLogin }
+            'Privacy' { Invoke-PrivacyApply }
+            'UndoPrivacy' { Invoke-PrivacyRollback -Path (Get-PrivacyBackupPath -RequestedId $BackupId) }
             'Backups' { Show-Backups }
+            'PrivacyBackups' { Show-PrivacyBackups }
             'Settings' { Show-Configuration }
             'Details' { [void](Show-Preview) }
             'Test' { Invoke-SelfTest }

@@ -22,21 +22,30 @@ function Get-ToolFunctionText {
 }
 
 Invoke-Expression (Get-ToolFunctionText -Name Test-SupportedSystem)
+Invoke-Expression (Get-ToolFunctionText -Name Test-PrivacySupport)
 Invoke-Expression (Get-ToolFunctionText -Name Request-ManagedDeviceDecision)
+Invoke-Expression (Get-ToolFunctionText -Name Test-EquivalentValue)
+Invoke-Expression (Get-ToolFunctionText -Name Get-PrivacyState)
 
 function Write-LabEvent {
     param($Event, $Status, $Data)
 }
 
+function Get-RegistryState {
+    param($Path, $Name)
+}
+
 function New-TestSnapshot {
     param(
         [bool]$Managed,
-        [string]$Model = 'HP ZBook Firefly 14 inch G8 Mobile Workstation PC'
+        [string]$Model = 'HP ZBook Firefly 14 inch G8 Mobile Workstation PC',
+        [string]$OsCaption = 'Microsoft Windows 11 Pro'
     )
     [pscustomobject]@{
         Manufacturer = 'HP'
         Model = $Model
         Cpu = @('11th Gen Intel(R) Core(TM) i5-1145G7 @ 2.60GHz')
+        OsCaption = $OsCaption
         OsBuild = '26200'
         BiosVersion = 'T76 Ver. 01.24.02'
         JoinState = [pscustomobject]@{
@@ -52,6 +61,15 @@ $script:Expected = [ordered]@{
     OsBuild = '26200'
     BiosVersion = 'T76 Ver. 01.24.02'
 }
+$script:PrivacySettings = @(
+    [pscustomobject]@{
+        Id = 'SignIn.HideAccountDetails'
+        Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
+        Name = 'BlockUserFromShowingAccountDetailsOnSignin'
+        Type = 'DWord'
+        Desired = [int]1
+    }
+)
 
 Describe 'Managed-device numeric authorization' {
     BeforeEach {
@@ -126,5 +144,65 @@ Describe 'Managed-device regression guards' {
         $sourceText | Should Match '\$states = @\(Get-ConfigurationState\)'
         $sourceText | Should Match "'CURRENT', 'SELECTED', 'EXPECTED EFFECT'"
         $sourceText | Should Match 'PERFORMANCE GAIN: NOT ESTABLISHED'
+    }
+}
+
+Describe 'Low-friction sign-in privacy' {
+    BeforeEach {
+        Mock Get-RegistryState {
+            [pscustomobject]@{
+                KeyExists = $true
+                ValueExists = $true
+                Type = 'DWord'
+                Value = [int]1
+            }
+        }
+    }
+
+    It 'recognizes the documented policy value as compliant' {
+        $state = @(Get-PrivacyState)
+        $state.Count | Should Be 1
+        $state[0].Compliant | Should Be $true
+        $state[0].Effect | Should Match 'display name remains visible'
+    }
+
+    It 'does not confuse an absent policy with hidden details' {
+        Mock Get-RegistryState {
+            [pscustomobject]@{
+                KeyExists = $true
+                ValueExists = $false
+                Type = $null
+                Value = $null
+            }
+        }
+        $state = @(Get-PrivacyState)
+        $state[0].Compliant | Should Be $false
+        $state[0].Current | Should Be '<not configured>'
+    }
+
+    It 'keeps full last-user hiding out of the low-friction action' {
+        $sourceText | Should Match 'BlockUserFromShowingAccountDetailsOnSignin'
+        $sourceText | Should Not Match "Name = 'DontDisplayLastUserName'"
+    }
+
+    It 'accepts the documented Windows Pro edition on the validated ZBook' {
+        $support = Test-PrivacySupport -Snapshot (New-TestSnapshot -Managed $false)
+        $support.Supported | Should Be $true
+        $support.Policy | Should Match 'BlockUserFromShowingAccountDetailsOnSignin'
+    }
+
+    It 'rejects an edition outside the documented policy support list' {
+        $support = Test-PrivacySupport -Snapshot (New-TestSnapshot -Managed $false -OsCaption 'Microsoft Windows 11 Home')
+        $support.Supported | Should Be $false
+        @($support.Reasons) -join ' ' | Should Match 'outside the documented policy support list'
+    }
+
+    It 'includes backup, verification, idempotence, and exact rollback paths' {
+        $sourceText | Should Match 'function New-PrivacyBackup'
+        $sourceText | Should Match 'function Invoke-PrivacyApply'
+        $sourceText | Should Match 'PrivacyApplyIdempotent'
+        $sourceText | Should Match 'PrivacyApplyVerification'
+        $sourceText | Should Match 'Restore-RegistryState -Entry'
+        $sourceText | Should Match 'PrivacyRollbackVerification'
     }
 }
