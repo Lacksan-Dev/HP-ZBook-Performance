@@ -10,6 +10,40 @@
 
 **A Safer HP ZBook Performance Baseline: What We Built and What Still Needs Testing**
 
+## 2026-07-27 layer 1 update: thermal telemetry is not ready
+
+**[On screen: "Layer 1 - Physical and thermal health"]**
+
+The first hourly performance-layer investigation asked a basic question: can
+the ZBook's existing Windows and HP interfaces give us a trustworthy CPU
+temperature, fan state, and ambient condition before every startup test?
+
+The answer is not yet. Windows detected seven ACPI thermal-zone devices and the
+installed Intel Dynamic Tuning components, but the non-elevated inbox
+interfaces did not return an identified CPU-package temperature or fan state.
+Microsoft describes an ACPI thermal zone as a firmware-defined abstraction, so
+we will not rename an unknown zone as a CPU sensor or invent a temperature
+threshold.
+
+**[On screen: "Inconclusive is a result"]**
+
+The standard temperature-probe, fan, and battery-temperature queries returned
+no readings. The ACPI temperature query returned access denied without
+elevation. PwrTest and HP's Windows diagnostics were not detected. Battery
+full-charge capacity and 101 cycles were readable, but design capacity was not,
+so we did not calculate a health percentage.
+
+HP documents manual fan diagnostics, including a Fan Thermal Test. That is a
+hardware diagnostic, not a low-overhead unattended benchmark sensor. Intel also
+warns against disabling Dynamic Tuning Technology, so no DTT component, fan
+control, driver, firmware option, service, policy, or power setting was changed.
+
+This layer is preserved as inconclusive. A later instrumentation experiment
+must identify the sensor, units, elevation, overhead, fan and ambient evidence,
+and a repeatable pre-run band. No performance gain is claimed.
+
+The hourly cursor now moves to layer 2: hardware resources and bottlenecks.
+
 ## 2026-07-27 low-friction sign-in privacy update
 
 **[On screen: "Hide account details, keep normal sign-in"]**
