@@ -152,3 +152,63 @@ explicit human approval decision.
 **EXP-001 status: simplified utility, controlled apply/rollback, quick crossover
 screening, and immediate verification are complete; reboot persistence and
 customer-workflow performance validation remain pending.**
+
+---
+
+## Hourly performance-layer cycle announcement
+
+**[Presenter on camera]**
+
+We are expanding the Lacksan ZBook performance project from a small collection
+of Windows settings into a complete, repeatable performance-engineering cycle.
+
+Every hour, the engineering automation will advance by one layer. The twelve
+layers cover physical and thermal health, hardware bottlenecks, firmware,
+drivers and HP components, the Windows kernel, power management, security
+overhead, boot services and startup applications, Group Policy and registry
+configuration, the Windows interface, application runtimes, and finally the
+workload and its data.
+
+The cycle position is stored in the repository, so an hourly run cannot quietly
+skip an inconvenient layer or spend every hour collecting popular registry
+tweaks.
+
+**[On screen: "Priority: off to usable"]**
+
+Startup work will not be judged only by a single boot duration. We will
+separate firmware time, Windows kernel and session initialization, sign-in,
+shell readiness, delayed background work, and the point where the target
+application is actually responsive.
+
+Services, scheduled tasks, background permissions, and startup applications
+will be treated as required until documentation, dependency analysis, and
+preserved boot-trace evidence show that a different startup mode is supported.
+This is targeted engineering, not a generic debloat list.
+
+**[On screen: "Drivers: supported paths only"]**
+
+Driver investigations will focus on vendor-supported packages, configuration,
+device power behavior, DPC and interrupt latency, and interactions among
+Windows, HP, Intel, and other hardware vendors. We will not claim that a
+proprietary driver can simply be rebuilt. Source availability, redistribution,
+signing, hardware compatibility, and safe recovery would all have to be proven
+first.
+
+Group Policy and background-permission research will also preserve
+organization management and Windows security. A documented policy will not be
+confused with an unofficial registry shortcut.
+
+**[On screen: "Evidence before claims"]**
+
+Each proposed change still needs support detection, original-state capture, a
+dry run, application and verification, structured logs, idempotence, exact
+rollback, and reboot verification when applicable.
+
+The unattended hourly runs can research and build those controls, but they
+cannot silently change the live laptop, stop services, install drivers, reboot,
+or weaken security and updates.
+
+This announcement initializes the cycle at layer one: physical and thermal
+health. It contains no new benchmark and makes no performance claim. Each
+completed layer will receive a technical progress article and an updated
+YouTube briefing, including failed and inconclusive findings—not only wins.
