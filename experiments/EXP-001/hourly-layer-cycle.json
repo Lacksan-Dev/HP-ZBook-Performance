@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "nextLayer": 1,
+  "nextLayerName": "Physical and thermal health",
+  "lastCompletedLayer": null,
+  "lastCompletedLayerName": null,
+  "lastCompletedAtUtc": null,
+  "sourceCommit": null,
+  "outcome": "initialized",
+  "evidencePath": "experiments/EXP-001/customer-updates/2026-07-26-hourly-performance-layer-cycle.md",
+  "reason": "The hourly performance-layer cycle was initialized. No performance-layer investigation or live Windows change is represented by this state."
+}
