@@ -33,6 +33,8 @@ param(
 
     [switch]$AllowManagedDevice,
 
+    [switch]$InteractiveManagedApproval,
+
     [ValidateRange(3, 21)]
     [int]$BenchmarkRuns = 7,
 
@@ -47,10 +49,11 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:ToolName = 'Lacksan ZBook Performance'
-$script:ToolVersion = '0.2.0-experimental'
+$script:ToolVersion = '0.2.1-experimental'
 $script:SchemaVersion = 1
 $script:ScreeningEvidenceClass = 'PreProtocolScreening'
 $script:FormalBaselineEligible = $false
+$script:AllowManagedDeviceForRun = [bool]$AllowManagedDevice
 $script:Expected = [ordered]@{
     Manufacturer = 'HP'
     Model        = 'HP ZBook Firefly 14 inch G8 Mobile Workstation PC'
@@ -402,6 +405,66 @@ function Test-SupportedSystem {
         Supported = $reasons.Count -eq 0
         Reasons = @($reasons)
     }
+}
+
+function Request-ManagedDeviceDecision {
+    param(
+        [Parameter(Mandatory = $true)]$Snapshot,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('Tune', 'FullTest', 'RestartTest')]
+        [string]$RequestedAction
+    )
+
+    $deviceSupport = Test-SupportedSystem -Snapshot $Snapshot -PermitManaged
+    if (-not $deviceSupport.Supported) {
+        throw "Support detection failed: $(@($deviceSupport.Reasons) -join ' ')"
+    }
+    if (
+        -not $Snapshot.JoinState.ActiveManagementDetected -or
+        $script:AllowManagedDeviceForRun
+    ) {
+        return 'Proceed'
+    }
+
+    Write-Host ''
+    Write-Host 'Windows reports active domain, Entra, MDM, or enterprise management.' -ForegroundColor Yellow
+    Write-Host 'This tool will not disable or alter management. It can only apply or restore its allow-listed local settings.'
+    do {
+        Write-Host '1. Continue this action once as administrator'
+        Write-Host '2. Undo the latest Lacksan tuning backup'
+        Write-Host '3. Cancel without changes'
+        $choice = Read-Host 'Choose'
+        switch ($choice) {
+            '1' {
+                $script:AllowManagedDeviceForRun = $true
+                Write-LabEvent -Event 'ManagedDeviceDecision' -Status 'Warning' -Data @{
+                    Decision = 'Proceed'
+                    RequestedAction = $RequestedAction
+                    JoinState = $Snapshot.JoinState
+                }
+                return 'Proceed'
+            }
+            '2' {
+                Write-LabEvent -Event 'ManagedDeviceDecision' -Status 'Info' -Data @{
+                    Decision = 'Undo'
+                    RequestedAction = $RequestedAction
+                    JoinState = $Snapshot.JoinState
+                }
+                return 'Undo'
+            }
+            '3' {
+                Write-LabEvent -Event 'ManagedDeviceDecision' -Status 'Info' -Data @{
+                    Decision = 'Cancel'
+                    RequestedAction = $RequestedAction
+                    JoinState = $Snapshot.JoinState
+                }
+                return 'Cancel'
+            }
+            default {
+                Write-Host 'Choose 1, 2, or 3.' -ForegroundColor Yellow
+            }
+        }
+    } while ($true)
 }
 
 function Initialize-PowerNative {
@@ -938,7 +1001,7 @@ function Get-RestartSafetyState {
 
 function Show-Audit {
     $snapshot = Get-SystemSnapshot
-    $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$AllowManagedDevice
+    $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$script:AllowManagedDeviceForRun
     Write-LabEvent -Event 'SupportDetection' -Status $(if ($support.Supported) { 'Pass' } else { 'Warning' }) -Data @{
         Supported = $support.Supported
         Reasons = @($support.Reasons)
@@ -1262,7 +1325,7 @@ function Assert-ApplyPrerequisites {
     if (-not (Test-IsAdministrator)) {
         throw 'Apply requires Windows PowerShell 5.1 started with Run as administrator.'
     }
-    $support = Test-SupportedSystem -Snapshot $Snapshot -PermitManaged:$AllowManagedDevice
+    $support = Test-SupportedSystem -Snapshot $Snapshot -PermitManaged:$script:AllowManagedDeviceForRun
     if (-not $support.Supported) {
         throw "Support detection failed: $(@($support.Reasons) -join ' ')"
     }
@@ -1485,7 +1548,7 @@ function Invoke-QuickBenchmark {
     param([ValidateSet('Current', 'Before', 'After', 'BeforeRestart', 'AfterRestart')][string]$Label = 'Current')
 
     $snapshot = Get-SystemSnapshot
-    $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$AllowManagedDevice
+    $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$script:AllowManagedDeviceForRun
     if (-not $support.Supported) {
         throw "Benchmark stopped: $(@($support.Reasons) -join ' ')"
     }
@@ -1816,7 +1879,7 @@ function Invoke-FullBeforeAfterTest {
         throw 'FullTest requires administrator rights.'
     }
     $snapshot = Get-SystemSnapshot
-    $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$AllowManagedDevice
+    $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$script:AllowManagedDeviceForRun
     if (-not $support.Supported) {
         throw "Before/after test stopped: $(@($support.Reasons) -join ' ')"
     }
@@ -1898,7 +1961,10 @@ function Get-PersistentScriptPath {
 }
 
 function Invoke-ElevatedRelaunch {
-    param([Parameter(Mandatory = $true)][string]$RequestedAction)
+    param(
+        [Parameter(Mandatory = $true)][string]$RequestedAction,
+        [switch]$PromptForManagedDecision
+    )
     if (Test-IsAdministrator) {
         return $false
     }
@@ -1909,6 +1975,15 @@ function Invoke-ElevatedRelaunch {
     }
     if (-not [string]::IsNullOrWhiteSpace($DataRoot)) {
         $argumentLine += ' -DataRoot "' + $DataRoot + '"'
+    }
+    if ($script:AllowManagedDeviceForRun) {
+        $argumentLine += ' -AllowManagedDevice'
+    }
+    if ($AllowNoRestorePoint) {
+        $argumentLine += ' -AllowNoRestorePoint'
+    }
+    if ($PromptForManagedDecision) {
+        $argumentLine += ' -InteractiveManagedApproval'
     }
     Write-Host 'Opening the administrator run...'
     $process = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
@@ -2230,7 +2305,7 @@ function Invoke-RestartTest {
         throw 'RestartTest requires administrator rights.'
     }
     $snapshot = Get-SystemSnapshot
-    $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$AllowManagedDevice
+    $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$script:AllowManagedDeviceForRun
     if (-not $support.Supported) {
         throw "Restart test stopped: $(@($support.Reasons) -join ' ')"
     }
@@ -2253,15 +2328,79 @@ function Invoke-RestartTest {
     }
 }
 
+function Format-ConfigurationValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$Id,
+        [Parameter(Mandatory = $true)]$Value
+    )
+
+    if ([string]$Value -eq '<absent>') { return 'Windows default' }
+    if ($Id -match 'Off$') { return $(if ([string]$Value -eq '0') { 'Off' } else { 'On' }) }
+    switch ($Id) {
+        'UI.MenuDelay200' { return "$Value ms" }
+        'UI.KeyboardDelayMinimum' { return "$Value (shortest)" }
+        'UI.VisualEffectsPerformance' {
+            return @('Let Windows choose', 'Best appearance', 'Best performance', 'Custom')[[int]$Value]
+        }
+        'Power.AcEnergyPreference' { return $(if ([int]$Value -eq 33) { '33 / balanced' } else { [string]$Value }) }
+        'Power.AcCoreParkingMinimum' { return "$Value% available" }
+        'Power.AcMaximumProcessorState' { return "$Value% maximum" }
+        'Power.AcBoostMode' { return $(if ([int]$Value -eq 2) { 'Aggressive' } else { [string]$Value }) }
+        'Power.AcCoolingPolicy' { return $(if ([int]$Value -eq 1) { 'Active (fan)' } else { 'Passive' }) }
+        default { return [string]$Value }
+    }
+}
+
 function Show-Configuration {
+    $states = @(Get-ConfigurationState)
+    $passed = @($states | Where-Object Compliant).Count
+    $profileState = if ($passed -eq $states.Count) { 'ACTIVE' } else { "$($states.Count - $passed) PENDING" }
+
     Write-Host ''
-    Write-Host 'Registry and preference settings'
-    $script:RegistrySettings | Select-Object Id, Desired, Restart, Basis | Format-Table -Wrap -AutoSize
+    Write-Host '+------------------------------------------------------------------------------+' -ForegroundColor DarkCyan
+    Write-Host '|  LACKSAN // ZBOOK PERFORMANCE PROFILE                                        |' -ForegroundColor Cyan
+    Write-Host ('|  Profile: {0,-66} |' -f $profileState) -ForegroundColor Cyan
+    Write-Host ('|  Applied checks: {0,-59} |' -f "$passed / $($states.Count)")
+    Write-Host '+------------------------------------------------------------------------------+' -ForegroundColor DarkCyan
+    Write-Host '[OK] current matches selected   [--] Tune will change it'
     Write-Host ''
-    Write-Host 'AC-only processor settings'
-    $script:PowerSettings | Select-Object Id, DesiredAC, Label, Tradeoff | Format-Table -Wrap -AutoSize
+    Write-Host ('{0,-4} {1,-27} {2,-17} {3,-17} {4}' -f '', 'SETTING', 'CURRENT', 'SELECTED', 'EXPECTED EFFECT')
+    Write-Host ('{0,-4} {1,-27} {2,-17} {3,-17} {4}' -f '', '-------', '-------', '--------', '---------------')
+
+    foreach ($state in $states) {
+        $name = [regex]::Replace(($state.Id -split '\.')[-1], '(?<=[a-z0-9])(?=[A-Z])', ' ')
+        $name = $name -replace ' Delay200$', ' Delay' -replace ' Off$', '' -replace '\bAc\b', 'AC' -replace '\bDvr\b', 'DVR'
+        $impact = switch -Regex ($state.Id) {
+            '^UI\.MenuDelay' { 'Shorter wait; gain unmeasured'; break }
+            '^UI\.Keyboard' { 'Faster repeat; gain unmeasured'; break }
+            '^UI\.' { 'Less visual work; gain unmeasured'; break }
+            '^Capture\.' { 'Capture off; gain unmeasured'; break }
+            '^Power\.AcEnergy' { 'Balanced; no consistent gain'; break }
+            '^Power\.AcCore' { 'More ready cores; heat may rise'; break }
+            '^Power\.AcMaximum' { 'Full AC range; gain unmeasured'; break }
+            '^Power\.AcBoost' { 'More boost; heat/fan may rise'; break }
+            '^Power\.AcCooling' { 'Fan earlier; sustains clocks'; break }
+        }
+        $mark = if ($state.Compliant) { '[OK]' } else { '[--]' }
+        $color = if ($state.Compliant) { 'Green' } else { 'Yellow' }
+        Write-Host ('{0,-4} {1,-27} {2,-17} {3,-17} {4}' -f
+            $mark,
+            $name,
+            (Format-ConfigurationValue -Id $state.Id -Value $state.Current),
+            (Format-ConfigurationValue -Id $state.Id -Value $state.Desired),
+            $impact
+        ) -ForegroundColor $color
+    }
+
     Write-Host ''
-    Write-Host 'Excluded: software installs/removal, debloat, services, scheduled tasks, Windows Update, security controls, firmware writes, and ISO creation.'
+    Write-Host 'PERFORMANCE GAIN: NOT ESTABLISHED' -ForegroundColor Yellow
+    Write-Host 'Screening results were mixed. Tune applies every [--] row; Undo restores the latest exact backup.'
+    Write-Host 'DC/battery, management, security, Windows Update, services, firmware, and recovery controls are unchanged.'
+    Write-LabEvent -Event 'ConfigurationDisplay' -Status 'Info' -Data @{
+        PassedCount = $passed
+        TotalCount = $states.Count
+        PendingIds = @($states | Where-Object { -not $_.Compliant } | Select-Object -ExpandProperty Id)
+    }
 }
 
 function Show-Backups {
@@ -2360,6 +2499,38 @@ function Resolve-FriendlyAction {
     }
 }
 
+function Invoke-InteractiveProtectedAction {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('Tune', 'FullTest', 'RestartTest')]
+        [string]$RequestedAction
+    )
+
+    $snapshot = Get-SystemSnapshot
+    $decision = Request-ManagedDeviceDecision -Snapshot $snapshot -RequestedAction $RequestedAction
+    switch ($decision) {
+        'Cancel' {
+            Write-Host 'Canceled. No tuning or rollback action was started.'
+            return
+        }
+        'Undo' {
+            if (-not (Invoke-ElevatedRelaunch -RequestedAction Undo)) {
+                Invoke-RestoreBackup -Path (Get-BackupPath)
+            }
+            return
+        }
+        'Proceed' {
+            if (-not (Invoke-ElevatedRelaunch -RequestedAction $RequestedAction -PromptForManagedDecision)) {
+                switch ($RequestedAction) {
+                    'Tune' { Invoke-LabApply }
+                    'FullTest' { Invoke-FullBeforeAfterTest }
+                    'RestartTest' { Invoke-RestartTest }
+                }
+            }
+        }
+    }
+}
+
 function Start-Interactive {
     do {
         Write-Host ''
@@ -2376,15 +2547,11 @@ function Start-Interactive {
         try {
             switch ($choice) {
                 '1' {
-                    if (-not (Invoke-ElevatedRelaunch -RequestedAction FullTest)) {
-                        Invoke-FullBeforeAfterTest
-                    }
+                    Invoke-InteractiveProtectedAction -RequestedAction FullTest
                 }
                 '2' { [void](Invoke-QuickBenchmark -Label Current) }
                 '3' {
-                    if (-not (Invoke-ElevatedRelaunch -RequestedAction Tune)) {
-                        Invoke-LabApply
-                    }
+                    Invoke-InteractiveProtectedAction -RequestedAction Tune
                 }
                 '4' { [void](Show-Audit) }
                 '5' {
@@ -2393,9 +2560,7 @@ function Start-Interactive {
                     }
                 }
                 '6' {
-                    if (-not (Invoke-ElevatedRelaunch -RequestedAction RestartTest)) {
-                        Invoke-RestartTest
-                    }
+                    Invoke-InteractiveProtectedAction -RequestedAction RestartTest
                 }
                 '7' {
                     Show-Configuration
@@ -2433,11 +2598,32 @@ try {
             'Menu' { Start-Interactive }
             'Check' { [void](Show-Audit) }
             'Benchmark' { [void](Invoke-QuickBenchmark -Label Current) }
-            'Tune' { Invoke-LabApply }
-            'FullTest' { Invoke-FullBeforeAfterTest }
+            'Tune' {
+                if ($InteractiveManagedApproval) {
+                    Invoke-InteractiveProtectedAction -RequestedAction Tune
+                }
+                else {
+                    Invoke-LabApply
+                }
+            }
+            'FullTest' {
+                if ($InteractiveManagedApproval) {
+                    Invoke-InteractiveProtectedAction -RequestedAction FullTest
+                }
+                else {
+                    Invoke-FullBeforeAfterTest
+                }
+            }
             'Compare' { [void](Show-BenchmarkComparison) }
             'Undo' { Invoke-RestoreBackup -Path (Get-BackupPath -RequestedId $BackupId) }
-            'RestartTest' { Invoke-RestartTest }
+            'RestartTest' {
+                if ($InteractiveManagedApproval) {
+                    Invoke-InteractiveProtectedAction -RequestedAction RestartTest
+                }
+                else {
+                    Invoke-RestartTest
+                }
+            }
             'Resume' { Invoke-RestartResume }
             'StopAutoLogin' { Invoke-StopAutoLogin }
             'Backups' { Show-Backups }
@@ -2446,7 +2632,7 @@ try {
             'Test' { Invoke-SelfTest }
             'Backup' {
                 $snapshot = Get-SystemSnapshot
-                $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$AllowManagedDevice
+                $support = Test-SupportedSystem -Snapshot $snapshot -PermitManaged:$script:AllowManagedDeviceForRun
                 if (-not $support.Supported) { throw "Support detection failed: $(@($support.Reasons) -join ' ')" }
                 $backup = New-LabBackup -Snapshot $snapshot -PermitNoRestorePoint:$AllowNoRestorePoint
                 Write-Host "Backup created: $($backup.Id)"

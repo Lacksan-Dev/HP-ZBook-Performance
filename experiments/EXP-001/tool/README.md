@@ -26,6 +26,19 @@ combinations and genuinely managed devices by default. A generic Microsoft
 `MDMMaintenenceTask` without domain/Entra join, MDM URL, or enrollment-specific
 tasks is not treated as active management.
 
+The interactive menu never asks the user to type `APPLY`. If active management
+is detected, changing actions use one numbered gate:
+
+1. continue the selected action once as administrator;
+2. undo the latest exact Lacksan backup; or
+3. cancel without changes.
+
+This bypasses only the tool's safety refusal for the current run. It does not
+disconnect accounts, remove enrollment, delete EnterpriseMgmt tasks, or change
+domain, Entra, MDM, security, update, or recovery policy. Noninteractive use
+retains the explicit `-AllowManagedDevice` switch, and that authorization is
+forwarded through the UAC relaunch.
+
 ## Local use
 
 Open Windows PowerShell 5.1 in the repository:
@@ -57,10 +70,20 @@ Windows elevation still follows the PC's UAC policy. Legacy `-Mode Audit`,
 `-Mode Apply`, and similar version 0.1 commands remain mapped to the new names.
 `-WhatIf` on a changing action is redirected to the read-only details view.
 
+Show configuration is a live profile dashboard. `[OK]` means the current value
+matches the selected profile and `[--]` means Tune would change it. The screen
+shows current and selected values, qualitative tradeoffs, and the evidence
+boundary that no performance gain has been established. It does not claim
+unmeasured gains.
+
 The current lab computer has a workplace registration and an elevated-only
 generic Microsoft maintenance task, but it is not domain/Entra joined, publishes
 no MDM URL, and has no enrollment-specific task. No override flag is required
 on this PC. The tool never changes management state.
+
+If the title reports `0.1.0-experimental`, that is an old copy with the retired
+text-confirmation and management false-positive behavior. Run the reviewed
+current file and confirm that the title reports `0.2.1-experimental`.
 
 Backups are stored in:
 
@@ -122,6 +145,19 @@ irm https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main/expe
 The current local file should be used until publishing is confirmed. Remote
 execution should be pinned to a reviewed commit for managed/customer use; do
 not assume a moving branch is unchanged.
+
+## Validation commands
+
+Run both the non-destructive integration suite and the focused Pester suite:
+
+```powershell
+.\experiments\EXP-001\tool\tests\Invoke-Tests.ps1
+Invoke-Pester .\experiments\EXP-001\tool\tests\Lacksan-ZBook-Performance.Tests.ps1
+```
+
+The Pester tests cover the numbered managed-device decisions, hardware-lock
+preservation, generic-maintenance-task false-positive regression, UAC argument
+forwarding, parsing, and the live configuration dashboard contract.
 
 ## Important limits
 

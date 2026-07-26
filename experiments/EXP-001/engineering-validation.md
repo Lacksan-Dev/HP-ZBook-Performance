@@ -115,6 +115,31 @@ Sources and retrieval dates are in
   interpretation. Before/after comparisons stop when the AC-only candidate is
   being evaluated on battery.
 
+### Version 0.2.1 managed-device menu and configuration dashboard
+
+- A read-only user-context check on 2026-07-26 reported
+  `AzureAdJoined: NO`, `EnterpriseJoined: NO`, `DomainJoined: NO`,
+  `WorkplaceJoined: YES`, an empty `WorkplaceMdmUrl`, `PartOfDomain: False`,
+  and `WORKGROUP`. This confirms a workplace registration rather than an active
+  domain, Entra device join, or published MDM endpoint.
+- No registration, account, scheduled task, policy, management, security,
+  update, or recovery state was changed.
+- Interactive Tune, FullTest, and RestartTest now use numeric managed-device
+  decisions: `1` continues once, `2` invokes the latest exact Lacksan rollback,
+  and `3` cancels. The approval is forwarded through UAC elevation.
+- The numeric approval bypasses only the tool's own management refusal. It does
+  not remove enrollment or alter management configuration, and the exact
+  hardware/build/BIOS support lock remains enforced.
+- Show configuration now reads all 17 live values and presents current versus
+  selected state, applied/pending markers, qualitative tradeoffs, and the
+  explicit boundary that no performance gain has been established.
+- Windows PowerShell 5.1 `Check` and `Settings` validation both exited `0`.
+  `Check` reported version `0.2.1-experimental`, `READY TO TUNE: YES`, no active
+  management endpoint, and 17 of 17 tuning checks applied.
+- Pester 3.4.0 completed 9 tests with 9 passed and 0 failed.
+- The static and non-destructive integration runner completed with exit code
+  `0` and reported all tests passed.
+
 ### Quick benchmark measurements
 
 All files below remain under
@@ -187,6 +212,16 @@ improvement has been demonstrated for either energy-preference value.
 4. Reboot persistence has not been tested.
 5. Instrumentation overhead, repeated raw workflow runs, medians, thermal
    behavior, battery impact, and responsiveness benefit have not been measured.
+6. The first version 0.2.1 Pester run passed 5 tests and failed 4 because the
+   test harness imported extracted functions into a temporary function scope.
+   Moving evaluation to script scope corrected the harness.
+7. The second Pester run passed 8 tests and failed 1 because Pester 3 counted
+   prior `Read-Host` mock calls across examples. Scoping the assertion to the
+   current `It` block corrected the harness; the final run passed 9 of 9.
+8. The first integration invocation printed its passing result but the outer
+   command was terminated at its 60-second limit before returning an exit code.
+   It was rerun with a 120-second limit and completed in 59 seconds with exit
+   code `0`.
 
 Machine-local JSONL logs and protected backups remain under
 `%ProgramData%\Lacksan\ZBookPerformance`. They are intentionally not committed
