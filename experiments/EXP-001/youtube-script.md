@@ -10,6 +10,40 @@
 
 **A Safer HP ZBook Performance Baseline: What We Built and What Still Needs Testing**
 
+## 2026-07-27 low-friction sign-in privacy update
+
+**[On screen: "Hide account details, keep normal sign-in"]**
+
+The owner selected the low-friction sign-in privacy option for the public-use
+ZBook. The experimental PowerShell utility now has a separate `Privacy` command
+that enables Microsoft's documented **Block user from showing account details
+on sign-in** policy.
+
+The exact policy value is
+`HKLM\SOFTWARE\Policies\Microsoft\Windows\System\BlockUserFromShowingAccountDetailsOnSignin`.
+When enabled, Windows prevents extra account details such as an email address or
+user name from being shown at sign-in.
+
+This is deliberately not the stronger **Don't display last signed-in** policy.
+The display name and normal sign-in tile remain visible, preserving the
+low-typing Windows Hello or passwordless experience. Customers who need the
+name itself hidden require a separate higher-friction security decision.
+
+**[On screen: "Reversible by design"]**
+
+`Privacy -WhatIf` previews the action without writing. A live apply first checks
+the exact ZBook model, Windows build, BIOS, and management state. It then saves
+the original registry key and value existence, type, and data in an
+integrity-protected backup, applies one policy value, verifies it, and records
+structured logs. Repeating the command is idempotent. `UndoPrivacy` restores
+and verifies the exact captured state.
+
+The implementation passed non-destructive tests but has not been applied on the
+lab machine. Sign-out or reboot persistence and a visual sign-in-screen check
+remain pending. This is a privacy improvement, not a startup or responsiveness
+gain, and the hourly performance-layer cursor was not advanced by this direct
+owner choice.
+
 ## 2026-07-26 merged-development update
 
 Use this segment after the existing engineering checkpoint when briefing the

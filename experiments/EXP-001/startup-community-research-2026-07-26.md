@@ -168,11 +168,21 @@ with autologon, multi-factor unlock, and passwordless/Windows Hello
 experiences. That conflicts with EXP-001's optional one-time automatic-sign-in
 restart workflow.
 
-Disposition: **supported security option requiring an explicit usability
-choice**. Do not silently include it in the general performance profile. If
-selected, implement it as a separate privacy action with support detection,
-capture of value existence/type/data, preview, apply, verification, logging,
-exact rollback, and a restart-workflow compatibility block.
+Owner decision recorded 2026-07-27: select the **low-friction** option. The
+experimental utility now implements only
+`BlockUserFromShowingAccountDetailsOnSignin=1` as a separate `Privacy` action.
+It does not configure `DontDisplayLastUserName`; therefore the display name and
+normal sign-in tile remain visible. This preserves the normal sign-in flow and
+does not deliberately conflict with Windows Hello, passwordless sign-in, or
+the one-time restart test.
+
+Evidence state: **implemented but not applied on the lab machine**. The action
+has model/build and management support detection, original key/value
+existence/type/data capture, an integrity-protected backup, dry-run preview,
+apply and immediate verification, structured logging, idempotence, exact
+rollback with verification, and an explicit pending reboot-persistence state.
+It remains separate from the performance profile because it is a privacy
+control and no startup or responsiveness benefit is claimed.
 
 ## Accepted next measurements
 
@@ -221,7 +231,8 @@ changed, and no performance improvement was measured.
 - Must Tailscale and Teams be ready for the owner's normal "usable" state?
 - Which Omnissa Horizon redirection features are actually used?
 - Does the owner prefer full name privacy enough to type the username and
-  password and disable the one-time automatic-sign-in test?
+  password and disable the one-time automatic-sign-in test? **Answered for this
+  iteration: no; low-friction account-detail privacy was selected.**
 - What is the WPR boot-trace overhead on this system?
 - Which startup entry contributes measurable critical-path CPU or storage
   contention?

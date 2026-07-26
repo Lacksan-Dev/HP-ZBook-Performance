@@ -2,7 +2,7 @@
 
 Experimental standalone Windows PowerShell 5.1 utility for the validated HP
 ZBook Firefly 14 G8 lab computer. The normal actions are Check, Benchmark,
-Tune, FullTest, Compare, Undo, and RestartTest.
+Tune, FullTest, Compare, Undo, Privacy, UndoPrivacy, and RestartTest.
 
 ## Current support lock
 
@@ -59,15 +59,50 @@ Open Windows PowerShell 5.1 in the repository:
 # Undo the latest Tune
 .\experiments\EXP-001\tool\Lacksan-ZBook-Performance.ps1 Undo
 
+# Hide email address or user-name details on the sign-in screen
+.\experiments\EXP-001\tool\Lacksan-ZBook-Performance.ps1 Privacy
+
+# Restore the exact pre-Privacy policy state
+.\experiments\EXP-001\tool\Lacksan-ZBook-Performance.ps1 UndoPrivacy
+
 # Tune, restart, sign in automatically once, verify, benchmark, and remove
 # auto-login. The account password is requested once in a masked prompt.
 .\experiments\EXP-001\tool\Lacksan-ZBook-Performance.ps1 RestartTest
 ```
 
-Run without parameters for a menu. Selecting Tune, Undo, FullTest, or
-RestartTest performs the selected action without an extra tool confirmation.
-Windows elevation still follows the PC's UAC policy. Legacy `-Mode Audit`,
-`-Mode Apply`, and similar version 0.1 commands remain mapped to the new names.
+Run without parameters for a menu. Selecting Tune, Undo, FullTest, RestartTest,
+Privacy, or UndoPrivacy performs the selected action without an extra tool
+confirmation. Windows elevation still follows the PC's UAC policy. Legacy
+`-Mode Audit`, `-Mode Apply`, and similar version 0.1 commands remain mapped to
+the new names.
+
+## Low-friction sign-in privacy
+
+`Privacy` enables Microsoft's documented **Block user from showing account
+details on sign-in** computer policy. It prevents the sign-in screen from
+showing extra details such as an email address or user name. It intentionally
+does not enable **Don't display last signed-in**, so the display name and normal
+sign-in tile remain visible and normal Windows Hello/passwordless sign-in is
+not deliberately removed.
+
+The action is separate from Tune because it is a privacy choice, not a measured
+performance optimization. Before writing, it checks the validated model/build
+and management state and saves the exact key/value existence, registry type,
+and data to an integrity-protected manifest. It verifies the immediate result,
+is idempotent, preserves failed apply evidence, and automatically restores and
+verifies the captured state if apply verification fails. `UndoPrivacy` restores
+the newest verified privacy backup exactly. Use `Privacy -WhatIf` and
+`UndoPrivacy -WhatIf` for non-writing previews.
+
+Privacy backups are stored in:
+
+```text
+%ProgramData%\Lacksan\ZBookPerformance\PrivacyBackups
+```
+
+Sign out or restart to inspect the sign-in screen. Reboot persistence remains
+pending until that manual observation is preserved; the implementation has not
+been applied on the lab machine.
 `-WhatIf` on a changing action is redirected to the read-only details view.
 
 Show configuration is a live profile dashboard. `[OK]` means the current value
@@ -81,9 +116,10 @@ generic Microsoft maintenance task, but it is not domain/Entra joined, publishes
 no MDM URL, and has no enrollment-specific task. No override flag is required
 on this PC. The tool never changes management state.
 
-If the title reports `0.1.0-experimental`, that is an old copy with the retired
-text-confirmation and management false-positive behavior. Run the reviewed
-current file and confirm that the title reports `0.2.1-experimental`.
+If the title reports a version earlier than `0.2.2-experimental`, that is an old
+copy with the retired text-confirmation and management false-positive behavior.
+Run the reviewed current file and confirm that the title reports
+`0.2.2-experimental`.
 
 Backups are stored in:
 
