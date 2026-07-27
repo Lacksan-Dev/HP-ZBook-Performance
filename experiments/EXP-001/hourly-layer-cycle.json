@@ -1,5 +1,7 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "cadence": "hourly",
+  "mode": "parallel-experiment-discovery",
   "nextLayer": 8,
   "nextLayerName": "Boot path, services, scheduled tasks, background permissions, and startup applications",
   "lastCompletedLayer": 7,
@@ -8,5 +10,32 @@
   "sourceCommit": "94302eec3f139c8f463fcedc85c24d0641c06416",
   "outcome": "inconclusive",
   "evidencePath": "experiments/EXP-001/layer-evidence/layer-07-security-isolation-2026-07-27.md",
-  "reason": "Defender, all effective firewall profiles, VBS, Memory Integrity, and reported Credential Guard protections were active, but no repeated workflow, Defender/WPR attribution, instrumentation-overhead qualification, or decision rule demonstrated security-related startup or responsiveness cost. BitLocker and Secure Boot state were inaccessible without elevation, so no protection change was selected."
+  "reason": "Security inventory remains preserved as inconclusive while independent startup, Edge demand-launch, and service-candidate experiments continue.",
+  "activeTracks": [
+    {
+      "experiment": "EXP-002",
+      "name": "Startup registration minimization",
+      "cadence": "hourly",
+      "protectedUserApps": ["Omnissa", "Windows App", "Remote Desktop", "Tailscale"],
+      "priorityTargets": ["Microsoft Teams", "Microsoft Office", "Microsoft 365", "Logitech", "Logi Options+", "Logi Bolt", "Logi Tune", "G Hub"]
+    },
+    {
+      "experiment": "EXP-003",
+      "name": "Edge demand-launch responsiveness",
+      "cadence": "hourly",
+      "startupFolderEntryAllowed": false
+    },
+    {
+      "experiment": "EXP-004",
+      "name": "Service suspension, demand-start, and replacement candidates",
+      "cadence": "hourly"
+    }
+  ],
+  "portfolioRules": {
+    "blockedLabelAllowed": false,
+    "pendingEvidenceLabel": "needs-evidence",
+    "mergeExperimentalPullRequestsByDefault": true,
+    "stableRequiresHumanApproval": true,
+    "spawnFocusedExperimentFromActionableResearch": true
+  }
 }
