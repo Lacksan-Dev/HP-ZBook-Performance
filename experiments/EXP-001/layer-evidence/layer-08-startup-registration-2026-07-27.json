@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "experiment": "EXP-001",
+  "layer": 8,
+  "layerName": "Boot path, services, scheduled tasks, background permissions, and startup applications",
+  "capturedAtUtc": "2026-07-27T06:26:27.4556103Z",
+  "outcome": "research-only",
+  "evidenceClass": "ReadOnlyStartupCandidateScreening",
+  "formalBaselineEligible": false,
+  "liveWindowsChanges": false,
+  "performanceClaim": false,
+  "system": {
+    "manufacturer": "HP",
+    "model": "HP ZBook Firefly 14 inch G8 Mobile Workstation PC",
+    "windowsCaption": "Microsoft Windows 11 Pro",
+    "windowsVersion": "10.0.26200",
+    "windowsBuild": "26200",
+    "bios": "T76 Ver. 01.24.02",
+    "lastBootUtc": "2026-07-26T21:16:30.5000000Z",
+    "powerSourceObservation": "AC-connected according to Win32_Battery status"
+  },
+  "collection": {
+    "elevationAttempted": false,
+    "registryStartupLocationsRead": true,
+    "startupFoldersRead": true,
+    "scheduledTasksRead": true,
+    "relatedServicesRead": true,
+    "presentDevicesRead": true,
+    "exactCommandPathsPreserved": false,
+    "exactCommandPathsRedacted": true,
+    "effectiveStartupEnablementResolved": false,
+    "bootDiagnosticEventQueryRun": true,
+    "bootDiagnosticEventsFound": false,
+    "wprOnOffTraceRun": false,
+    "windowsOnOffAssessmentRun": false,
+    "startupOrReadinessBenchmarkRun": false,
+    "instrumentationOverheadQualified": false,
+    "serviceTaskStartupOrPermissionChanges": false
+  },
+  "startupInventory": {
+    "registryEntries": [
+      {
+        "surface": "HKCU Run",
+        "name": "Teams",
+        "valueType": "String",
+        "launcher": "ms-teams.exe",
+        "commandSha256": "7a52329a36d488c7685b8f7c66b0c9770f36c39ecdd31f69cbd8017d31add7bf",
+        "disposition": "Existing EXP-006 scope"
+      },
+      {
+        "surface": "HKLM Run",
+        "name": "SecurityHealth",
+        "valueType": "ExpandString",
+        "launcher": "SecurityHealthSystray.exe",
+        "commandSha256": "f0fa74d5199e094348b4e8cee67397a3d691e80b097413623d8e35fc24ce13f2",
+        "disposition": "Protected security component"
+      },
+      {
+        "surface": "HKLM Run",
+        "name": "RtkAudUService",
+        "valueType": "String",
+        "launcher": "RtkAudUService64.exe",
+        "commandSha256": "0d31df7d201235cd030cd952ba1f7a7cd9c518aff0c5667d98ae2a15b34f673a",
+        "disposition": "Preserved device and audio component"
+      },
+      {
+        "surface": "HKLM Run",
+        "name": "Logitech Download Assistant",
+        "valueType": "String",
+        "launcher": "rundll32.exe",
+        "commandSha256": "98556d038b4dad9e2d98c3638c572fe1069150ce3d2f084360e4e6e41d469171",
+        "disposition": "Selected for focused EXP-007 evidence"
+      }
+    ],
+    "startupFolderItems": [
+      {
+        "scope": "CurrentUser",
+        "name": "Send to OneNote.lnk",
+        "fileSha256": "22e8771e81c22e24f52a3c08a3ae0704a9182120b9bc6f6bbbdce35fe3741858",
+        "disposition": "Unresolved; not selected"
+      },
+      {
+        "scope": "Common",
+        "name": "Tailscale.lnk",
+        "fileSha256": "f265be58300e380283f13bfdf64d97f8efa072e4d532013687799974cbd0d9d1",
+        "disposition": "Protected user startup application"
+      }
+    ],
+    "matchingLogonScheduledTasks": 0
+  },
+  "selectedCandidate": {
+    "name": "Logitech Download Assistant",
+    "surface": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+    "valueType": "String",
+    "launcher": "rundll32.exe",
+    "entryPoint": "LogiFetch",
+    "referencedPayload": "LogiLDA.dll",
+    "referencedPayloadPresent": false,
+    "launcherPresent": true,
+    "launcherVersion": "10.0.26100.1",
+    "launcherPublisher": "Microsoft Windows",
+    "launcherSignatureStatus": "Valid",
+    "presentInWin32StartupCommand": true,
+    "effectiveStartupState": "Unknown",
+    "relatedServicesFound": 0,
+    "relatedScheduledTasksFound": 0,
+    "presentRelatedDevicesFound": 0,
+    "protected": false,
+    "focusedExperiment": {
+      "id": "EXP-007",
+      "issue": 23,
+      "url": "https://github.com/Lacksan-Dev/HP-ZBook-Performance/issues/23",
+      "stage": "research",
+      "evidenceGate": "needs-evidence"
+    }
+  },
+  "bootHistory": {
+    "provider": "Microsoft-Windows-Diagnostics-Performance/Operational",
+    "eventId": 100,
+    "result": "No events were found that match the specified selection criteria.",
+    "bootTimingsRecorded": false
+  },
+  "decision": {
+    "candidateSelected": true,
+    "implemented": false,
+    "applied": false,
+    "reason": "The machine-wide Run registration persists while its referenced LogiLDA.dll payload was not present, making it a bounded stale-registration candidate. Effective enablement, attempted execution, boot attribution, workflow compatibility, instrumentation overhead, and repeated-run performance evidence remain unresolved.",
+    "requiredNextEvidence": "Confirm effective startup state and exact identity; record a supervised WPR On/Off baseline with declared shell, network, device, and protected-application readiness; qualify instrumentation overhead; then compare repeated control and one-variable treatment runs using medians and the accepted EXP-001 decision rule."
+  }
+}
