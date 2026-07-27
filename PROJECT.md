@@ -24,13 +24,15 @@ Develop repeatable methods to measure, improve, verify, document, and reverse Wi
 4. Minimize Microsoft Teams and Microsoft Office auto-start activity.
 5. Minimize Microsoft Edge demand-launch latency without placing Edge in the Startup folder.
 6. Find services that can be delayed, suspended, demand-started, consolidated, or replaced by smaller user-mode components.
-7. Measure every candidate with repeated runs and medians.
+7. Prototype lightweight user-mode replacements for redundant launchers, updaters, telemetry, readiness probes, and experiment logging.
+8. Measure every candidate with repeated runs and medians.
 
 ## Experiments
 - `EXP-001`: Establish an HP ZBook responsiveness baseline for Windows sign-in, Outlook, Edge, Windows Search, idle activity, and wake-to-network readiness.
 - `EXP-002`: Minimize startup registrations with a protected remote-access allowlist.
 - `EXP-003`: Optimize Edge demand-launch responsiveness without a Startup-folder entry.
 - `EXP-004`: Discover and test reversible service suspension, demand-start, and replacement candidates.
+- `EXP-005`: Prototype lightweight user-mode replacements for redundant Windows and vendor user-mode functions.
 
 ## Release states
 Experimental, Pilot, Stable, Retired, Rejected, Inconclusive.
