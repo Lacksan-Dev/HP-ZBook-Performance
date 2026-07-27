@@ -3,7 +3,15 @@
 ## Mission
 Develop measurable Windows responsiveness improvements for office, browser, workstation, battery, driver, and local-AI workloads.
 
-## Required workflow
+## Operating cadence
+- Run an experiment cycle every hour.
+- Keep multiple experiments active in parallel across research, design, engineering, validation, documentation, and customer education.
+- A slow or inconclusive experiment never pauses unrelated experiments.
+- Research at any layer must create a new focused experiment issue when it finds a reversible candidate worth measuring.
+- Each hourly run must do useful work: gather evidence, create or refine an experiment, implement a reversible candidate, execute available tests, or merge an eligible pull request.
+- Repeated inventory-only reports are insufficient unless the inventory directly selects or rejects a specific candidate.
+
+## Experiment flow
 1. Research Director
 2. Windows Research
 3. Experiment Design
@@ -12,6 +20,87 @@ Develop measurable Windows responsiveness improvements for office, browser, work
 6. Component Documentation
 7. YouTube Studio
 8. Release Management
+
+An experiment may remain Experimental while later research continues in separate EXP issues.
+
+## No-blocking policy
+- Do not use the `blocked` label.
+- Missing physical evidence, elevation, hardware access, or instrumentation becomes `needs-evidence` with an exact evidence request.
+- Continue all safe repository, simulation, static-analysis, research, and implementation work while evidence is pending.
+- Preserve inconclusive and failed results, then move to the next candidate.
+
+## Merge policy
+- Experimental pull requests are merge-by-default.
+- Merge after repository checks pass, the change matches the approved experiment scope, original state is captured, verification exists, and rollback exists.
+- Research-only and documentation-only pull requests merge after content and sensitive-data checks pass.
+- Unsafe, irreversible, security-reducing, or unsupported proposals remain research findings and never become live-change code.
+- Never assign Stable automatically. Stable requires explicit human approval.
+
+## Parallel discovery policy
+Every research layer must search for specific candidate experiments, including:
+- Startup registrations and logon contention
+- Browser demand-launch latency
+- Services that can be delayed, suspended, demand-started, consolidated, or replaced
+- Scheduled tasks and vendor update agents
+- OEM utilities and tray applications
+- Driver and DPC/ISR attribution
+- Storage, indexing, cache, and application readiness
+- Power and thermal policy
+- User-mode Windows functions that can be replaced by a smaller Lacksan component
+
+A candidate becomes its own EXP issue with one variable, a benchmark, a verification method, and rollback.
+
+## Startup Responsiveness workstream
+Maintain a dedicated hourly workstream for sign-in to usable desktop.
+
+### Protected startup allowlist
+Preserve startup behavior for:
+- Omnissa
+- Windows App
+- Remote Desktop
+- Tailscale
+
+Also preserve Windows security, credential, accessibility, device-driver, recovery, update, and enterprise-management components.
+
+### Cleanup target
+For all other user applications, inventory and remove or disable auto-launch registrations when safely reversible, including:
+- Startup-folder shortcuts
+- HKCU and approved HKLM Run or RunOnce entries
+- App StartupTask registrations
+- Scheduled tasks whose primary purpose is launching a user application at sign-in
+- Vendor tray applications, telemetry clients, and update launchers
+
+Specific priority targets:
+- Microsoft Teams auto-start
+- Microsoft Office and Microsoft 365 quick-launch or startup registrations
+- Logitech, Logi Options+, Logi Bolt, Logi Tune, and G Hub tray, telemetry, updater, and startup registrations
+
+Delete the startup registration rather than uninstalling the application. Preserve Logitech HID, keyboard, mouse, receiver, Bluetooth, and device-critical drivers. Capture the exact original registration and provide restore.
+
+Measure at minimum:
+- Sign-in to usable desktop
+- Background CPU and disk activity during the first 120 seconds
+- Time until Omnissa, Windows App, Remote Desktop, and Tailscale are ready
+- Reboot persistence
+- Exact restoration
+
+## Edge Demand-Launch workstream
+Maintain a dedicated hourly workstream for loading Microsoft Edge as fast as possible when requested.
+
+Requirements:
+- Keep Edge out of the Startup folder.
+- Measure cold launch, first interactive window, first navigation, new-tab readiness, and memory cost.
+- Test supported Edge mechanisms separately, including Startup Boost, background mode, sleeping tabs, extension removal, profile state, hardware acceleration, cache behavior, and documented enterprise policies.
+- Startup Boost may run supported Edge background processes without a Startup-folder shortcut; record the resource cost and compare it with true cold launch.
+- Preserve user profiles, passwords, cookies, favorites, security controls, update behavior, and management policy.
+- Select the fastest supported configuration using repeated runs and medians.
+
+## Service suspension and replacement workstream
+- Research one service or tightly related service group per experiment.
+- Prefer vendor telemetry, updater, tray, helper, and redundant user-mode services before Windows platform services.
+- Compare Automatic, Automatic Delayed Start, Manual, demand-start, temporary suspension, and a smaller replacement component where supported.
+- Never weaken Defender, Firewall, BitLocker, Credential Guard, VBS, Windows Update, recovery, credential providers, networking required by Omnissa/Windows App/Remote Desktop/Tailscale, or enterprise management.
+- A replacement must preserve the required customer function and expose support detection, health checks, logs, and rollback.
 
 ## Engineering requirements
 Every modification requires:
