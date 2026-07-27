@@ -27,6 +27,8 @@
   [layer-07-security-isolation-2026-07-27.md](layer-evidence/layer-07-security-isolation-2026-07-27.md)
 - Hourly layer 8 startup-registration evidence:
   [layer-08-startup-registration-2026-07-27.md](layer-evidence/layer-08-startup-registration-2026-07-27.md)
+- Hourly layer 9 policy/registry evidence:
+  [layer-09-startup-delay-registry-2026-07-27.md](layer-evidence/layer-09-startup-delay-registry-2026-07-27.md)
 
 This report covers one experiment only. It maps the Windows, application, driver,
 firmware, policy, service, scheduled-task, registry, and HP OEM surfaces that can

@@ -10,6 +10,43 @@
 
 **A Safer HP ZBook Performance Baseline: What We Built and What Still Needs Testing**
 
+## 2026-07-27 layer 9 update: a popular registry shortcut is rejected
+
+**[On screen: "Layer 9 - StartupDelayInMSec rejected for the baseline"]**
+
+This hour investigated the community-recommended
+`Explorer\Serialize\StartupDelayInMSec=0` registry edit.
+
+The value is not present on this ZBook. More importantly, a bounded search of
+Microsoft Learn, Microsoft Support, Windows logon Policy CSP documentation, and
+Microsoft startup-app guidance found no primary-source definition, supported
+Windows boundary, documented default, compatibility contract, or rollback
+guidance for that value. The exact name appeared in community advice, not in the
+reviewed Microsoft product documentation.
+
+**[On screen: "Starting everything sooner can increase contention"]**
+
+Microsoft does document per-app startup controls, Task Manager startup-impact
+measurements, and WPR On/Off tracing. Microsoft also explains that startup apps
+consume CPU and disk resources and can reduce responsiveness. Removing a shell
+delay globally is therefore not the same as reaching a usable desktop sooner;
+it can move more work into the critical foreground interval.
+
+The utility's read-only support audit detected a connected work account but no
+active management endpoint under its bounded rules. Its EnterpriseMgmt task
+view was non-elevated and remains limited. That result does not authorize an
+undocumented registry edit or an override of future Group Policy or MDM.
+
+Nothing was implemented or applied on the lab machine. No registry value,
+policy, MDM setting, startup application, service, task, security, update,
+recovery, driver, firmware, or OEM component changed. No performance gain is
+claimed.
+
+The baseline will keep Windows' implementation-controlled state and use
+documented per-app startup controls plus repeated WPR-attributed runs when a
+specific required application is late. Layer 10 next examines the Windows
+shell, GUI, capture, notifications, and perceived responsiveness.
+
 ## 2026-07-27 layer 8 update: the entry remains, but its helper is missing
 
 **[On screen: "Layer 8 - One startup candidate selected, nothing removed"]**

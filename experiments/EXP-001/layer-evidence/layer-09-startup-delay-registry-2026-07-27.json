@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "experiment": "EXP-001",
+  "layer": 9,
+  "layerName": "Group Policy, MDM-aware policy, registry, and system configuration",
+  "capturedAtUtc": "2026-07-27T07:25:15.4683534Z",
+  "outcome": "rejected",
+  "evidenceClass": "ReadOnlyRegistrySupportBoundary",
+  "formalBaselineEligible": false,
+  "liveWindowsChanges": false,
+  "performanceClaim": false,
+  "system": {
+    "manufacturer": "HP",
+    "model": "HP ZBook Firefly 14 inch G8 Mobile Workstation PC",
+    "windowsCaption": "Microsoft Windows 11 Pro",
+    "windowsVersion": "10.0.26200",
+    "windowsBuild": "26200",
+    "bios": "T76 Ver. 01.24.02",
+    "powerSourceObservation": "AC-connected according to Win32_Battery status"
+  },
+  "candidate": {
+    "discoverySource": "Atlas community performance playbook",
+    "path": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Serialize",
+    "name": "StartupDelayInMSec",
+    "proposedType": "DWord",
+    "proposedValue": 0,
+    "keyPresentOnLabSystem": false,
+    "valuePresentOnLabSystem": false,
+    "currentType": null,
+    "currentValue": null,
+    "foundInBoundedPrimarySourceSearch": false,
+    "implementationAdded": false,
+    "liveApplyRun": false,
+    "liveRollbackRun": false
+  },
+  "boundedPrimarySourceSearch": {
+    "retrievedDate": "2026-07-27",
+    "exactTermQueries": [
+      "site:learn.microsoft.com \"StartupDelayInMSec\"",
+      "site:support.microsoft.com \"StartupDelayInMSec\"",
+      "site:microsoft.com \"StartupDelayInMSec\" Windows startup",
+      "site:learn.microsoft.com/en-us/windows/win32 \"Explorer\\\\Serialize\""
+    ],
+    "relevantDocumentsReviewed": [
+      {
+        "title": "Configure Startup applications in Windows",
+        "url": "https://support.microsoft.com/en-US/Windows/Experience/Startup-Boot/configure-startup-applications-in-windows",
+        "exactTermPresent": false
+      },
+      {
+        "title": "Desktop Startup apps - Compatibility Cookbook",
+        "url": "https://learn.microsoft.com/en-us/windows/compatibility/startup-apps",
+        "exactTermPresent": false
+      },
+      {
+        "title": "ADMX_Logon Policy CSP",
+        "url": "https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-logon",
+        "exactTermPresent": false
+      },
+      {
+        "title": "WindowsLogon Policy CSP",
+        "url": "https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-windowslogon",
+        "exactTermPresent": false
+      },
+      {
+        "title": "Delivering a great startup and shutdown experience",
+        "url": "https://learn.microsoft.com/en-us/windows-hardware/test/weg/delivering-a-great-startup-and-shutdown-experience",
+        "exactTermPresent": false
+      }
+    ],
+    "exactTermPrimaryProductDocumentationFound": false,
+    "communityQandAResultFound": true,
+    "negativeSearchLimit": "This bounded search does not prove that no private, historical, or future Microsoft contract exists. It establishes that no current public contract was found in the reviewed primary-source surfaces."
+  },
+  "managementAwareness": {
+    "source": "Lacksan ZBook Performance 0.2.2-experimental read-only Audit",
+    "partOfDomain": false,
+    "azureAdJoined": false,
+    "enterpriseJoined": false,
+    "domainJoined": false,
+    "workplaceJoined": true,
+    "mdmUrlPresent": false,
+    "enterpriseMgmtTaskCount": 0,
+    "enterpriseMgmtTaskVisibility": "LimitedUntilElevated",
+    "activeManagementDetected": false,
+    "managementIdentifiersRecorded": false,
+    "interpretation": "A connected work account was observed without an active management endpoint under the tool's bounded rules. Limited non-elevated visibility does not authorize overriding current or future Group Policy or MDM."
+  },
+  "measurement": {
+    "startupDelayAttributed": false,
+    "wprOnOffTraceRun": false,
+    "startupOrReadinessBenchmarkRun": false,
+    "repeatedRawRunsPreserved": false,
+    "mediansCalculated": false,
+    "instrumentationOverheadQualified": false,
+    "thermalPowerNetworkControlsRecordedForBenchmark": false
+  },
+  "decision": {
+    "status": "rejected",
+    "reason": "The proposed value is absent, no current public Microsoft definition or compatibility contract was found in the bounded primary-source review, and no trace demonstrates that a required readiness application is waiting on this shell behavior. Globally compressing startup launch timing could increase CPU and storage contention during the foreground-readiness interval.",
+    "supportedAlternative": "Use documented per-app Startup controls and Task Manager impact data to select one nonessential registration, then attribute it with supervised WPR On/Off traces and repeated workflow-ready measurements.",
+    "reopenCriteria": "Reopen only if a required startup application is specifically attributed as delayed, a current Microsoft support boundary is established, a one-variable implementation satisfies the full modification contract, and repeated control/treatment runs can use the accepted EXP-001 decision rule."
+  }
+}
