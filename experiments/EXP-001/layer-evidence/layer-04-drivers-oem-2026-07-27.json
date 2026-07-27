@@ -1,0 +1,345 @@
+{
+  "schemaVersion": 1,
+  "experiment": "EXP-001",
+  "layer": 4,
+  "layerName": "Platform drivers and OEM components",
+  "capturedAtUtc": "2026-07-27T02:24:05.6999056Z",
+  "outcome": "inconclusive",
+  "liveWindowsChanges": false,
+  "performanceClaim": false,
+  "system": {
+    "manufacturer": "HP",
+    "model": "HP ZBook Firefly 14 inch G8 Mobile Workstation PC",
+    "systemSku": "4P803UT#ABA",
+    "windowsCaption": "Microsoft Windows 11 Pro",
+    "windowsVersion": "10.0.26200",
+    "windowsBuild": "26200",
+    "bios": "T76 Ver. 01.24.02",
+    "biosReleaseDateUtc": "2026-05-04T00:00:00Z",
+    "powerSourceObservation": "AC-connected according to Win32_Battery status",
+    "activePowerScheme": "Balanced"
+  },
+  "inventoryMethod": {
+    "signedDriverSurface": "Win32_PnPSignedDriver",
+    "presentDeviceSurface": "Get-PnpDevice -PresentOnly",
+    "currentUserPackageSurface": "Get-AppxPackage",
+    "serviceSurface": "Win32_Service",
+    "elevationAttempted": false,
+    "driverStoreExportPerformed": false,
+    "hpImageAssistantAnalysisPerformed": false,
+    "dpcIsrTracePerformed": false
+  },
+  "selectedDriverStack": [
+    {
+      "deviceClass": "DISPLAY",
+      "deviceName": "Intel(R) Iris(R) Xe Graphics",
+      "provider": "Intel Corporation",
+      "version": "32.0.101.7085",
+      "dateUtc": "2026-03-03T00:00:00Z",
+      "infName": "oem116.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "NET",
+      "deviceName": "Intel(R) Wi-Fi 6 AX201 160MHz",
+      "provider": "Intel",
+      "version": "23.140.0.3",
+      "dateUtc": "2025-05-02T00:00:00Z",
+      "infName": "oem68.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "BLUETOOTH",
+      "deviceName": "Intel(R) Wireless Bluetooth(R)",
+      "provider": "Intel Corporation",
+      "version": "23.140.0.5",
+      "dateUtc": "2025-04-29T00:00:00Z",
+      "infName": "oem49.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "SCSIADAPTER",
+      "deviceName": "Intel RST VMD Controller 9A0B",
+      "provider": "Intel Corporation",
+      "version": "18.7.6.1010",
+      "dateUtc": "2022-09-19T00:00:00Z",
+      "infName": "oem66.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "SYSTEM",
+      "deviceName": "Intel(R) Dynamic Tuning Manager",
+      "provider": "Intel",
+      "version": "8.7.10802.26924",
+      "dateUtc": "2022-04-11T00:00:00Z",
+      "infName": "oem60.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "SYSTEM",
+      "deviceName": "Intel(R) Management Engine Interface #1",
+      "provider": "Intel",
+      "version": "2540.8.7.0",
+      "dateUtc": "2025-09-28T00:00:00Z",
+      "infName": "oem15.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "SYSTEM",
+      "deviceName": "Intel(R) Serial IO I2C Host Controller - A0E8",
+      "provider": "Intel Corporation",
+      "version": "30.100.2129.8",
+      "dateUtc": "2021-07-13T00:00:00Z",
+      "infName": "oem71.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "SYSTEM",
+      "deviceName": "Intel Smart Sound Technology BUS",
+      "provider": "Intel(R) Corporation",
+      "version": "10.29.0.9947",
+      "dateUtc": "2023-10-13T00:00:00Z",
+      "infName": "oem5.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "SYSTEM",
+      "deviceName": "Thunderbolt(TM) Controller - 9A1B",
+      "provider": "Intel(R) Corporation",
+      "version": "1.41.1423.0",
+      "dateUtc": "2024-12-01T00:00:00Z",
+      "infName": "oem57.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "MEDIA",
+      "deviceName": "Realtek High Definition Audio",
+      "provider": "Realtek Semiconductor Corp.",
+      "version": "6.0.9929.1",
+      "dateUtc": "2025-12-22T00:00:00Z",
+      "infName": "oem56.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "CAMERA",
+      "deviceName": "HP Universal Camera Driver",
+      "provider": "Realtek",
+      "version": "10.0.22000.20390",
+      "dateUtc": "2025-10-14T00:00:00Z",
+      "infName": "oem45.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "SYSTEM",
+      "deviceName": "HP Application Driver",
+      "provider": "HP Inc.",
+      "version": "1.66.3710.0",
+      "dateUtc": "2024-03-28T00:00:00Z",
+      "infName": "oem42.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "SOFTWARECOMPONENT",
+      "deviceName": "HP Application Driver Component",
+      "provider": "HP Inc.",
+      "version": "1.83.4311.0",
+      "dateUtc": "2025-09-12T00:00:00Z",
+      "infName": "oem55.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "HIDCLASS",
+      "deviceName": "HP Wireless Button Driver",
+      "provider": "HP Inc.",
+      "version": "2.1.17.7",
+      "dateUtc": "2025-10-23T00:00:00Z",
+      "infName": "oem54.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "KEYBOARD",
+      "deviceName": "Standard 101/102-Key or Microsoft Natural PS/2 Keyboard for HP Hotkey Support",
+      "provider": "HP Development Company, L.P.",
+      "version": "8.10.52.464",
+      "dateUtc": "2026-03-10T00:00:00Z",
+      "infName": "oem107.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "BIOMETRIC",
+      "deviceName": "Synaptics FS7605 Touch Fingerprint Sensor with PurePrint(TM)",
+      "provider": "Synaptics Incorporated",
+      "version": "6.0.130.1110",
+      "dateUtc": "2024-05-08T00:00:00Z",
+      "infName": "oem63.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    },
+    {
+      "deviceClass": "HIDCLASS",
+      "deviceName": "Synaptics HID Device",
+      "provider": "Synaptics",
+      "version": "19.6.1.26",
+      "dateUtc": "2025-04-08T00:00:00Z",
+      "infName": "oem93.inf",
+      "signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher"
+    }
+  ],
+  "presentDeviceHealth": {
+    "devicesWithNonOkStatusOrProblemCode": 0,
+    "interpretation": "No current Device Manager problem code was observed. This does not measure driver latency, correctness under workload, update applicability, or startup cost."
+  },
+  "currentUserOemCompanionPackages": [
+    {
+      "name": "AD2F1837.HPSystemInformation",
+      "version": "8.10.52.0"
+    },
+    {
+      "name": "AppUp.IntelArcSoftware",
+      "version": "26.18.2353.0"
+    },
+    {
+      "name": "AppUp.IntelOptaneMemoryandStorageManagement",
+      "version": "18.1.1042.0"
+    },
+    {
+      "name": "RealtekSemiconductorCorp.HPAudioControl",
+      "version": "2.53.384.0"
+    },
+    {
+      "name": "SynapticsIncorporated.SynHPCommercialStykDApp",
+      "version": "19006.1024.0.0"
+    }
+  ],
+  "observedDriverRelatedServices": [
+    {
+      "name": "esifsvc",
+      "displayName": "Intel(R) Dynamic Tuning service",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "HotKeyServiceUWP",
+      "displayName": "HP Hotkey UWP Service",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "HPAppHelperCap",
+      "displayName": "HP App Helper HSA Service",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "HPAudioAnalytics",
+      "displayName": "HP Audio Analytics Service",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "HPDiagsCap",
+      "displayName": "HP Diagnostics HSA Service",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "HPNetworkCap",
+      "displayName": "HP Network HSA Service",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "hpsvcsscan",
+      "displayName": "HP Services Scan",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "HPSysInfoCap",
+      "displayName": "HP System Info HSA Service",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "HpTouchpointAnalyticsService",
+      "displayName": "HP Insights Analytics",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "IntelGraphicsSoftwareService",
+      "displayName": "Intel Graphics Software",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "LanWlanWwanSwitchingServiceUWP",
+      "displayName": "HP LAN/WLAN/WWAN Switching UWP Service",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "LMS",
+      "displayName": "Intel(R) Management and Security Application Local Management Service",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "RstMwService",
+      "displayName": "Intel(R) Storage Middleware Service",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "RtkAudioUniversalService",
+      "displayName": "Realtek Audio Universal Service",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "TbtP2pShortcutService",
+      "displayName": "Thunderbolt(TM) Peer to Peer Shortcut",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    },
+    {
+      "name": "WMIRegistrationService",
+      "displayName": "Intel(R) Management Engine WMI Provider Registration",
+      "currentState": "Running",
+      "currentStartMode": "Auto"
+    }
+  ],
+  "supportedRecommendationTools": {
+    "hpImageAssistantDetected": false,
+    "hpClientManagementScriptLibraryDetected": false,
+    "hpPerformanceAdvisorDetected": false,
+    "latestDocumentedHpImageAssistantVersion": "5.3.6",
+    "latestDocumentedHpImageAssistantDate": "2026-06-09",
+    "exactReferenceImageMatchVerified": false
+  },
+  "limitations": [
+    "Driver version and date do not establish whether a package is current, applicable, faster, or preferable for this HP image.",
+    "The selected signed-driver inventory omits hardware IDs, device instance IDs, file hashes, associated driver files, and package export because this run was sanitized and non-elevated.",
+    "No HP Image Assistant reference-image analysis was run because the supported tool was not detected; exact HP SoftPaq applicability and dependencies remain unknown.",
+    "No DPC/ISR ETW trace, call stack, startup trace, device-power trace, repeated workflow run, or instrumentation-overhead measurement was captured.",
+    "Current service state and start mode are observations, not vendor defaults or evidence that a service is safe to delay or stop.",
+    "No source code, redistribution rights, reproducible build, signing path, hardware test matrix, or recovery proof exists for rebuilding the proprietary drivers."
+  ],
+  "reason": "The selected platform stack is signed and no present Device Manager problem code was observed, but exact HP reference-image applicability, package dependencies, device-power behavior, DPC/ISR attribution, startup cost, and rollback/export evidence remain unresolved. No supported driver update, removal, rebuild, or OEM-service change can be selected."
+}
