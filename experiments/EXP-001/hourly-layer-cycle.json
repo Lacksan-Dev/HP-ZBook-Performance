@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "nextLayer": 5,
-  "nextLayerName": "Windows kernel, scheduler, memory, storage, interrupts, and DPC/ISR behavior",
-  "lastCompletedLayer": 4,
-  "lastCompletedLayerName": "Platform drivers and OEM components",
-  "lastCompletedAtUtc": "2026-07-27T02:28:06.7259957Z",
-  "sourceCommit": "670182177d1f1939404dded038c8501e4abe04f1",
+  "nextLayer": 6,
+  "nextLayerName": "Power management and performance policy",
+  "lastCompletedLayer": 5,
+  "lastCompletedLayerName": "Windows kernel, scheduler, memory, storage, interrupts, and DPC/ISR behavior",
+  "lastCompletedAtUtc": "2026-07-27T03:28:20.7542611Z",
+  "sourceCommit": "03ba8b2fbd374d363c182038c6c4e09663f31bc3",
   "outcome": "inconclusive",
-  "evidencePath": "experiments/EXP-001/layer-evidence/layer-04-drivers-oem-2026-07-27.md",
-  "reason": "The selected platform stack is signed and no present Device Manager problem code was observed, but exact HP reference-image applicability, package dependencies, device-power behavior, DPC/ISR attribution, startup cost, and rollback/export evidence remain unresolved. No supported driver update, removal, rebuild, or OEM-service change can be selected."
+  "evidencePath": "experiments/EXP-001/layer-evidence/layer-05-kernel-dpc-isr-2026-07-27.md",
+  "reason": "Three raw counter blocks prove that aggregate system surfaces are readable, but they have no workflow interval, thermal or overhead control, ETW module/function attribution, or readiness endpoint. They cannot select a supported kernel, DPC/ISR, scheduler, memory, storage, timer, boot, driver, power, or registry change."
 }
