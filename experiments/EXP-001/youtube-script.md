@@ -10,6 +10,40 @@
 
 **A Safer HP ZBook Performance Baseline: What We Built and What Still Needs Testing**
 
+## 2026-07-27 layer 3 update: firmware inventory is not a startup tweak
+
+**[On screen: "Layer 3 - BIOS, UEFI, embedded controller, and firmware"]**
+
+This hour used read-only Windows and HP inventory to map the ZBook's firmware
+surface. Windows reports UEFI boot with a GPT system disk. The HP BIOS is T76
+version 01.24.02, dated May 4, 2026. The embedded-controller and board KBC
+versions are internally consistent, and Windows reports the HP T76 System
+Firmware device as OK at version 1.24.2.0.
+
+**[On screen: "Matching versions are inventory, not a speed result"]**
+
+Those facts do not prove that firmware is current, that it is a startup
+bottleneck, or that a BIOS setting should change. HP's Instrumented BIOS
+provider and the classes for settings, allowed values, prerequisites, and boot
+order are present, but non-elevated setting reads were denied. The unattended
+run did not elevate.
+
+Microsoft's Secure Boot check also requires administrator access. Its access-
+denied result does not tell us whether Secure Boot is on or off, so that state
+remains unknown.
+
+We did not find package-specific HP evidence for the installed T76 01.24.02
+release or its downgrade boundary. That matters because HP has published a
+previous T76-family release for this ZBook family that did not permit rollback.
+Firmware recovery and firmware downgrade are not the same promise.
+
+No Fast Boot, boot order, Secure Boot, thermal, fan, power, firmware, driver,
+service, task, policy, registry, security, update, recovery, or management
+setting was changed. No startup run or performance gain is claimed.
+
+This layer is preserved as inconclusive. The next layer investigates platform
+drivers and HP OEM components using supported inventory and measured diagnosis.
+
 ## 2026-07-27 layer 2 update: capacity is not a bottleneck diagnosis
 
 **[On screen: "Layer 2 - Hardware resources and bottlenecks"]**

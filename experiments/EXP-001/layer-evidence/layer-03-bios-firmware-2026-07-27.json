@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "experiment": "EXP-001",
+  "layer": 3,
+  "layerName": "BIOS, UEFI, embedded-controller, and firmware interactions",
+  "capturedAtUtc": "2026-07-27T01:25:42.2299803Z",
+  "outcome": "inconclusive",
+  "liveWindowsChanges": false,
+  "performanceClaim": false,
+  "system": {
+    "manufacturer": "HP",
+    "model": "HP ZBook Firefly 14 inch G8 Mobile Workstation PC",
+    "systemSku": "4P803UT#ABA",
+    "baseboardProduct": "880D",
+    "firmwareBootMode": "UEFI",
+    "bootDiskPartitionStyle": "GPT"
+  },
+  "bios": {
+    "manufacturer": "HP",
+    "smbiosBiosVersion": "T76 Ver. 01.24.02",
+    "releaseDateUtc": "2026-05-04T00:00:00Z",
+    "smbiosVersion": "3.3",
+    "embeddedControllerMajorVersion": 48,
+    "embeddedControllerMinorVersion": 87,
+    "baseboardKbcVersion": "30.57.00"
+  },
+  "windowsFirmwareDevice": {
+    "name": "HP T76 System Firmware",
+    "status": "OK",
+    "provider": "HP",
+    "driverVersion": "1.24.2.0",
+    "driverDateUtc": "2026-05-04T00:00:00Z",
+    "firmwareVersionProperty": "1180200",
+    "driverInfPath": "oem100.inf",
+    "otherFirmwareDeviceCount": 3,
+    "otherFirmwareDeviceProvider": "Microsoft",
+    "otherFirmwareDeviceStatus": "OK"
+  },
+  "hpInstrumentedBios": {
+    "namespacePresent": true,
+    "classesObserved": [
+      "HP_BIOSEnumeration",
+      "HP_BIOSInteger",
+      "HP_BIOSOrderedList",
+      "HP_BIOSSettingInterface",
+      "HP_BIOSSensor"
+    ],
+    "settingInstanceReadAttempted": true,
+    "settingInstanceReadAccessDenied": true,
+    "elevationAttempted": false
+  },
+  "secureBoot": {
+    "status": null,
+    "query": "Confirm-SecureBootUEFI",
+    "queryAccessDenied": true,
+    "elevationAttempted": false
+  },
+  "firmwareUpdateResearch": {
+    "exactCurrentT76PackageVerified": false,
+    "exactCurrentT76ReleaseNotesVerified": false,
+    "downgradeOrRollbackSupported": null,
+    "firmwareUpdateAttempted": false,
+    "biosSettingChanged": false,
+    "rebootPerformed": false
+  },
+  "measurement": {
+    "firmwareTimeCaptured": false,
+    "startupRunCaptured": false,
+    "repeatedRunsCaptured": false,
+    "instrumentationOverheadQualified": false
+  },
+  "limitations": [
+    "The non-elevated run could detect the HP Instrumented BIOS provider but could not enumerate BIOS setting instances.",
+    "Confirm-SecureBootUEFI requires an elevated PowerShell session, so Secure Boot state was not inferred from the access-denied result.",
+    "The current HP T76 package, its exact applicability, release notes, installation preconditions, and downgrade boundary were not independently verified.",
+    "Inventory version agreement does not establish that firmware is current, supported for a change, or a startup-performance bottleneck.",
+    "No firmware-time split, startup trace, repeated run, control run, or instrumentation-overhead measurement was collected."
+  ],
+  "reason": "The installed BIOS, embedded-controller, UEFI/GPT boot mode, and Windows firmware-device versions were inventoried, but access-controlled settings, Secure Boot state, the exact current T76 package and rollback boundary, and firmware-time measurements remain unresolved. No supported reversible startup-performance firmware change can be selected."
+}
