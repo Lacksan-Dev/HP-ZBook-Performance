@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "experiment": "EXP-001",
+  "layer": 6,
+  "layerName": "Power management and performance policy",
+  "capturedAtUtc": "2026-07-27T04:24:53.5344027Z",
+  "outcome": "inconclusive",
+  "evidenceClass": "ReadOnlyConfigurationInventory",
+  "formalBaselineEligible": false,
+  "liveWindowsChanges": false,
+  "performanceClaim": false,
+  "system": {
+    "manufacturer": "HP",
+    "model": "HP ZBook Firefly 14 inch G8 Mobile Workstation PC",
+    "systemSku": "4P803UT#ABA",
+    "windowsCaption": "Microsoft Windows 11 Pro",
+    "windowsVersion": "10.0.26200",
+    "windowsBuild": "26200",
+    "bios": "T76 Ver. 01.24.02",
+    "biosReleaseDateUtc": "2026-05-04T00:00:00Z",
+    "powerSourceObservation": "AC-connected according to Win32_Battery status",
+    "batteryChargePercentObservation": 99
+  },
+  "collection": {
+    "powerCfgCommands": [
+      "powercfg /getactivescheme",
+      "powercfg /list",
+      "powercfg /aliases",
+      "powercfg /a",
+      "powercfg /query SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMIN",
+      "powercfg /query SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMAX",
+      "powercfg /query SCHEME_CURRENT SUB_PROCESSOR PERFEPP"
+    ],
+    "powerModeApis": [
+      "PowerGetUserConfiguredACPowerMode",
+      "PowerGetUserConfiguredDCPowerMode"
+    ],
+    "elevationAttempted": false,
+    "energyReportRun": false,
+    "sleepStudyRun": false,
+    "systemPowerReportRun": false,
+    "startupOrReadinessBenchmarkRun": false,
+    "thermalReadinessGateSatisfied": false,
+    "instrumentationOverheadQualified": false
+  },
+  "powerSchemes": {
+    "active": {
+      "guid": "381b4222-f694-41f0-9685-ff5bb260df2e",
+      "name": "Balanced",
+      "alias": "SCHEME_BALANCED"
+    },
+    "otherObserved": [
+      {
+        "guid": "605b4f8a-a785-48bd-95c2-e94d97351069",
+        "name": "My Custom Plan 1",
+        "active": false
+      }
+    ]
+  },
+  "userConfiguredPowerModes": {
+    "ac": {
+      "apiResult": 0,
+      "guid": "ded574b5-45a0-4f42-8737-46345c09c238",
+      "name": "Best performance"
+    },
+    "dc": {
+      "apiResult": 0,
+      "guid": "961cc777-2547-4f9d-8174-7d86181b8a7a",
+      "name": "Best power efficiency"
+    },
+    "effectiveRuntimeModeVerified": false,
+    "limit": "Microsoft documents the user-configured mode as a vote that can be overridden by other system signals."
+  },
+  "processorPolicy": {
+    "minimumProcessorState": {
+      "alias": "PROCTHROTTLEMIN",
+      "unit": "percent",
+      "supportedMinimum": 0,
+      "supportedMaximum": 100,
+      "supportedIncrement": 1,
+      "acValue": 5,
+      "dcValue": 5
+    },
+    "maximumProcessorState": {
+      "alias": "PROCTHROTTLEMAX",
+      "unit": "percent",
+      "supportedMinimum": 0,
+      "supportedMaximum": 100,
+      "supportedIncrement": 1,
+      "acValue": 100,
+      "dcValue": 100
+    },
+    "energyPerformancePreferenceQuery": {
+      "requestedAlias": "PERFEPP",
+      "aliasAdvertisedByPowerCfgAliases": false,
+      "queryExitCode": 0,
+      "settingRecordsReturned": 0,
+      "value": null,
+      "interpretation": "Unsupported for this inventory surface; no EPP value inferred."
+    }
+  },
+  "sleepAndStartupPowerStates": {
+    "available": [
+      "Standby (S0 Low Power Idle) Network Connected"
+    ],
+    "unavailable": [
+      {
+        "state": "Standby (S1)",
+        "reason": "Firmware does not support S1, and S1 is disabled when S0 Low Power Idle is supported."
+      },
+      {
+        "state": "Standby (S2)",
+        "reason": "Firmware does not support S2, and S2 is disabled when S0 Low Power Idle is supported."
+      },
+      {
+        "state": "Standby (S3)",
+        "reason": "S3 is disabled when S0 Low Power Idle is supported."
+      },
+      {
+        "state": "Hibernate",
+        "reason": "Hibernation has not been enabled."
+      },
+      {
+        "state": "Hybrid Sleep",
+        "reason": "S3 and hibernation are unavailable, and the hypervisor does not support this standby state."
+      },
+      {
+        "state": "Fast Startup",
+        "reason": "Hibernation is unavailable."
+      }
+    ],
+    "hibernationEnabled": false,
+    "fastStartupAvailable": false,
+    "modernStandbyModel": "S0 Low Power Idle, network connected"
+  },
+  "oemAndPlatformPolicy": {
+    "intelDynamicTuningService": {
+      "serviceName": "esifsvc",
+      "status": "Running",
+      "startType": "Automatic"
+    },
+    "intelDynamicTuningConfigurationRead": false,
+    "hpFirmwarePowerConfigurationRead": false,
+    "powerPolicyChanged": false
+  },
+  "decision": {
+    "supportedChangeSelected": false,
+    "reason": "The Windows base plan is Balanced and the user-configured AC mode is already Best performance. Battery mode, processor limits, Modern Standby, hibernation/Fast Startup, Intel Dynamic Tuning, and thermal constraints have different behavior and compatibility boundaries. No repeated readiness benchmark, thermal gate, effective runtime-mode record, or rollback-tested change supports altering them.",
+    "requiredNextEvidence": "Define AC and battery workflows, record effective power mode and thermal/power controls, qualify instrumentation overhead, run repeated raw readiness and responsiveness measurements, then test one supported reversible mode or hibernation configuration at a time."
+  }
+}

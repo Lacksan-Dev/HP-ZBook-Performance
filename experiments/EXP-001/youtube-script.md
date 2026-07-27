@@ -10,6 +10,45 @@
 
 **A Safer HP ZBook Performance Baseline: What We Built and What Still Needs Testing**
 
+## 2026-07-27 layer 6 update: AC already requests Best performance
+
+**[On screen: "Layer 6 - Power management and performance policy"]**
+
+This hour read the ZBook's supported Windows power surfaces without changing
+them.
+
+Balanced is the active base plan. On top of that plan, the Windows 11 user-
+configured AC mode is Best performance. The battery mode is Best power
+efficiency. The processor policy allows a 5 percent minimum and 100 percent
+maximum on both power sources.
+
+**[On screen: "Configuration is not a speed result"]**
+
+Microsoft documents the user-configured mode as a vote. Thermal, firmware,
+battery, workload, and other platform signals can override it. We did not trace
+the effective runtime mode, temperature, fan state, energy use, or a customer
+workflow.
+
+Modern Standby S0 Low Power Idle with network connectivity is the supported
+sleep model. S1 through S3 are unavailable. Hibernation is disabled, so Fast
+Startup and Hybrid Sleep are unavailable too.
+
+Fast Startup is not the same as a cold boot or Restart. It logs off the user and
+stores the kernel session in a hibernation file. Enabling it without separate
+workflow definitions would make a startup claim ambiguous and would also add a
+storage and rollback requirement.
+
+Intel Dynamic Tuning was running automatically. Its platform and thermal
+controls were not changed or bypassed.
+
+No custom or High performance plan, processor minimum, hidden processor value,
+Modern Standby state, hibernation, Fast Startup, Intel DTT, HP firmware,
+service, driver, task, policy, registry, security, update, recovery, or
+management setting changed. No performance gain is claimed.
+
+Layer 6 is preserved as inconclusive. Layer 7 investigates security and
+isolation overhead without reducing protection.
+
 ## 2026-07-27 layer 5 update: counters are not driver attribution
 
 **[On screen: "Layer 5 - Kernel, scheduler, memory, storage, DPC/ISR"]**
