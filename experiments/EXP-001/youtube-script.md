@@ -10,6 +10,40 @@
 
 **A Safer HP ZBook Performance Baseline: What We Built and What Still Needs Testing**
 
+## 2026-07-27 layer 2 update: capacity is not a bottleneck diagnosis
+
+**[On screen: "Layer 2 - Hardware resources and bottlenecks"]**
+
+This hour recorded the ZBook's processor, memory topology, storage capacity, and
+a short block of Windows CPU, memory, and disk counters.
+
+The computer has an Intel Core i5-1145G7 with four cores and eight logical
+processors. Windows reports 32 gigabytes of memory as two matching 16-gigabyte
+DDR4-3200 modules under separate controller paths. The system SSD has a
+237-gibibyte Windows volume with about 62 gibibytes free.
+
+**[On screen: "Inventory is context, not a diagnosis"]**
+
+Ten one-second samples showed available memory around 23.6 gibibytes and no disk
+queue in that short block. But the engineering automation was active, and there
+was no formal idle settling, thermal gate, workflow reset, repeated block, or
+instrumentation-overhead qualification. These numbers cannot prove that the
+CPU, memory, or storage is or is not a bottleneck.
+
+Two matching modules are consistent with a balanced configuration, but the
+inbox inventory does not directly prove active dual-channel interleaving. A
+firmware-reported 32-gigabyte array maximum differs from Intel's processor
+ceiling, while HP's compatible 32-gigabyte module listing does not establish
+the platform's total maximum. We will not use the WMI value to recommend or
+reject a memory upgrade.
+
+Detailed storage reliability fields were inaccessible, so no wear, temperature,
+or error conclusion was made. No memory, SSD, page-file, driver, firmware,
+service, policy, registry, power, security, or update setting was changed.
+
+This layer is preserved as inconclusive. The cursor now moves to layer 3: BIOS,
+UEFI, embedded-controller, and firmware interactions.
+
 ## 2026-07-27 layer 1 update: thermal telemetry is not ready
 
 **[On screen: "Layer 1 - Physical and thermal health"]**
