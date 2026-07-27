@@ -10,6 +10,41 @@
 
 **A Safer HP ZBook Performance Baseline: What We Built and What Still Needs Testing**
 
+## 2026-07-27 layer 8 update: the entry remains, but its helper is missing
+
+**[On screen: "Layer 8 - One startup candidate selected, nothing removed"]**
+
+This hour inspected the ZBook's logon-startup registrations without changing
+them. Windows still exposes a machine-wide Logitech Download Assistant Run
+entry. Its launcher is the signed Microsoft `rundll32.exe`, but the registered
+`LogiLDA.dll` payload was not present at that path.
+
+Logitech documents Download Assistant as notification software that helps users
+install Logi Options+ or G HUB for supported devices. Microsoft documents that
+Run entries execute at logon and that extra startup work can affect the
+post-logon responsiveness phase.
+
+**[On screen: "Missing file is a clue, not a benchmark"]**
+
+We did not prove that Windows currently enables or attempts this entry. The
+Diagnostics-Performance query returned no matching boot events, and no WPR boot
+trace, repeated run, median, or instrumentation-overhead test ran. Zero related
+Logitech devices, services, or tasks in this bounded inventory also does not
+prove that Logitech support will never be needed.
+
+The exact registration is now isolated in EXP-007 as a one-variable experiment.
+Future tooling must capture its original path, name, type, and value, provide
+dry-run, apply, verification, structured logs, exact rollback, rollback
+verification, idempotence, and reboot-persistence testing. It must not uninstall
+or modify a Logitech application, service, task, device, driver, or file.
+
+Teams remains with EXP-006. Tailscale remains protected. Windows Security and
+the Realtek audio component remain outside this removal candidate.
+
+This result is research-only. Nothing was applied on the lab machine, and no
+startup or responsiveness gain is claimed. Layer 9 will examine supported Group
+Policy, MDM-aware policy, registry, and system-configuration surfaces.
+
 ## 2026-07-27 layer 7 update: protection status is not overhead evidence
 
 **[On screen: "Layer 7 - Security and isolation, protection preserved"]**
