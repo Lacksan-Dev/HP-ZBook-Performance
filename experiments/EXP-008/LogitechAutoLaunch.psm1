@@ -78,6 +78,11 @@ function Invoke-Exp008Apply {
     $state = Save-Exp008State -StatePath $StatePath
     foreach ($item in $state.items) {
         if ($DryRun) { Write-Exp008Log -Path $LogPath -Action 'DryRunRemove' -Result 'Planned' -Data @{kind=$item.Kind;path=$item.Path;name=$item.Name}; continue }
+        $target = if ($item.Kind -eq 'Registry') { "$($item.Path)::$($item.Name)" } else { $item.Path }
+        if (-not $PSCmdlet.ShouldProcess($target,'Remove Logitech user-space auto-launch registration')) {
+            Write-Exp008Log -Path $LogPath -Action 'Apply' -Result 'SkippedByShouldProcess' -Data @{kind=$item.Kind;path=$item.Path;name=$item.Name}
+            continue
+        }
         try {
             if ($item.Kind -eq 'Registry') {
                 $current = (Get-Item -LiteralPath $item.Path).GetValue($item.Name,$null,'DoNotExpandEnvironmentNames')
@@ -134,7 +139,8 @@ function Test-Exp008Rollback {
     $missing = @()
     foreach ($item in $state.items) {
         if ($item.Kind -eq 'Registry') {
-            $actual = (Get-Item -LiteralPath $item.Path -ErrorAction SilentlyContinue).GetValue($item.Name,$null,'DoNotExpandEnvironmentNames')
+            $key = Get-Item -LiteralPath $item.Path -ErrorAction SilentlyContinue
+            $actual = if ($null -ne $key) { $key.GetValue($item.Name,$null,'DoNotExpandEnvironmentNames') } else { $null }
             if ([string]$actual -ne [string]$item.Value) { $missing += $item }
         } elseif ($item.Kind -eq 'StartupFile' -and -not (Test-Path -LiteralPath $item.Path)) { $missing += $item }
     }
