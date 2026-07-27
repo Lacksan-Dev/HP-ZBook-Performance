@@ -1,0 +1,226 @@
+{
+  "schemaVersion": 1,
+  "experiment": "EXP-001",
+  "layer": 2,
+  "layerName": "Hardware resources and bottlenecks",
+  "capturedAtUtc": "2026-07-27T00:23:15.9524987Z",
+  "outcome": "inconclusive",
+  "liveWindowsChanges": false,
+  "performanceClaim": false,
+  "system": {
+    "manufacturer": "HP",
+    "model": "HP ZBook Firefly 14 inch G8 Mobile Workstation PC",
+    "systemSku": "4P803UT#ABA",
+    "windowsBuild": "26200",
+    "processor": "11th Gen Intel Core i5-1145G7",
+    "processorCores": 4,
+    "processorLogicalProcessors": 8
+  },
+  "memory": {
+    "totalPhysicalBytes": 34024419328,
+    "totalVisibleMemoryKiB": 33226972,
+    "reportedMemoryDeviceCount": 2,
+    "reportedArrayMaximumCapacityKiB": 33554432,
+    "modules": [
+      {
+        "deviceLocator": "Bottom-Slot 1(left)",
+        "bankLabel": "Controller0ChannelADimm0",
+        "capacityBytes": 17179869184,
+        "speedMTPerSecond": 3200,
+        "configuredClockMTPerSecond": 3200,
+        "dataWidthBits": 64,
+        "totalWidthBits": 64,
+        "formFactorCode": 12,
+        "smbiosMemoryTypeCode": 26,
+        "manufacturer": "Samsung",
+        "partNumber": "M471A2K43DB1-CWE"
+      },
+      {
+        "deviceLocator": "Bottom-Slot 2(right)",
+        "bankLabel": "Controller1ChannelADimm0",
+        "capacityBytes": 17179869184,
+        "speedMTPerSecond": 3200,
+        "configuredClockMTPerSecond": 3200,
+        "dataWidthBits": 64,
+        "totalWidthBits": 64,
+        "formFactorCode": 12,
+        "smbiosMemoryTypeCode": 26,
+        "manufacturer": "Samsung",
+        "partNumber": "M471A2K43DB1-CWE"
+      }
+    ],
+    "pageFile": {
+      "path": "C:\\pagefile.sys",
+      "allocatedBaseMiB": 12288,
+      "currentUsageMiBAtInventory": 0,
+      "peakUsageMiBAtInventory": 0
+    }
+  },
+  "storage": {
+    "model": "HFS256G39TNF-N3A0A",
+    "firmwareRevision": "70000P10",
+    "reportedPhysicalDiskSizeBytes": 256060514304,
+    "reportedMediaType": "SSD",
+    "reportedBusType": "SATA",
+    "reportedHealthStatus": "Healthy",
+    "reportedOperationalStatus": "OK",
+    "systemVolume": {
+      "drive": "C:",
+      "fileSystem": "NTFS",
+      "sizeBytes": 254943424512,
+      "freeBytes": 66809425920,
+      "freePercent": 26.206
+    },
+    "storageReliabilityCounter": {
+      "available": false,
+      "error": "Access to a CIM resource was not available to the client."
+    }
+  },
+  "counterBlock": {
+    "counterStartUtc": "2026-07-27T00:23:05.6722729Z",
+    "counterEndUtc": "2026-07-27T00:23:15.9524987Z",
+    "sampleIntervalSeconds": 1,
+    "sampleCount": 10,
+    "conditions": {
+      "collectionType": "Read-only convenience screening",
+      "formalIdleSettlingPerformed": false,
+      "instrumentationOverheadQualified": false,
+      "thermalReadinessQualified": false,
+      "foregroundAutomationActive": true
+    },
+    "samples": [
+      {
+        "timestampUtc": "2026-07-27T00:23:06.8839830Z",
+        "processorPercent": 12.875257,
+        "availableMemoryMiB": 23582,
+        "committedBytesPercent": 18.683287,
+        "diskTimePercent": 0.59549,
+        "diskQueueLength": 0,
+        "diskBytesPerSecond": 155629.791314
+      },
+      {
+        "timestampUtc": "2026-07-27T00:23:07.8849823Z",
+        "processorPercent": 14.343407,
+        "availableMemoryMiB": 23553,
+        "committedBytesPercent": 18.771355,
+        "diskTimePercent": 1.982449,
+        "diskQueueLength": 0,
+        "diskBytesPerSecond": 683293.086856
+      },
+      {
+        "timestampUtc": "2026-07-27T00:23:08.8914492Z",
+        "processorPercent": 13.062218,
+        "availableMemoryMiB": 23560,
+        "committedBytesPercent": 18.769617,
+        "diskTimePercent": 0,
+        "diskQueueLength": 0,
+        "diskBytesPerSecond": 0
+      },
+      {
+        "timestampUtc": "2026-07-27T00:23:09.9041119Z",
+        "processorPercent": 5.686454,
+        "availableMemoryMiB": 23597,
+        "committedBytesPercent": 18.601889,
+        "diskTimePercent": 0.354807,
+        "diskQueueLength": 0,
+        "diskBytesPerSecond": 169844.219623
+      },
+      {
+        "timestampUtc": "2026-07-27T00:23:10.9170280Z",
+        "processorPercent": 14.194216,
+        "availableMemoryMiB": 23565,
+        "committedBytesPercent": 18.760135,
+        "diskTimePercent": 0.36315,
+        "diskQueueLength": 0,
+        "diskBytesPerSecond": 149618.834882
+      },
+      {
+        "timestampUtc": "2026-07-27T00:23:11.9231621Z",
+        "processorPercent": 11.286358,
+        "availableMemoryMiB": 23567,
+        "committedBytesPercent": 18.74385,
+        "diskTimePercent": 0.366909,
+        "diskQueueLength": 0,
+        "diskBytesPerSecond": 65141.593707
+      },
+      {
+        "timestampUtc": "2026-07-27T00:23:12.9308276Z",
+        "processorPercent": 6.381701,
+        "availableMemoryMiB": 23596,
+        "committedBytesPercent": 18.600335,
+        "diskTimePercent": 0.349302,
+        "diskQueueLength": 0,
+        "diskBytesPerSecond": 89436.938929
+      },
+      {
+        "timestampUtc": "2026-07-27T00:23:13.9398385Z",
+        "processorPercent": 0,
+        "availableMemoryMiB": 23590,
+        "committedBytesPercent": 18.597157,
+        "diskTimePercent": 0.560044,
+        "diskQueueLength": 0,
+        "diskBytesPerSecond": 93359.714958
+      },
+      {
+        "timestampUtc": "2026-07-27T00:23:14.9487085Z",
+        "processorPercent": 1.266397,
+        "availableMemoryMiB": 23591,
+        "committedBytesPercent": 18.595987,
+        "diskTimePercent": 0.166751,
+        "diskQueueLength": 0,
+        "diskBytesPerSecond": 4060.293374
+      },
+      {
+        "timestampUtc": "2026-07-27T00:23:15.9524987Z",
+        "processorPercent": 1.350461,
+        "availableMemoryMiB": 23591,
+        "committedBytesPercent": 18.594345,
+        "diskTimePercent": 0.601361,
+        "diskQueueLength": 0,
+        "diskBytesPerSecond": 163224.025174
+      }
+    ],
+    "descriptiveSummary": {
+      "processorPercent": {
+        "minimum": 0,
+        "median": 8.83403,
+        "maximum": 14.343407
+      },
+      "availableMemoryMiB": {
+        "minimum": 23553,
+        "median": 23586,
+        "maximum": 23597
+      },
+      "committedBytesPercent": {
+        "minimum": 18.594345,
+        "median": 18.642588,
+        "maximum": 18.771355
+      },
+      "diskTimePercent": {
+        "minimum": 0,
+        "median": 0.36503,
+        "maximum": 1.982449
+      },
+      "diskQueueLength": {
+        "minimum": 0,
+        "median": 0,
+        "maximum": 0
+      },
+      "diskBytesPerSecond": {
+        "minimum": 0,
+        "median": 121489.27492,
+        "maximum": 683293.086856
+      }
+    }
+  },
+  "limitations": [
+    "The counter block ran while the engineering automation was active and without the protocol's formal idle settling period.",
+    "Instrumentation overhead and thermal readiness were not qualified.",
+    "The memory topology is consistent with a balanced two-module configuration, but active dual-channel interleaving was not directly verified.",
+    "The WMI memory-array maximum differs from the processor ceiling, while HP's compatible 32 GB module listing does not establish the total platform upgrade ceiling.",
+    "Storage reliability counters were inaccessible, so wear, error, temperature, and power-on-hour fields were not measured.",
+    "Reported storage bus type is a Windows storage-stack observation and is not proof of the drive's physical interface.",
+    "No workload, startup, throughput, latency, memory-pressure, or storage diagnostic run was performed."
+  ],
+  "reason": "Static inventory and one unqualified ten-second counter block cannot identify a hardware bottleneck or justify an upgrade. Exact memory ceiling, active channel mode, storage reliability, instrumentation overhead, and repeated workflow pressure remain unresolved."
+}
