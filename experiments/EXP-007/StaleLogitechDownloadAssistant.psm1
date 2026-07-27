@@ -124,7 +124,7 @@ function Restore-Exp007Registration {
     if ($saved.registry.exists) {
         if ($PSCmdlet.ShouldProcess("$script:RegistryPath\$script:ValueName", 'Restore exact startup registration')) {
             New-Item -Path $script:RegistryPath -Force | Out-Null
-            $kind = [Microsoft.Win32.RegistryValueKind]::$($saved.registry.kind)
+            $kind = [Microsoft.Win32.RegistryValueKind][Enum]::Parse([Microsoft.Win32.RegistryValueKind], [string]$saved.registry.kind, $true)
             $key = Get-Item -LiteralPath $script:RegistryPath
             $key.SetValue($script:ValueName, [string]$saved.registry.value, $kind)
         }
