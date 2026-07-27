@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "nextLayer": 6,
-  "nextLayerName": "Power management and performance policy",
-  "lastCompletedLayer": 5,
-  "lastCompletedLayerName": "Windows kernel, scheduler, memory, storage, interrupts, and DPC/ISR behavior",
-  "lastCompletedAtUtc": "2026-07-27T03:28:20.7542611Z",
-  "sourceCommit": "03ba8b2fbd374d363c182038c6c4e09663f31bc3",
+  "nextLayer": 7,
+  "nextLayerName": "Security and isolation overhead without reducing protection",
+  "lastCompletedLayer": 6,
+  "lastCompletedLayerName": "Power management and performance policy",
+  "lastCompletedAtUtc": "2026-07-27T04:27:52.3477898Z",
+  "sourceCommit": "c7756f51662fbb0cbdc385bc846fe7fb5f442133",
   "outcome": "inconclusive",
-  "evidencePath": "experiments/EXP-001/layer-evidence/layer-05-kernel-dpc-isr-2026-07-27.md",
-  "reason": "Three raw counter blocks prove that aggregate system surfaces are readable, but they have no workflow interval, thermal or overhead control, ETW module/function attribution, or readiness endpoint. They cannot select a supported kernel, DPC/ISR, scheduler, memory, storage, timer, boot, driver, power, or registry change."
+  "evidencePath": "experiments/EXP-001/layer-evidence/layer-06-power-policy-2026-07-27.md",
+  "reason": "Balanced is active with Best performance requested on AC and Best power efficiency on battery, while processor bounds are 5/100 percent and Intel Dynamic Tuning remains active. Effective runtime mode, thermal and energy behavior, hibernation/Fast Startup tradeoffs, repeated readiness measurements, and exact rollback evidence are absent, so no supported power-policy change can be selected."
 }
