@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "experiment": "EXP-001",
+  "layer": 7,
+  "layerName": "Security and isolation overhead without reducing protection",
+  "capturedAtUtc": "2026-07-27T05:26:09.7643834Z",
+  "outcome": "inconclusive",
+  "evidenceClass": "ReadOnlyProtectionInventory",
+  "formalBaselineEligible": false,
+  "liveWindowsChanges": false,
+  "performanceClaim": false,
+  "system": {
+    "manufacturer": "HP",
+    "model": "HP ZBook Firefly 14 inch G8 Mobile Workstation PC",
+    "windowsCaption": "Microsoft Windows 11 Pro",
+    "windowsVersion": "10.0.26200",
+    "windowsBuild": "26200",
+    "bios": "T76 Ver. 01.24.02",
+    "powerSourceObservation": "AC-connected according to Win32_Battery status",
+    "hypervisorPresent": true
+  },
+  "collection": {
+    "elevationAttempted": false,
+    "defenderExclusionsEnumerated": false,
+    "firewallRulesEnumerated": false,
+    "bitLockerProtectorsEnumerated": false,
+    "identityOrManagementStateEnumerated": false,
+    "securityTraceRun": false,
+    "startupOrReadinessBenchmarkRun": false,
+    "instrumentationOverheadQualified": false
+  },
+  "microsoftDefenderAntivirus": {
+    "amProductVersion": "4.18.26060.3008",
+    "amEngineVersion": "1.1.26060.3008",
+    "amRunningMode": "Normal",
+    "amServiceEnabled": true,
+    "antispywareEnabled": true,
+    "antivirusEnabled": true,
+    "behaviorMonitorEnabled": true,
+    "ioavProtectionEnabled": true,
+    "networkInspectionSystemEnabled": true,
+    "onAccessProtectionEnabled": true,
+    "realTimeProtectionEnabled": true,
+    "tamperProtectionEnabled": true,
+    "signaturesOutOfDate": false,
+    "antivirusSignatureVersion": "1.455.364.0",
+    "antivirusSignatureLastUpdated": "2026-07-27T01:09:29.0000000+09:00",
+    "performanceAnalyzer": {
+      "newMpPerformanceRecordingAvailable": true,
+      "getMpPerformanceReportAvailable": true,
+      "recordingRun": false,
+      "reasonNotRun": "The supported recording requires an elevated, bounded reproduction and can disclose file and process paths. The unattended observation did not elevate, reproduce a customer workflow, or collect sensitive trace data."
+    }
+  },
+  "windowsFirewallActiveStore": {
+    "policyStore": "ActiveStore",
+    "profiles": [
+      {
+        "name": "Domain",
+        "enabled": true,
+        "defaultInboundAction": "Block",
+        "defaultOutboundAction": "Allow",
+        "allowInboundRules": true,
+        "allowLocalFirewallRules": true,
+        "notifyOnListen": true,
+        "logAllowed": false,
+        "logBlocked": false
+      },
+      {
+        "name": "Private",
+        "enabled": true,
+        "defaultInboundAction": "Block",
+        "defaultOutboundAction": "Allow",
+        "allowInboundRules": true,
+        "allowLocalFirewallRules": true,
+        "notifyOnListen": true,
+        "logAllowed": false,
+        "logBlocked": false
+      },
+      {
+        "name": "Public",
+        "enabled": true,
+        "defaultInboundAction": "Block",
+        "defaultOutboundAction": "Allow",
+        "allowInboundRules": true,
+        "allowLocalFirewallRules": true,
+        "notifyOnListen": true,
+        "logAllowed": false,
+        "logBlocked": false
+      }
+    ],
+    "rulesEnumerated": false
+  },
+  "virtualizationBasedSecurity": {
+    "source": "Win32_DeviceGuard",
+    "availableSecurityPropertyCodes": [
+      1,
+      2,
+      3,
+      5,
+      6,
+      7,
+      8
+    ],
+    "availableSecurityProperties": [
+      "Hypervisor support",
+      "Secure Boot",
+      "DMA protection",
+      "NX protections",
+      "SMM mitigations",
+      "MBEC or GMET",
+      "APIC virtualization"
+    ],
+    "requiredSecurityPropertyCodes": [
+      0
+    ],
+    "securityServiceConfiguredCodes": [
+      2
+    ],
+    "securityServicesConfigured": [
+      "Memory integrity"
+    ],
+    "securityServiceRunningCodes": [
+      1,
+      2
+    ],
+    "securityServicesRunning": [
+      "Credential Guard",
+      "Memory integrity"
+    ],
+    "virtualizationBasedSecurityStatusCode": 2,
+    "virtualizationBasedSecurityStatus": "Enabled and running",
+    "codeIntegrityPolicyEnforcementStatusCode": 2,
+    "codeIntegrityPolicyEnforcementStatus": "Enforced",
+    "usermodeCodeIntegrityPolicyEnforcementStatusCode": 2,
+    "usermodeCodeIntegrityPolicyEnforcementStatus": "Enforced",
+    "policyOriginDetermined": false,
+    "specificCodeIntegrityPolicyIdentified": false
+  },
+  "bitLocker": {
+    "statusRead": false,
+    "result": "Access denied without elevation",
+    "protectionStatus": null,
+    "encryptionMethod": null,
+    "keyProtectorsEnumerated": false
+  },
+  "secureBoot": {
+    "statusRead": false,
+    "result": "Access denied without elevation",
+    "enabled": null
+  },
+  "decision": {
+    "supportedChangeSelected": false,
+    "reason": "The protection inventory shows active Defender, firewall, VBS, Memory Integrity, and reported Credential Guard protections, but no repeated customer workflow, Defender performance recording, WPR attribution, instrumentation-overhead qualification, or controlled decision rule demonstrates a security-related bottleneck. BitLocker and Secure Boot state could not be read without elevation. Disabling or weakening protection is outside the experiment boundary.",
+    "requiredNextEvidence": "During a supervised lab window, validate BitLocker and Secure Boot state without exposing protectors, define a synthetic workflow and data-retention boundary, qualify Defender and WPR instrumentation overhead, preserve repeated raw runs and medians with the security state held constant, and investigate a specific attributed hotspot through supported application, driver, or workload changes rather than reducing protection."
+  }
+}

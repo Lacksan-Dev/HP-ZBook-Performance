@@ -10,6 +10,45 @@
 
 **A Safer HP ZBook Performance Baseline: What We Built and What Still Needs Testing**
 
+## 2026-07-27 layer 7 update: protection status is not overhead evidence
+
+**[On screen: "Layer 7 - Security and isolation, protection preserved"]**
+
+This hour read the ZBook's supported Windows protection-status surfaces without
+changing them.
+
+Microsoft Defender reported antivirus, real-time, behavior, on-access, IOAV,
+network inspection, and tamper protection enabled. All three effective Windows
+Firewall profiles were enabled with inbound-block and outbound-allow defaults.
+
+Windows also reported virtualization-based security and Memory Integrity
+running. The same WMI surface reported Credential Guard running and kernel and
+user-mode code-integrity enforcement. We did not infer which policy or
+management authority produced those states.
+
+**[On screen: "Protection enabled does not mean protection is slow"]**
+
+No startup/readiness workflow, Defender performance recording, WPR trace,
+repeated raw run, median, or instrumentation-overhead qualification ran.
+BitLocker and Secure Boot checks were denied without elevation, so those states
+remain unknown—not disabled.
+
+Microsoft provides a Defender performance analyzer that can attribute scan
+duration to paths, files, extensions, and processes. A future supervised run
+needs a synthetic workflow because the trace can contain private paths.
+Microsoft also warns that every exclusion is a protection gap.
+
+No Defender control, exclusion, scan, firewall profile, firewall rule or
+service, VBS, Memory Integrity, Credential Guard, code-integrity policy,
+BitLocker, Secure Boot, update, recovery, management, driver, service, task,
+policy, registry, firmware, or OEM setting changed. No performance gain is
+claimed.
+
+Layer 7 is preserved as inconclusive. Layer 8 investigates the boot path,
+services, scheduled tasks, background permissions, and startup applications,
+with every item treated as required until documentation, dependency analysis,
+and boot-trace evidence prove otherwise.
+
 ## 2026-07-27 layer 6 update: AC already requests Best performance
 
 **[On screen: "Layer 6 - Power management and performance policy"]**

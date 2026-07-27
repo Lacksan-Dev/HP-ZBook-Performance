@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "nextLayer": 7,
-  "nextLayerName": "Security and isolation overhead without reducing protection",
-  "lastCompletedLayer": 6,
-  "lastCompletedLayerName": "Power management and performance policy",
-  "lastCompletedAtUtc": "2026-07-27T04:27:52.3477898Z",
-  "sourceCommit": "c7756f51662fbb0cbdc385bc846fe7fb5f442133",
+  "nextLayer": 8,
+  "nextLayerName": "Boot path, services, scheduled tasks, background permissions, and startup applications",
+  "lastCompletedLayer": 7,
+  "lastCompletedLayerName": "Security and isolation overhead without reducing protection",
+  "lastCompletedAtUtc": "2026-07-27T05:32:15.2424834Z",
+  "sourceCommit": "94302eec3f139c8f463fcedc85c24d0641c06416",
   "outcome": "inconclusive",
-  "evidencePath": "experiments/EXP-001/layer-evidence/layer-06-power-policy-2026-07-27.md",
-  "reason": "Balanced is active with Best performance requested on AC and Best power efficiency on battery, while processor bounds are 5/100 percent and Intel Dynamic Tuning remains active. Effective runtime mode, thermal and energy behavior, hibernation/Fast Startup tradeoffs, repeated readiness measurements, and exact rollback evidence are absent, so no supported power-policy change can be selected."
+  "evidencePath": "experiments/EXP-001/layer-evidence/layer-07-security-isolation-2026-07-27.md",
+  "reason": "Defender, all effective firewall profiles, VBS, Memory Integrity, and reported Credential Guard protections were active, but no repeated workflow, Defender/WPR attribution, instrumentation-overhead qualification, or decision rule demonstrated security-related startup or responsiveness cost. BitLocker and Secure Boot state were inaccessible without elevation, so no protection change was selected."
 }
