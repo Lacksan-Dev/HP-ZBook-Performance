@@ -1,0 +1,358 @@
+{
+  "schemaVersion": 1,
+  "experiment": "EXP-001",
+  "layer": 5,
+  "layerName": "Windows kernel, scheduler, memory, storage, interrupts, and DPC/ISR behavior",
+  "capturedAtUtc": "2026-07-27T03:23:42.0440238Z",
+  "outcome": "inconclusive",
+  "evidenceClass": "PreProtocolScreening",
+  "formalBaselineEligible": false,
+  "liveWindowsChanges": false,
+  "performanceClaim": false,
+  "system": {
+    "manufacturer": "HP",
+    "model": "HP ZBook Firefly 14 inch G8 Mobile Workstation PC",
+    "systemSku": "4P803UT#ABA",
+    "windowsCaption": "Microsoft Windows 11 Pro",
+    "windowsVersion": "10.0.26200",
+    "windowsBuild": "26200",
+    "bios": "T76 Ver. 01.24.02",
+    "biosReleaseDateUtc": "2026-05-04T00:00:00Z",
+    "powerSourceObservation": "AC-connected according to Win32_Battery status",
+    "activePowerScheme": "Balanced"
+  },
+  "collection": {
+    "commandSurface": "Get-Counter",
+    "sampleIntervalSeconds": 1,
+    "samplesPerCounterPerBlock": 5,
+    "blockCount": 3,
+    "counterPaths": {
+      "processorTimePercent": "\\Processor(_Total)\\% Processor Time",
+      "dpcTimePercent": "\\Processor(_Total)\\% DPC Time",
+      "interruptTimePercent": "\\Processor(_Total)\\% Interrupt Time",
+      "interruptsPerSecond": "\\Processor(_Total)\\Interrupts/sec",
+      "processorQueueLength": "\\System\\Processor Queue Length",
+      "contextSwitchesPerSecond": "\\System\\Context Switches/sec",
+      "pageReadsPerSecond": "\\Memory\\Page Reads/sec",
+      "currentDiskQueueLength": "\\PhysicalDisk(_Total)\\Current Disk Queue Length"
+    },
+    "conditions": {
+      "engineeringAutomationActive": true,
+      "formalIdleSettlingPerformed": false,
+      "definedCustomerWorkflowRun": false,
+      "workflowResetPerformed": false,
+      "thermalReadinessGateSatisfied": false,
+      "instrumentationOverheadQualified": false,
+      "etwTraceRecorded": false,
+      "moduleOrCallStackAttributionAvailable": false,
+      "startupOrReadinessEndpointMeasured": false
+    },
+    "toolAvailability": [
+      {
+        "name": "wpr.exe",
+        "available": true,
+        "source": "Windows inbox system directory"
+      },
+      {
+        "name": "wpa.exe",
+        "available": false,
+        "source": null
+      },
+      {
+        "name": "xperf.exe",
+        "available": false,
+        "source": null
+      }
+    ]
+  },
+  "rawBlocks": [
+    {
+      "block": 1,
+      "timestampsUtc": [
+        "2026-07-27T03:23:27.7783993Z",
+        "2026-07-27T03:23:28.7843500Z",
+        "2026-07-27T03:23:29.8008499Z",
+        "2026-07-27T03:23:30.8055236Z",
+        "2026-07-27T03:23:31.8058099Z"
+      ],
+      "counterValues": {
+        "processorTimePercent": [
+          12.872127693967494,
+          15.347491681252368,
+          12.959588092433648,
+          6.880532455462907,
+          14.28235096291932
+        ],
+        "dpcTimePercent": [
+          0,
+          0,
+          0.19214955161333513,
+          0,
+          0.19525409875152744
+        ],
+        "interruptTimePercent": [
+          0,
+          0.3883192287653858,
+          0,
+          0,
+          0.19525409875152744
+        ],
+        "interruptsPerSecond": [
+          3577.2147414625415,
+          4135.183934174233,
+          4283.650043697363,
+          2024.2074914187635,
+          4424.800436601638
+        ],
+        "processorQueueLength": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "contextSwitchesPerSecond": [
+          6010.038651998993,
+          7336.969379360581,
+          7598.21527043517,
+          3266.1991085724594,
+          7885.862142773094
+        ],
+        "pageReadsPerSecond": [
+          0,
+          0.9940345995611138,
+          0,
+          0.9951855906680254,
+          0
+        ],
+        "currentDiskQueueLength": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "block": 2,
+      "timestampsUtc": [
+        "2026-07-27T03:23:32.8588635Z",
+        "2026-07-27T03:23:33.8630468Z",
+        "2026-07-27T03:23:34.8794786Z",
+        "2026-07-27T03:23:35.8885514Z",
+        "2026-07-27T03:23:36.8910681Z"
+      ],
+      "counterValues": {
+        "processorTimePercent": [
+          12.004992677571991,
+          8.78003049841598,
+          0.84799590095469,
+          0,
+          7.0698173905731405
+        ],
+        "dpcTimePercent": [
+          0.19424698338343416,
+          0.19449636336314297,
+          0,
+          0,
+          0
+        ],
+        "interruptTimePercent": [
+          0,
+          0,
+          0.19215258711897837,
+          0,
+          0.1948296721640647
+        ],
+        "interruptsPerSecond": [
+          3247.3806866086675,
+          1335.4365712441968,
+          427.9419112633426,
+          363.71824303672815,
+          414.9518316731935
+        ],
+        "processorQueueLength": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "contextSwitchesPerSecond": [
+          5492.20096522299,
+          1960.8311773153046,
+          486.96838178242433,
+          401.378442588215,
+          456.84600698635245
+        ],
+        "pageReadsPerSecond": [
+          0.9946035793594693,
+          0,
+          0,
+          0,
+          0
+        ],
+        "currentDiskQueueLength": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "block": 3,
+      "timestampsUtc": [
+        "2026-07-27T03:23:37.9130142Z",
+        "2026-07-27T03:23:38.9240759Z",
+        "2026-07-27T03:23:39.9380736Z",
+        "2026-07-27T03:23:40.9389576Z",
+        "2026-07-27T03:23:41.9486859Z"
+      ],
+      "counterValues": {
+        "processorTimePercent": [
+          1.9478063633532772,
+          0,
+          3.4992189824493702,
+          0,
+          9.474410096260543
+        ],
+        "dpcTimePercent": [
+          0,
+          0.19318306686921283,
+          0.19261384912411536,
+          0,
+          0.1934282717439929
+        ],
+        "interruptTimePercent": [
+          0,
+          0,
+          0,
+          0,
+          0.1934282717439929
+        ],
+        "interruptsPerSecond": [
+          418.28724130961285,
+          311.59997685257315,
+          348.0815382482446,
+          500.64344174079224,
+          4527.3966429319225
+        ],
+        "processorQueueLength": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "contextSwitchesPerSecond": [
+          468.7190363611264,
+          335.34092746991206,
+          332.30447135880576,
+          587.5815244382951,
+          8454.573997826928
+        ],
+        "pageReadsPerSecond": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "currentDiskQueueLength": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    }
+  ],
+  "blockMedians": [
+    {
+      "block": 1,
+      "processorTimePercent": 12.959588092433648,
+      "dpcTimePercent": 0,
+      "interruptTimePercent": 0,
+      "interruptsPerSecond": 4135.183934174233,
+      "processorQueueLength": 0,
+      "contextSwitchesPerSecond": 7336.969379360581,
+      "pageReadsPerSecond": 0,
+      "currentDiskQueueLength": 0
+    },
+    {
+      "block": 2,
+      "processorTimePercent": 7.0698173905731405,
+      "dpcTimePercent": 0,
+      "interruptTimePercent": 0,
+      "interruptsPerSecond": 427.9419112633426,
+      "processorQueueLength": 0,
+      "contextSwitchesPerSecond": 486.96838178242433,
+      "pageReadsPerSecond": 0,
+      "currentDiskQueueLength": 0
+    },
+    {
+      "block": 3,
+      "processorTimePercent": 1.9478063633532772,
+      "dpcTimePercent": 0.19261384912411536,
+      "interruptTimePercent": 0,
+      "interruptsPerSecond": 418.28724130961285,
+      "processorQueueLength": 0,
+      "contextSwitchesPerSecond": 468.7190363611264,
+      "pageReadsPerSecond": 0,
+      "currentDiskQueueLength": 0
+    }
+  ],
+  "medianOfBlockMedians": {
+    "processorTimePercent": 7.0698173905731405,
+    "dpcTimePercent": 0,
+    "interruptTimePercent": 0,
+    "interruptsPerSecond": 427.9419112633426,
+    "processorQueueLength": 0,
+    "contextSwitchesPerSecond": 486.96838178242433,
+    "pageReadsPerSecond": 0,
+    "currentDiskQueueLength": 0
+  },
+  "observedRanges": {
+    "processorTimePercent": {
+      "minimum": 0,
+      "maximum": 15.347491681252368
+    },
+    "dpcTimePercent": {
+      "minimum": 0,
+      "maximum": 0.19525409875152744
+    },
+    "interruptTimePercent": {
+      "minimum": 0,
+      "maximum": 0.3883192287653858
+    },
+    "interruptsPerSecond": {
+      "minimum": 311.59997685257315,
+      "maximum": 4527.3966429319225
+    },
+    "processorQueueLength": {
+      "minimum": 0,
+      "maximum": 0
+    },
+    "contextSwitchesPerSecond": {
+      "minimum": 332.30447135880576,
+      "maximum": 8454.573997826928
+    },
+    "pageReadsPerSecond": {
+      "minimum": 0,
+      "maximum": 0.9951855906680254
+    },
+    "currentDiskQueueLength": {
+      "minimum": 0,
+      "maximum": 0
+    }
+  },
+  "decision": {
+    "supportedChangeSelected": false,
+    "reason": "The short system-wide counters prove that the local counter surfaces are readable, but they do not attribute DPC or ISR duration to a module or function, do not identify a customer-visible delay, and were not collected under the accepted EXP-001 protocol.",
+    "requiredNextEvidence": "Install a Windows-build-compatible Windows Performance Toolkit analysis surface, qualify collection overhead, and capture repeated workflow-scoped ETW traces with DPC/ISR module and stack attribution under thermal and readiness controls."
+  }
+}

@@ -10,6 +10,42 @@
 
 **A Safer HP ZBook Performance Baseline: What We Built and What Still Needs Testing**
 
+## 2026-07-27 layer 5 update: counters are not driver attribution
+
+**[On screen: "Layer 5 - Kernel, scheduler, memory, storage, DPC/ISR"]**
+
+This hour recorded three short blocks of Windows system counters: processor,
+DPC and interrupt time, interrupts, context switches, processor queue, memory
+page reads, and physical-disk queue.
+
+The median DPC-time percentages were zero, zero, and 0.1926 across the three
+five-sample blocks. Interrupt-rate and context-switch medians varied sharply
+between the first block and the next two.
+
+**[On screen: "A system-wide number cannot name a driver"]**
+
+Those numbers are not a performance baseline and do not prove a problem.
+Automation was active, no customer workflow or readiness endpoint ran, thermal
+readiness is unresolved, and measurement overhead was not qualified.
+
+Microsoft's supported diagnosis path uses kernel event tracing. Windows
+Performance Recorder's General profile records DPC, interrupt, scheduling,
+memory, and disk events. Windows Performance Analyzer can then group DPC and ISR
+duration by module and function and expose stacks around the interval of
+interest.
+
+The lab computer has Windows Performance Recorder, but WPA and xperf were not
+detected. No trace was started and no toolkit was installed in this unattended
+run.
+
+No driver, timer, HPET, scheduler, memory, storage, interrupt-affinity, page-
+file, boot, registry, policy, service, task, power, security, update, recovery,
+management, firmware, or HP OEM setting was changed. No performance gain is
+claimed.
+
+Layer 5 is preserved as inconclusive. The next hour moves to supported Windows
+power-management and performance-policy surfaces.
+
 ## 2026-07-27 layer 4 update: signed does not mean optimized
 
 **[On screen: "Layer 4 - Platform drivers and HP OEM components"]**
