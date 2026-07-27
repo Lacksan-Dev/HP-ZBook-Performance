@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "nextLayer": 2,
-  "nextLayerName": "Hardware resources and bottlenecks",
-  "lastCompletedLayer": 1,
-  "lastCompletedLayerName": "Physical and thermal health",
-  "lastCompletedAtUtc": "2026-07-26T23:24:01.1246456Z",
-  "sourceCommit": "ab3e3ef6f90fbb844873246efb5a42f0bbe322bb",
+  "nextLayer": 3,
+  "nextLayerName": "BIOS, UEFI, embedded-controller, and firmware interactions",
+  "lastCompletedLayer": 2,
+  "lastCompletedLayerName": "Hardware resources and bottlenecks",
+  "lastCompletedAtUtc": "2026-07-27T00:29:01.4585443Z",
+  "sourceCommit": "e8e396061ea55a64b58bde77ad0a6f9df4ffcdfb",
   "outcome": "inconclusive",
-  "evidencePath": "experiments/EXP-001/layer-evidence/layer-01-physical-thermal-2026-07-27.md",
-  "reason": "Inbox, non-elevated surfaces did not expose an identified CPU/package temperature, ambient temperature, or fan state. The lab did not invent a thermal readiness band or alter DTT, fan, driver, firmware, or power controls."
+  "evidencePath": "experiments/EXP-001/layer-evidence/layer-02-hardware-resources-2026-07-27.md",
+  "reason": "Static inventory and one unqualified ten-second counter block cannot identify a hardware bottleneck or justify an upgrade. Exact memory ceiling, active channel mode, storage reliability, instrumentation overhead, and repeated workflow pressure remain unresolved."
 }
