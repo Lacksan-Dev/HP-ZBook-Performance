@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "nextLayer": 4,
-  "nextLayerName": "Platform drivers and OEM components",
-  "lastCompletedLayer": 3,
-  "lastCompletedLayerName": "BIOS, UEFI, embedded-controller, and firmware interactions",
-  "lastCompletedAtUtc": "2026-07-27T01:29:14.6444998Z",
-  "sourceCommit": "2a8becd2277b5db2c2a09b5bd0645ae00bb7ffa3",
+  "nextLayer": 5,
+  "nextLayerName": "Windows kernel, scheduler, memory, storage, interrupts, and DPC/ISR behavior",
+  "lastCompletedLayer": 4,
+  "lastCompletedLayerName": "Platform drivers and OEM components",
+  "lastCompletedAtUtc": "2026-07-27T02:28:06.7259957Z",
+  "sourceCommit": "670182177d1f1939404dded038c8501e4abe04f1",
   "outcome": "inconclusive",
-  "evidencePath": "experiments/EXP-001/layer-evidence/layer-03-bios-firmware-2026-07-27.md",
-  "reason": "The installed BIOS, embedded-controller, UEFI/GPT boot mode, and Windows firmware-device versions were inventoried, but access-controlled settings, Secure Boot state, the exact current T76 package and rollback boundary, and firmware-time measurements remain unresolved. No supported reversible startup-performance firmware change can be selected."
+  "evidencePath": "experiments/EXP-001/layer-evidence/layer-04-drivers-oem-2026-07-27.md",
+  "reason": "The selected platform stack is signed and no present Device Manager problem code was observed, but exact HP reference-image applicability, package dependencies, device-power behavior, DPC/ISR attribution, startup cost, and rollback/export evidence remain unresolved. No supported driver update, removal, rebuild, or OEM-service change can be selected."
 }
