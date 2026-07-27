@@ -23,6 +23,8 @@
   [layer-05-kernel-dpc-isr-2026-07-27.md](layer-evidence/layer-05-kernel-dpc-isr-2026-07-27.md)
 - Hourly layer 6 power-policy evidence:
   [layer-06-power-policy-2026-07-27.md](layer-evidence/layer-06-power-policy-2026-07-27.md)
+- Hourly layer 7 security/isolation evidence:
+  [layer-07-security-isolation-2026-07-27.md](layer-evidence/layer-07-security-isolation-2026-07-27.md)
 
 This report covers one experiment only. It maps the Windows, application, driver,
 firmware, policy, service, scheduled-task, registry, and HP OEM surfaces that can
