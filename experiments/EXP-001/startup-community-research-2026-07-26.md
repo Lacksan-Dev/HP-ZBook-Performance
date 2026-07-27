@@ -101,8 +101,14 @@ isolation and is not evidence of reduced boot latency.
 
 Disposition:
 
-- `StartupDelayInMSec=0`: **controlled hypothesis only**, limited to a workflow
-  where a delayed startup app is itself part of the readiness definition.
+- `StartupDelayInMSec=0`: **reject for the current baseline**. A bounded
+  2026-07-27 search of Microsoft Learn, Microsoft Support, the relevant
+  Windows logon Policy CSP pages, and Microsoft startup-app guidance found no
+  primary-source definition, supported build or edition boundary, default,
+  compatibility contract, or rollback guidance for this value. It is absent on
+  the lab system, and no trace shows a required readiness application waiting
+  on a shell delay. Reopen only if a specific delayed required application is
+  attributed and a current Microsoft support contract is established.
 - Global background-app disable: **reject**; use supported per-app permissions
   and preserve notifications and background work required by the workflow.
 - Service-host merging: **reject**; no startup evidence and an isolation
