@@ -35,6 +35,17 @@ function Get-Sha256Text {
     finally { $hash.Dispose() }
 }
 
+function Get-NormalizedTaskXml {
+    param([Parameter(Mandatory)][string]$Xml)
+    [xml]$document = $Xml
+    $namespace = New-Object Xml.XmlNamespaceManager($document.NameTable)
+    $namespace.AddNamespace('t', $document.DocumentElement.NamespaceURI)
+    $enabledNode = $document.SelectSingleNode('//t:Settings/t:Enabled', $namespace)
+    if ($null -eq $enabledNode) { throw 'Scheduled task Enabled node missing' }
+    $enabledNode.InnerText = '__CONTROLLED_ENABLED_STATE__'
+    $document.OuterXml
+}
+
 function Get-PlatformSupport {
     $os = Get-CimInstance Win32_OperatingSystem
     $computer = Get-CimInstance Win32_ComputerSystem
@@ -60,11 +71,13 @@ function Get-CandidateTask {
         throw 'Scheduled task action identity rejected'
     }
     $xml = Export-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:TaskName
+    $normalizedXml = Get-NormalizedTaskXml -Xml $xml
     [pscustomobject]@{
         Task = $task
         ActionText = $actionText
         Xml = $xml
         XmlSha256 = Get-Sha256Text -Text $xml
+        NormalizedXmlSha256 = Get-Sha256Text -Text $normalizedXml
         Enabled = ($task.State -ne 'Disabled')
     }
 }
@@ -101,17 +114,18 @@ function Capture-State {
         enabled = $candidate.Enabled
         actionText = $candidate.ActionText
         xmlSha256 = $candidate.XmlSha256
+        normalizedXmlSha256 = $candidate.NormalizedXmlSha256
         xml = $candidate.Xml
     }
     $state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $script:StatePath -Encoding utf8
-    Write-ExperimentEvent -Event 'StateCaptured' -Data @{ enabled=$candidate.Enabled; xmlSha256=$candidate.XmlSha256 }
+    Write-ExperimentEvent -Event 'StateCaptured' -Data @{ enabled=$candidate.Enabled; xmlSha256=$candidate.XmlSha256; normalizedXmlSha256=$candidate.NormalizedXmlSha256 }
     $state
 }
 
 function Assert-CurrentMatchesCapturedIdentity {
     param($State)
     $candidate = Get-CandidateTask
-    if ($candidate.XmlSha256 -ne $State.xmlSha256) { throw 'Current task definition diverged from captured state' }
+    if ($candidate.NormalizedXmlSha256 -ne $State.normalizedXmlSha256) { throw 'Current task definition diverged from captured state' }
     if ($candidate.ActionText -cne $State.actionText) { throw 'Current task action diverged from captured state' }
     $candidate
 }
@@ -126,8 +140,8 @@ function Apply-Calibration {
     }
     if ($PSCmdlet.ShouldProcess("$($script:TaskPath)$($script:TaskName)", 'Disable scheduled task')) {
         Disable-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:TaskName | Out-Null
-        $verified = -not (Get-CandidateTask).Enabled
-        if (-not $verified) { throw 'Application verification failed' }
+        $post = Assert-CurrentMatchesCapturedIdentity -State $state
+        if ($post.Enabled) { throw 'Application verification failed' }
         Write-ExperimentEvent -Event 'Applied' -Data @{ enabled=$false }
         return $true
     }
@@ -138,10 +152,9 @@ function Apply-Calibration {
 function Verify-Calibration {
     Assert-Supported | Out-Null
     $state = Read-State
-    Assert-CurrentMatchesCapturedIdentity -State $state | Out-Null
-    $enabled = (Get-CandidateTask).Enabled
-    $result = -not $enabled
-    Write-ExperimentEvent -Event 'Verified' -Data @{ passed=$result; enabled=$enabled }
+    $candidate = Assert-CurrentMatchesCapturedIdentity -State $state
+    $result = -not $candidate.Enabled
+    Write-ExperimentEvent -Event 'Verified' -Data @{ passed=$result; enabled=$candidate.Enabled }
     $result
 }
 
@@ -157,8 +170,8 @@ function Restore-State {
     if ($PSCmdlet.ShouldProcess("$($script:TaskPath)$($script:TaskName)", $verb)) {
         if ([bool]$state.enabled) { Enable-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:TaskName | Out-Null }
         else { Disable-ScheduledTask -TaskPath $script:TaskPath -TaskName $script:TaskName | Out-Null }
-        $restored = ((Get-CandidateTask).Enabled -eq [bool]$state.enabled)
-        if (-not $restored) { throw 'Rollback verification failed' }
+        $post = Assert-CurrentMatchesCapturedIdentity -State $state
+        if ($post.Enabled -ne [bool]$state.enabled) { throw 'Rollback verification failed' }
         Write-ExperimentEvent -Event 'RolledBack' -Data @{ enabled=[bool]$state.enabled }
         return $true
     }
