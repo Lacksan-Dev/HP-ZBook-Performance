@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "nextLayer": 3,
-  "nextLayerName": "BIOS, UEFI, embedded-controller, and firmware interactions",
-  "lastCompletedLayer": 2,
-  "lastCompletedLayerName": "Hardware resources and bottlenecks",
-  "lastCompletedAtUtc": "2026-07-27T00:29:01.4585443Z",
-  "sourceCommit": "e8e396061ea55a64b58bde77ad0a6f9df4ffcdfb",
+  "nextLayer": 4,
+  "nextLayerName": "Platform drivers and OEM components",
+  "lastCompletedLayer": 3,
+  "lastCompletedLayerName": "BIOS, UEFI, embedded-controller, and firmware interactions",
+  "lastCompletedAtUtc": "2026-07-27T01:29:14.6444998Z",
+  "sourceCommit": "2a8becd2277b5db2c2a09b5bd0645ae00bb7ffa3",
   "outcome": "inconclusive",
-  "evidencePath": "experiments/EXP-001/layer-evidence/layer-02-hardware-resources-2026-07-27.md",
-  "reason": "Static inventory and one unqualified ten-second counter block cannot identify a hardware bottleneck or justify an upgrade. Exact memory ceiling, active channel mode, storage reliability, instrumentation overhead, and repeated workflow pressure remain unresolved."
+  "evidencePath": "experiments/EXP-001/layer-evidence/layer-03-bios-firmware-2026-07-27.md",
+  "reason": "The installed BIOS, embedded-controller, UEFI/GPT boot mode, and Windows firmware-device versions were inventoried, but access-controlled settings, Secure Boot state, the exact current T76 package and rollback boundary, and firmware-time measurements remain unresolved. No supported reversible startup-performance firmware change can be selected."
 }
