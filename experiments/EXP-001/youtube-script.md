@@ -10,6 +10,47 @@
 
 **A Safer HP ZBook Performance Baseline: What We Built and What Still Needs Testing**
 
+## 2026-07-27 layer 4 update: signed does not mean optimized
+
+**[On screen: "Layer 4 - Platform drivers and HP OEM components"]**
+
+This hour recorded the exact versions and INF package names for 17 selected
+graphics, wireless, storage, thermal-management, audio, camera, hotkey,
+fingerprint, touchpad, and Thunderbolt components.
+
+Every selected entry reported a Microsoft Windows Hardware Compatibility
+Publisher signature. Windows also reported no current Device Manager problem
+code for a present device.
+
+**[On screen: "Healthy metadata is not a latency measurement"]**
+
+Signed status does not prove that a package is current, efficient, or faster.
+A clean Device Manager does not measure DPC and interrupt duration, device-power
+transitions, startup readiness, or companion-service cost.
+
+HP Image Assistant is the supported comparison tool for HP target and reference
+images. It was not detected on the lab computer, and this run did not install
+it. We therefore do not have an exact HP recommendation or dependency report
+for this SKU and Windows build.
+
+Intel also warns that generic graphics drivers can remove OEM customizations and
+can cause instability or lost functionality. Driver dates are not a reason to
+replace an HP-qualified stack.
+
+The inventory observed several running HP and Intel companion services. Their
+current automatic state is not proof that they are unnecessary or safe to
+delay. We need vendor purpose, dependency and trigger documentation, boot-trace
+attribution, failure behavior, workflow impact, and exact rollback first.
+
+No driver, device, service, companion app, Windows Update component, HP support
+function, security control, management control, registry value, or power
+setting was changed. No proprietary driver was rebuilt, and no performance gain
+is claimed.
+
+This layer is preserved as inconclusive. The next layer investigates Windows
+kernel, scheduler, memory, storage, interrupt, and DPC/ISR behavior with
+measured attribution rather than package age.
+
 ## 2026-07-27 layer 3 update: firmware inventory is not a startup tweak
 
 **[On screen: "Layer 3 - BIOS, UEFI, embedded controller, and firmware"]**

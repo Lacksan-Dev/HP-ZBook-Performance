@@ -17,6 +17,8 @@
   [layer-02-hardware-resources-2026-07-27.md](layer-evidence/layer-02-hardware-resources-2026-07-27.md)
 - Hourly layer 3 BIOS/UEFI/firmware evidence:
   [layer-03-bios-firmware-2026-07-27.md](layer-evidence/layer-03-bios-firmware-2026-07-27.md)
+- Hourly layer 4 driver/OEM evidence:
+  [layer-04-drivers-oem-2026-07-27.md](layer-evidence/layer-04-drivers-oem-2026-07-27.md)
 
 This report covers one experiment only. It maps the Windows, application, driver,
 firmware, policy, service, scheduled-task, registry, and HP OEM surfaces that can
