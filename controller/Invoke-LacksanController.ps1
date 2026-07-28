@@ -10,6 +10,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$transaction = $null
 
 function Read-Manifest {
     if (-not (Test-Path -LiteralPath $ManifestPath)) { throw "Manifest missing: $ManifestPath" }
@@ -33,6 +34,7 @@ function Resolve-Profile($Manifest,[string]$Id) {
         $provider[0]
     }
     $selectedIds = @($providers | ForEach-Object id)
+    $requiredScopes = @('WindowsSecurity','WindowsUpdate','Recovery','EnterpriseManagement','DeviceCriticalDrivers','Omnissa','WindowsApp','RemoteDesktop','Tailscale')
     foreach ($provider in $providers) {
         foreach ($required in @($provider.requires)) {
             if ($required -notin $selectedIds) { throw "Provider $($provider.id) requires $required." }
@@ -40,9 +42,8 @@ function Resolve-Profile($Manifest,[string]$Id) {
         foreach ($conflict in @($provider.conflicts)) {
             if ($conflict -in $selectedIds) { throw "Provider conflict: $($provider.id) conflicts with $conflict." }
         }
-        $protected = @($provider.protectedScopes)
-        foreach ($scope in @('WindowsSecurity','WindowsUpdate','Recovery','EnterpriseManagement','DeviceCriticalDrivers','Omnissa','WindowsApp','RemoteDesktop','Tailscale')) {
-            if ($scope -notin $protected) { throw "Provider $($provider.id) lacks protected scope declaration: $scope" }
+        foreach ($scope in $requiredScopes) {
+            if ($scope -notin @($provider.protectedScopes)) { throw "Provider $($provider.id) lacks protected scope declaration: $scope" }
         }
     }
     [pscustomobject]@{Profile=$profileObject[0];Providers=@($providers)}
@@ -53,12 +54,11 @@ function New-Transaction([string]$ProfileId) {
     $id = if ($TransactionId) { $TransactionId } else { (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffZ') }
     $path = Join-Path $TransactionRoot $id
     if (Test-Path -LiteralPath $path) { throw "Transaction already exists: $id" }
-    New-Item -ItemType Directory -Path $path -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $path 'state') -Force | Out-Null
     $journal = [ordered]@{
-        schemaVersion=1; experiment='EXP-046'; transactionId=$id; profile=$ProfileId
-        machine=$env:COMPUTERNAME; userSid=([System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
-        createdUtc=(Get-Date).ToUniversalTime().ToString('o'); status='Created'; appliedProviders=@(); events=@()
+        schemaVersion=1;experiment='EXP-046';transactionId=$id;profile=$ProfileId
+        machine=$env:COMPUTERNAME;userSid=([System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+        createdUtc=(Get-Date).ToUniversalTime().ToString('o');status='Created';appliedProviders=@()
     }
     $journal | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $path 'transaction.json') -Encoding UTF8
     [pscustomobject]@{Id=$id;Path=$path;Journal=$journal}
@@ -75,8 +75,8 @@ function Open-Transaction([string]$Id) {
     [pscustomobject]@{Id=$Id;Path=$path;Journal=$journal}
 }
 
-function Save-Journal($Transaction,$Journal) {
-    $Journal | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $Transaction.Path 'transaction.json') -Encoding UTF8
+function Save-Journal($Transaction) {
+    $Transaction.Journal | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $Transaction.Path 'transaction.json') -Encoding UTF8
 }
 
 function Write-ControllerLog($Transaction,[string]$Event,[string]$Result,[object]$Data) {
@@ -89,6 +89,12 @@ function Invoke-Provider($Provider,[string]$ProviderAction,$Transaction) {
     if (-not (Test-Path -LiteralPath $scriptPath)) { throw "Provider script missing: $($Provider.id)" }
     $statePath = Join-Path (Join-Path $Transaction.Path 'state') ("$($Provider.id).json")
     & $scriptPath -Action $ProviderAction -StatePath $statePath -LogPath (Join-Path $Transaction.Path 'events.jsonl')
+}
+
+function Get-Reversed([object[]]$Items) {
+    $copy = @($Items)
+    [array]::Reverse($copy)
+    $copy
 }
 
 try {
@@ -104,17 +110,17 @@ try {
     switch ($Action) {
         'Scan' {
             $results = foreach ($provider in $selection.Providers) { Invoke-Provider $provider 'Check' $transaction }
-            $transaction.Journal.status='Scanned'; Save-Journal $transaction $transaction.Journal; Write-ControllerLog $transaction 'scan' 'pass' @{providers=@($selection.Providers.id)}
+            $transaction.Journal.status='Scanned';Save-Journal $transaction;Write-ControllerLog $transaction 'scan' 'pass' @{providers=@($selection.Providers.id)}
             [pscustomobject]@{TransactionId=$transaction.Id;Profile=$Profile;Results=@($results)}
         }
         'Recommend' {
             $items = foreach ($provider in $selection.Providers) { [pscustomobject]@{Provider=$provider.id;Mode=$provider.mode;Recommended=$true;Reason='Profile-selected and manifest-compatible';RebootRequired=[bool]$provider.rebootRequired} }
-            $transaction.Journal.status='Recommended'; Save-Journal $transaction $transaction.Journal; Write-ControllerLog $transaction 'recommend' 'pass' @{count=@($items).Count}
+            $transaction.Journal.status='Recommended';Save-Journal $transaction;Write-ControllerLog $transaction 'recommend' 'pass' @{count=@($items).Count}
             [pscustomobject]@{TransactionId=$transaction.Id;Profile=$Profile;Recommendations=@($items)}
         }
         'DryRun' {
             $items = foreach ($provider in $selection.Providers) { Invoke-Provider $provider 'DryRun' $transaction }
-            $transaction.Journal.status='DryRunComplete'; Save-Journal $transaction $transaction.Journal; Write-ControllerLog $transaction 'dry-run' 'pass' @{providers=@($selection.Providers.id)}
+            $transaction.Journal.status='DryRunComplete';Save-Journal $transaction;Write-ControllerLog $transaction 'dry-run' 'pass' @{providers=@($selection.Providers.id)}
             [pscustomobject]@{TransactionId=$transaction.Id;Profile=$Profile;Preview=@($items)}
         }
         'Apply' {
@@ -122,22 +128,28 @@ try {
             $applied = [System.Collections.Generic.List[string]]::new()
             try {
                 foreach ($provider in $selection.Providers) {
-                    if ($PSCmdlet.ShouldProcess($provider.id,'Apply Lacksan provider')) { Invoke-Provider $provider 'Apply' $transaction | Out-Null; $applied.Add([string]$provider.id) }
+                    if ($PSCmdlet.ShouldProcess($provider.id,'Apply Lacksan provider')) {
+                        Invoke-Provider $provider 'Apply' $transaction | Out-Null
+                        $applied.Add([string]$provider.id)
+                    }
                 }
             } catch {
-                foreach ($providerId in @($applied.ToArray()) | Select-Object -Reverse) { $provider=@($selection.Providers|Where-Object id -eq $providerId)[0]; Invoke-Provider $provider 'Rollback' $transaction | Out-Null }
+                foreach ($providerId in Get-Reversed @($applied.ToArray())) {
+                    $provider=@($selection.Providers|Where-Object id -eq $providerId)[0]
+                    Invoke-Provider $provider 'Rollback' $transaction | Out-Null
+                }
                 throw
             }
-            $transaction.Journal.appliedProviders=@($applied.ToArray());$transaction.Journal.status='Applied';Save-Journal $transaction $transaction.Journal;Write-ControllerLog $transaction 'apply' 'pass' @{providers=@($applied.ToArray())}
+            $transaction.Journal.appliedProviders=@($applied.ToArray());$transaction.Journal.status='Applied';Save-Journal $transaction;Write-ControllerLog $transaction 'apply' 'pass' @{providers=@($applied.ToArray())}
             [pscustomobject]@{TransactionId=$transaction.Id;Profile=$Profile;AppliedProviders=@($applied.ToArray())}
         }
         'Verify' {
-            foreach ($providerId in @($transaction.Journal.appliedProviders)) { $provider=@($selection.Providers|Where-Object id -eq $providerId)[0]; Invoke-Provider $provider 'Verify' $transaction | Out-Null }
-            $transaction.Journal.status='Verified';Save-Journal $transaction $transaction.Journal;Write-ControllerLog $transaction 'verify' 'pass' @{providers=@($transaction.Journal.appliedProviders)};$true
+            foreach ($providerId in @($transaction.Journal.appliedProviders)) { $provider=@($selection.Providers|Where-Object id -eq $providerId)[0];Invoke-Provider $provider 'Verify' $transaction|Out-Null }
+            $transaction.Journal.status='Verified';Save-Journal $transaction;Write-ControllerLog $transaction 'verify' 'pass' @{providers=@($transaction.Journal.appliedProviders)};$true
         }
         'VerifyReboot' {
-            foreach ($providerId in @($transaction.Journal.appliedProviders)) { $provider=@($selection.Providers|Where-Object id -eq $providerId)[0]; Invoke-Provider $provider 'VerifyReboot' $transaction | Out-Null }
-            $transaction.Journal.status='RebootVerified';Save-Journal $transaction $transaction.Journal;Write-ControllerLog $transaction 'verify-reboot' 'pass' @{providers=@($transaction.Journal.appliedProviders)};$true
+            foreach ($providerId in @($transaction.Journal.appliedProviders)) { $provider=@($selection.Providers|Where-Object id -eq $providerId)[0];Invoke-Provider $provider 'VerifyReboot' $transaction|Out-Null }
+            $transaction.Journal.status='RebootVerified';Save-Journal $transaction;Write-ControllerLog $transaction 'verify-reboot' 'pass' @{providers=@($transaction.Journal.appliedProviders)};$true
         }
         'Report' {
             $output = if ($ReportPath) { $ReportPath } else { Join-Path $transaction.Path 'report.json' }
@@ -145,11 +157,14 @@ try {
             $safeReport|ConvertTo-Json -Depth 10|Set-Content -LiteralPath $output -Encoding UTF8;Write-ControllerLog $transaction 'report' 'pass' @{path=$output};Get-Item -LiteralPath $output
         }
         'Rollback' {
-            foreach ($providerId in @($transaction.Journal.appliedProviders) | Select-Object -Reverse) { $provider=@($selection.Providers|Where-Object id -eq $providerId)[0]; if ($PSCmdlet.ShouldProcess($provider.id,'Rollback Lacksan provider')) { Invoke-Provider $provider 'Rollback' $transaction | Out-Null } }
-            $transaction.Journal.status='RolledBack';Save-Journal $transaction $transaction.Journal;Write-ControllerLog $transaction 'rollback' 'pass' @{providers=@($transaction.Journal.appliedProviders)};[pscustomobject]@{TransactionId=$transaction.Id;RolledBack=$true}
+            foreach ($providerId in Get-Reversed @($transaction.Journal.appliedProviders)) {
+                $provider=@($selection.Providers|Where-Object id -eq $providerId)[0]
+                if ($PSCmdlet.ShouldProcess($provider.id,'Rollback Lacksan provider')) { Invoke-Provider $provider 'Rollback' $transaction|Out-Null }
+            }
+            $transaction.Journal.status='RolledBack';Save-Journal $transaction;Write-ControllerLog $transaction 'rollback' 'pass' @{providers=@($transaction.Journal.appliedProviders)};[pscustomobject]@{TransactionId=$transaction.Id;RolledBack=$true}
         }
     }
 } catch {
-    if ($transaction) { Write-ControllerLog $transaction 'failure' 'fail' @{message=$_.Exception.Message;type=$_.Exception.GetType().FullName} }
+    if ($null -ne $transaction) { Write-ControllerLog $transaction 'failure' 'fail' @{message=$_.Exception.Message;type=$_.Exception.GetType().FullName} }
     throw
 }
