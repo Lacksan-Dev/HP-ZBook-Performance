@@ -44,7 +44,8 @@ function Read-State{
   $s
 }
 function Set-StartMode([string]$Mode){
-  $result=Invoke-CimMethod -InputObject (Get-CimInstance Win32_Service -Filter "Name='$ServiceName'") -MethodName ChangeStartMode -Arguments @{StartMode=$Mode}
+  $changeMode=switch($Mode){'Auto'{'Automatic'}'Automatic'{'Automatic'}'Manual'{'Manual'}'Disabled'{'Disabled'}default{throw "Unsupported captured start mode: $Mode"}}
+  $result=Invoke-CimMethod -InputObject (Get-CimInstance Win32_Service -Filter "Name='$ServiceName'") -MethodName ChangeStartMode -Arguments @{StartMode=$changeMode}
   if($result.ReturnValue -ne 0){throw "ChangeStartMode failed: $($result.ReturnValue)"}
 }
 try{
