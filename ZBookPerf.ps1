@@ -26,8 +26,9 @@ param(
     [switch]$Remeasure,
     [switch]$Revert,
 
-    [ValidateSet('PowerAc', 'MmcssResponsiveness', 'NtfsLastAccess', 'VisualEffects', 'FastStartupDiagnostic')]
-    [string]$Candidate,
+    [Alias('Candidate')]
+    [ValidateSet('', 'PowerAc', 'MmcssResponsiveness', 'NtfsLastAccess', 'VisualEffects', 'FastStartupDiagnostic')]
+    [string]$EnhancementCandidate,
 
     [ValidateRange(5, 3600)]
     [int]$DurationSeconds = 30,
@@ -192,8 +193,18 @@ function Invoke-NativeCommand {
         [switch]$AllowFailure
     )
 
-    $output = @(& $FilePath @Arguments 2>&1)
-    $exitCode = $LASTEXITCODE
+    # Windows PowerShell 5.1 wraps text written to a native process's stderr
+    # stream in NativeCommandError records. The script-wide Stop preference
+    # must not turn that text into a terminating PowerShell error before the
+    # native exit code can be inspected.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& $FilePath @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     $result = [pscustomobject]@{
         FilePath = $FilePath
         Arguments = $Arguments
@@ -1056,14 +1067,18 @@ function Test-CandidateRestored {
 
 function Invoke-Enhancement {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
-    param([string]$Name, [string]$Root)
+    param(
+        [string]$Name,
+        [string]$Root,
+        [switch]$Tier2Confirmed
+    )
 
     if (-not $Name) { throw '-Candidate is required for Enhance. ZBookPerf intentionally does not apply a bundle.' }
     $isMachine = $Name -in $script:MachineCandidates
     if ($isMachine -and -not (Test-IsAdministrator)) {
         throw "Candidate '$Name' requires an administrator console."
     }
-    if ($isMachine -and -not $LabTier2Confirmed) {
+    if ($isMachine -and -not $Tier2Confirmed) {
         throw "Candidate '$Name' is Tier 2. Use a disposable image or dedicated lab system with a tested recovery path, then pass -LabTier2Confirmed."
     }
 
@@ -1209,6 +1224,16 @@ function Select-CandidateInteractive {
     }
 }
 
+function Confirm-Tier2Interactive {
+    param([string]$Name)
+
+    Write-Host ''
+    Write-Warning "'$Name' changes machine-wide Windows state."
+    Write-Host 'Continue only on a disposable image or dedicated development system with a tested recovery path.' -ForegroundColor Yellow
+    $answer = Read-Host 'Does this machine meet that requirement? [y/N]'
+    return ($answer -in @('y', 'Y', 'yes', 'YES', 'Yes'))
+}
+
 function Invoke-ZBookPerfMain {
     if ($Analyze) { $script:Action = 'Analyze' }
     elseif ($Watch) { $script:Action = 'Watch' }
@@ -1238,9 +1263,21 @@ function Invoke-ZBookPerfMain {
             }
             'Watch' { Invoke-LiveWatch -Interval $SampleIntervalSeconds -MaximumSamples $WatchMaxSamples }
             'Enhance' {
-                $selectedCandidate = $Candidate
+                $selectedCandidate = $EnhancementCandidate
                 if (-not $selectedCandidate) { $selectedCandidate = Select-CandidateInteractive }
-                Invoke-Enhancement -Name $selectedCandidate -Root $DataRoot -WhatIf:$WhatIfPreference
+                $tier2ConfirmedForRun = [bool]$LabTier2Confirmed
+                if (
+                    $script:Action -eq 'Menu' -and
+                    $selectedCandidate -in $script:MachineCandidates -and
+                    -not $tier2ConfirmedForRun
+                ) {
+                    $tier2ConfirmedForRun = Confirm-Tier2Interactive -Name $selectedCandidate
+                    if (-not $tier2ConfirmedForRun) {
+                        Write-Host 'Cancelled. No setting was changed.' -ForegroundColor DarkYellow
+                        continue
+                    }
+                }
+                Invoke-Enhancement -Name $selectedCandidate -Root $DataRoot -Tier2Confirmed:$tier2ConfirmedForRun -WhatIf:$WhatIfPreference
             }
             'Remeasure' {
                 [void](Invoke-Measurement -Kind after -Seconds $DurationSeconds -Interval $SampleIntervalSeconds -Root $DataRoot -SkipTrace:$NoTrace)

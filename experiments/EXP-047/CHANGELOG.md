@@ -1,5 +1,27 @@
 # EXP-047 changelog
 
+## 2026-07-29 — Windows PowerShell launcher correction
+
+### Fixed
+
+- Prevented native diagnostic tools such as WPR from aborting an analysis only
+  because they wrote informational text to the stderr stream. ZBookPerf now
+  captures that stream and decides success from the native exit code.
+- Removed a Windows PowerShell 5.1 `Invoke-Expression` scope collision while
+  preserving the public `-Candidate` parameter name.
+- Replaced the interactive menu's command-line-only Tier 2 rejection with one
+  clear recovery confirmation. Automated runs retain the explicit
+  `-LabTier2Confirmed` contract.
+- Clarified that opening the downloaded script in Notepad is optional source
+  inspection and not part of execution.
+- Added regression coverage for native stderr capture and both the saved-file
+  and trusted one-line launch paths.
+
+### Evidence state
+
+Launcher fix validated with observation-only runs. No Windows setting was
+changed and no performance improvement is claimed.
+
 ## 2026-07-29 — Initial experimental implementation
 
 ### Added

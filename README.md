@@ -10,16 +10,25 @@ Open an **administrator Windows PowerShell 5.1** console, inspect the script, an
 
 ```powershell
 Invoke-WebRequest https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main/ZBookPerf.ps1 -OutFile .\ZBookPerf.ps1
-notepad .\ZBookPerf.ps1
 Set-ExecutionPolicy -Scope Process Bypass
 .\ZBookPerf.ps1
 ```
 
-Convenience one-liner (only after you trust the repository and understand that this executes downloaded code):
+`notepad .\ZBookPerf.ps1` is optional source inspection, not an execution step.
+Double-clicking a `.ps1` file may also open it for editing; run
+`.\ZBookPerf.ps1` from Windows PowerShell to execute it.
+
+The saved-file route above is recommended because it lets you inspect the exact
+script you are about to run. If you already trust the repository, this
+convenience one-liner opens the same menu without saving a copy:
 
 ```powershell
 irm https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main/ZBookPerf.ps1 | iex
 ```
+
+ZBookPerf accepts `-Candidate` as before. Internally that parameter uses a
+collision-resistant name so the convenience command also works in Windows
+PowerShell 5.1.
 
 Useful non-interactive examples:
 
@@ -40,7 +49,7 @@ Useful non-interactive examples:
 .\ZBookPerf.ps1 -Action Revert
 ```
 
-Run `Analyze` before applying a candidate; ZBookPerf refuses an application without preserved baseline evidence. Machine-wide candidates require elevation and `-LabTier2Confirmed`. That switch is an assertion that the machine is a disposable image or dedicated lab system with a tested snapshot/image recovery path. The script attempts a restore point, captures original state, applies one candidate, verifies it, and can restore it. Restore points are not a substitute for an external recovery image. Candidates marked as reboot-dependent remain experimental until the operator reboots, runs `Status` plus `Remeasure`, preserves the evidence, and verifies the setting manually.
+Run `Analyze` before applying a candidate; ZBookPerf refuses an application without preserved baseline evidence. In the interactive menu, a machine-wide candidate asks one recovery confirmation instead of requiring a typed command-line flag. Non-interactive runs require `-LabTier2Confirmed`. Either route is an assertion that the machine is a disposable image or dedicated lab system with a tested snapshot/image recovery path. The script attempts a restore point, captures original state, applies one candidate, verifies it, and can restore it. Restore points are not a substitute for an external recovery image. Candidates marked as reboot-dependent remain experimental until the operator reboots, runs `Status` plus `Remeasure`, preserves the evidence, and verifies the setting manually.
 
 ZBookPerf does **not** disable Defender, Memory Integrity, Windows Update, BitLocker, Secure Boot, Windows Search, SysMain, USB selective suspend, HP Wolf/Sure security, authentication, recovery, networking, or update services. It does not install drivers or firmware.
 

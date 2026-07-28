@@ -18,6 +18,12 @@ Describe 'EXP-047 ZBookPerf' {
             ($command.Parameters.Keys -contains 'Confirm') | Should -BeTrue
         }
 
+        It 'preserves the public Candidate parameter without using the Invoke-Expression collision name internally' {
+            $command = Get-Command $scriptPath
+            ($command.Parameters.Keys -contains 'EnhancementCandidate') | Should -BeTrue
+            ($command.Parameters['EnhancementCandidate'].Aliases -contains 'Candidate') | Should -BeTrue
+        }
+
         It 'keeps security and management exclusions out of mutation commands' {
             $content = Get-Content -LiteralPath $scriptPath -Raw
             $content | Should -Not -Match 'Set-MpPreference'
@@ -25,6 +31,67 @@ Describe 'EXP-047 ZBookPerf' {
             $content | Should -Not -Match 'bcdedit'
             $content | Should -Not -Match 'powercfg(?:\.exe)?\s+/hibernate\s+off'
             $content | Should -Not -Match 'Remove-WindowsDriver'
+        }
+    }
+
+    Context 'Windows PowerShell launch paths' {
+        It 'captures native stderr and evaluates the native exit code' {
+            $result = Invoke-NativeCommand -FilePath $env:ComSpec -Arguments @(
+                '/d',
+                '/c',
+                'echo simulated-native-stderr 1>&2'
+            )
+
+            $result.ExitCode | Should -Be 0
+            $result.Output | Should -Match 'simulated-native-stderr'
+        }
+
+        It 'runs through Invoke-Expression without a parameter-scope collision' {
+            $startInfo = New-Object Diagnostics.ProcessStartInfo
+            $startInfo.FileName = 'powershell.exe'
+            $startInfo.WorkingDirectory = Split-Path $scriptPath -Parent
+            $startInfo.Arguments = '-NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath ''.\ZBookPerf.ps1'' -Raw | Invoke-Expression"'
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardInput = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+
+            $process = New-Object Diagnostics.Process
+            $process.StartInfo = $startInfo
+            [void]$process.Start()
+            $process.StandardInput.WriteLine('Q')
+            $process.StandardInput.Close()
+            $standardOutput = $process.StandardOutput.ReadToEnd()
+            $standardError = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+
+            $process.ExitCode | Should -Be 0
+            $standardOutput | Should -Match 'ZBookPerf - EXP-047'
+            $standardError | Should -Not -Match 'ValidateSetFailure|variable Candidate'
+        }
+
+        It 'handles an interactive Tier 2 choice without requiring a command-line flag' {
+            $startInfo = New-Object Diagnostics.ProcessStartInfo
+            $startInfo.FileName = 'powershell.exe'
+            $startInfo.WorkingDirectory = Split-Path $scriptPath -Parent
+            $startInfo.Arguments = '-NoProfile -ExecutionPolicy Bypass -File ".\ZBookPerf.ps1"'
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardInput = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+
+            $process = New-Object Diagnostics.Process
+            $process.StartInfo = $startInfo
+            [void]$process.Start()
+            @('3', '2', 'N', 'Q') | ForEach-Object { $process.StandardInput.WriteLine($_) }
+            $process.StandardInput.Close()
+            $standardOutput = $process.StandardOutput.ReadToEnd()
+            $standardError = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+
+            $process.ExitCode | Should -Be 0
+            $standardOutput | Should -Match 'Cancelled. No setting was changed.'
+            $standardError | Should -Not -Match 'pass -LabTier2Confirmed'
         }
     }
 
