@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "product": "Lacksan Controller",
+  "profiles": [
+    {
+      "id": "InventoryOnly",
+      "displayName": "Inventory only",
+      "description": "Read-only HP Windows 11 support and protected-application inventory.",
+      "providers": ["system-inventory"]
+    }
+  ],
+  "providers": [
+    {
+      "id": "system-inventory",
+      "displayName": "System inventory",
+      "script": "providers/SystemInventory.ps1",
+      "mode": "ReadOnly",
+      "requires": [],
+      "conflicts": [],
+      "rebootRequired": false,
+      "protectedScopes": [
+        "WindowsSecurity",
+        "WindowsUpdate",
+        "Recovery",
+        "EnterpriseManagement",
+        "DeviceCriticalDrivers",
+        "Omnissa",
+        "WindowsApp",
+        "RemoteDesktop",
+        "Tailscale"
+      ]
+    }
+  ]
+}
