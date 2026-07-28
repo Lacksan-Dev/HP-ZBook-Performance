@@ -13,6 +13,12 @@
       "displayName": "OneDrive demand launch",
       "description": "Inventory the system and remove one exact current-user OneDrive /background Run registration with transaction rollback.",
       "providers": ["system-inventory", "onedrive-background-run"]
+    },
+    {
+      "id": "ClassicTeamsDemandLaunch",
+      "displayName": "Classic Teams demand launch",
+      "description": "Inventory the system and remove one exact classic Teams Squirrel Run registration with transaction rollback.",
+      "providers": ["system-inventory", "classic-teams-run"]
     }
   ],
   "providers": [
@@ -30,6 +36,16 @@
       "id": "onedrive-background-run",
       "displayName": "OneDrive background Run registration",
       "script": "providers/OneDriveBackgroundRun.ps1",
+      "mode": "Reversible",
+      "requires": ["system-inventory"],
+      "conflicts": [],
+      "rebootRequired": false,
+      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
+    },
+    {
+      "id": "classic-teams-run",
+      "displayName": "Classic Teams Squirrel Run registration",
+      "script": "providers/ClassicTeamsRun.ps1",
       "mode": "Reversible",
       "requires": ["system-inventory"],
       "conflicts": [],
