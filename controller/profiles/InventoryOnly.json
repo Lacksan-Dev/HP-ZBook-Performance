@@ -1,0 +1,6 @@
+{
+  "id": "InventoryOnly",
+  "status": "Experimental",
+  "physicalEvidence": "needs-evidence",
+  "providers": ["system-inventory"]
+}

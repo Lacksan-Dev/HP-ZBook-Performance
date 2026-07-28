@@ -1,0 +1,1 @@
+Run contract tests with Pester and execute `controller/Test-Integration.ps1` on a supported HP Windows 11 system. The integration test performs only the `InventoryOnly` dry-run path and records zero mutations.

@@ -1,0 +1,1 @@
+Provider scripts accept `Check`, `Capture`, `DryRun`, `Apply`, `Verify`, `VerifyReboot`, and `Rollback`, plus state and JSONL log paths. Every manifest entry declares dependencies, conflicts, reboot requirements, mode, and protected scopes.
