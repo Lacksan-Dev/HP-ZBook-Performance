@@ -7,6 +7,12 @@
       "displayName": "Inventory only",
       "description": "Read-only HP Windows 11 support and protected-application inventory.",
       "providers": ["system-inventory"]
+    },
+    {
+      "id": "OneDriveDemandLaunch",
+      "displayName": "OneDrive demand launch",
+      "description": "Inventory the system and remove one exact current-user OneDrive /background Run registration with transaction rollback.",
+      "providers": ["system-inventory", "onedrive-background-run"]
     }
   ],
   "providers": [
@@ -18,17 +24,17 @@
       "requires": [],
       "conflicts": [],
       "rebootRequired": false,
-      "protectedScopes": [
-        "WindowsSecurity",
-        "WindowsUpdate",
-        "Recovery",
-        "EnterpriseManagement",
-        "DeviceCriticalDrivers",
-        "Omnissa",
-        "WindowsApp",
-        "RemoteDesktop",
-        "Tailscale"
-      ]
+      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
+    },
+    {
+      "id": "onedrive-background-run",
+      "displayName": "OneDrive background Run registration",
+      "script": "providers/OneDriveBackgroundRun.ps1",
+      "mode": "Reversible",
+      "requires": ["system-inventory"],
+      "conflicts": [],
+      "rebootRequired": false,
+      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
     }
   ]
 }
