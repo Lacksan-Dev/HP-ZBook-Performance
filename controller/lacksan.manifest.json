@@ -37,6 +37,12 @@
       "displayName": "Logi Tune demand launch",
       "description": "Inventory the system and remove one exact Logi Tune tray or background Run registration with transaction rollback.",
       "providers": ["system-inventory", "logi-tune-run"]
+    },
+    {
+      "id": "LogitechGHubDemandLaunch",
+      "displayName": "Logitech G Hub demand launch",
+      "description": "Inventory the system and remove one exact Logitech G Hub tray or background Run registration with transaction rollback.",
+      "providers": ["system-inventory", "logitech-ghub-run"]
     }
   ],
   "providers": [
@@ -94,6 +100,16 @@
       "id": "logi-tune-run",
       "displayName": "Logi Tune tray Run registration",
       "script": "providers/LogiTuneRun.ps1",
+      "mode": "Reversible",
+      "requires": ["system-inventory"],
+      "conflicts": [],
+      "rebootRequired": false,
+      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
+    },
+    {
+      "id": "logitech-ghub-run",
+      "displayName": "Logitech G Hub tray Run registration",
+      "script": "providers/LogitechGHubRun.ps1",
       "mode": "Reversible",
       "requires": ["system-inventory"],
       "conflicts": [],
