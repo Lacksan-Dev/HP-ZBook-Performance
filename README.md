@@ -2,9 +2,22 @@
 
 This repository develops measurable, reversible Windows responsiveness experiments for HP ZBook workstations. Experimental code is not a promise of a speed-up: capture a baseline, change one variable, repeat the same workload, and keep a change only when repeated evidence supports it.
 
-## ZBookPerf console
+## Lacksan UX-ROM console
 
-`ZBookPerf.ps1` is the EXP-047 trace-first analyzer and reversible experiment harness. It runs on Windows PowerShell 5.1, records counters and optional Windows Performance Recorder (WPR) traces, shows compact console charts, and journals every applied candidate in `C:\ProgramData\ZBookPerf\changes.json`.
+**Lacksan UX-ROM** is the user-facing model name of `ZBookPerf.ps1`, the
+EXP-047 performance-layer controller and reversible experiment harness. The
+filename remains stable for existing download commands and automation. It runs
+on Windows PowerShell 5.1, records counters and optional Windows Performance
+Recorder (WPR) traces, shows compact console charts, and journals every applied
+candidate in `C:\ProgramData\ZBookPerf\changes.json`.
+
+UX means **user experience**. ROM means
+[**read-only memory**](https://www.ibm.com/think/topics/primary-storage) in
+computer hardware: nonvolatile storage traditionally used for built-in
+instructions. The name is a respectful reference to Mine's VX-ROM and its
+[factory-computer reprogramming approach](https://rpmgen.com/inside-mines/).
+UX-ROM is not literally firmware or ROM; it is a PowerShell controller that
+applies measured, reversible Windows configuration.
 
 Open an **administrator Windows PowerShell 5.1** console, move to a normal working folder instead of `C:\Windows\System32`, download the current build, and run it:
 
@@ -33,13 +46,44 @@ PowerShell 5.1.
 
 The menu prints a product version so an already-running, older copy is easy to
 spot. Downloading a new file does not replace code that is already loaded in an
-open menu; quit that menu and start the downloaded file again. Menu choices 7
-and 8 are read-only diagnostics. They add evidence to the product but do not
-appear under `Enhance`, which is reserved for reversible Windows state changes.
+open menu; quit that menu and start the downloaded file again.
+
+The main UI now has one full-system diagnostic, one plainly described choice
+for each of the twelve performance layers, and one **Apply all eligible tweaks**
+synergy batch. Choosing a layer runs its required baseline internally and then
+offers only that layer's next supported tweak. Selecting the same layer again
+continues its measurement gate. The workflow persists at
+`C:\ProgramData\ZBookPerf\layer-workflow.json`, so a reboot-dependent experiment
+can resume after restart. Accepted earlier changes remain in place while the
+next experiment gets a fresh baseline; this measures cumulative interactions
+without hiding which change produced an interaction. Missing layer integrations
+remain visible product gaps rather than becoming more diagnostic menu entries.
+
+The synergy batch includes only supported controls that do not require a
+reboot-specific validation path. It currently considers MMCSS responsiveness,
+the AC performance policy when the built-in plan exists, and documented
+per-user visual effects. It excludes NTFS last-access and Fast Startup
+experiments because those require isolated reboot testing. The batch gets one
+before/after measurement, one confirmation for its eligible scope, individual
+original-state journal entries, and a batch rollback record. It is an explicit
+cumulative interaction experiment, not proof that every included control is a
+performance gain.
 
 Useful non-interactive examples:
 
 ```powershell
+# Run the single read-only diagnostic entry point
+.\ZBookPerf.ps1 -Action FullDiagnostics -DurationSeconds 30
+
+# Preview the whole eligible synergy batch without changing Windows
+.\ZBookPerf.ps1 -Action ApplyAll -WhatIf
+
+# Display all twelve layers, current integration coverage, and next experiments
+.\ZBookPerf.ps1 -Action LayerMap
+
+# Open or resume the persisted sequential layer workflow
+.\ZBookPerf.ps1 -Action LayerWorkflow
+
 # Counter-only 30-second baseline; does not change Windows settings
 .\ZBookPerf.ps1 -Action Analyze -DurationSeconds 30 -NoTrace
 
@@ -62,7 +106,18 @@ Useful non-interactive examples:
 .\ZBookPerf.ps1 -Action Revert
 ```
 
-Run `Analyze` before applying a candidate; ZBookPerf refuses an application without preserved baseline evidence. In the interactive menu, a machine-wide candidate asks one recovery confirmation instead of requiring a typed command-line flag. Selecting the explicitly labeled Fast Startup diagnostic option also records diagnostic intent; non-interactive runs still require `-Diagnostic`. Non-interactive machine-wide runs require `-LabTier2Confirmed`. Either route is an assertion that the machine is a disposable image or dedicated lab system with a tested snapshot/image recovery path. The script attempts a restore point, captures original state, applies one candidate, verifies it, and can restore it. Restore points are not a substitute for an external recovery image. Candidates marked as reboot-dependent remain experimental until the operator reboots, runs `Status` plus `Remeasure`, preserves the evidence, and verifies the setting manually.
+The per-layer workflow captures a fresh baseline immediately before each
+change. Direct maintenance-menu or command-line use still requires `Analyze` first;
+ZBookPerf refuses an application without preserved baseline evidence. A
+machine-wide candidate asks one recovery confirmation instead of requiring a
+typed command-line flag. Selecting the explicitly labeled Fast Startup
+diagnostic also records diagnostic intent; non-interactive runs still require
+`-Diagnostic`. Non-interactive machine-wide runs require
+`-LabTier2Confirmed`. Either route is an assertion that the machine is a
+disposable image or dedicated lab system with a tested snapshot/image recovery
+path. The script attempts a restore point, captures original state, applies one
+candidate, verifies it, and can restore it. Restore points are not a substitute
+for an external recovery image.
 
 `PowerAc` requires the built-in High performance plan to be enumerated by
 `powercfg /list`. ZBookPerf now marks the candidate unsupported before selection
