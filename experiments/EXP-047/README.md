@@ -14,12 +14,26 @@ The root `ZBookPerf.ps1` script provides:
 1. A baseline capture using WPR `GeneralProfile`, `CPU`, and `DiskIO` profiles when the Windows Performance Toolkit is installed and the console is elevated.
 2. A counter/CIM fallback when WPR is missing, not elevated, or fails to start.
 3. Console CPU, memory, disk, DPC/ISR, thermal-zone, and per-process views with ASCII bars and Unicode sparklines.
-4. One named enhancement candidate per invocation.
-5. A required baseline-evidence gate before application.
-6. Exact state capture in `C:\ProgramData\ZBookPerf\changes.json`, structured JSONL events, post-change verification, idempotence, reboot-persistence handling, and rollback verification.
-7. A repeated measurement and side-by-side comparison. A single before/after pair is never labeled a proven improvement.
+4. A Layer 10 shell profile that inventories documented UI and policy surfaces and records repeated Explorer-window readiness runs with measured probe overhead.
+5. One named enhancement candidate per invocation.
+6. A required baseline-evidence gate before application.
+7. Exact state capture in `C:\ProgramData\ZBookPerf\changes.json`, structured JSONL events, post-change verification, idempotence, reboot-persistence handling, and rollback verification.
+8. A repeated measurement and side-by-side comparison. A single before/after pair is never labeled a proven improvement.
 
 The WPR ETL contains system activity and can be large. Review it before sharing. The JSON environment record deliberately avoids serial numbers, usernames, network addresses, command lines, and customer content.
+
+## Layer 10 shell profile
+
+Run `.\ZBookPerf.ps1 -Action ShellProfile -ShellRunCount 5`, or choose option 7 in the interactive menu. The profile:
+
+- reads `UISettings.AnimationsEnabled`, `AdvancedEffectsEnabled`, and `MessageDuration`;
+- captures the existing documented `SystemParametersInfo` visual-effect values without changing them;
+- reads only the Microsoft-documented policy mappings for Widgets and Windows Game Recording and reports whether RSoP can identify Group Policy delivery;
+- records the presence and version of the Xbox Gaming Overlay and Windows Web Experience packages without removing them;
+- records WPR, WPA, and WPA Exporter availability; and
+- measures a defined interval from `Shell.Explore` to a new matching `IShellWindows` entry reporting `Busy = false` and `ReadyState = Complete`.
+
+The benchmark uses a private folder below the selected data root so it can distinguish its own Explorer window. It snapshots existing window handles, closes only the new matching benchmark window, bounds each run with a timeout, and measures the complete readiness-probe overhead before collecting the repeated runs. The JSON retains raw durations, an estimated p95-per-probe observer budget, median, median absolute deviation, failures, AC state, and Battery Saver state. The profile writes evidence files but does not change a Windows setting, restart Explorer, or claim a speed-up.
 
 ## Supported candidates
 
