@@ -951,14 +951,17 @@ function Test-RestorePointPrerequisite {
 }
 
 function Get-CandidateOriginalState {
-    param([string]$Name)
+    param(
+        [string]$Name,
+        [switch]$DiagnosticConfirmed
+    )
     switch ($Name) {
         'PowerAc' { return Get-PowerCandidateState }
         'MmcssResponsiveness' { return Get-RegistryValueState -Path $script:MmcssPath -Name 'SystemResponsiveness' }
         'NtfsLastAccess' { return Get-NtfsLastAccessState }
         'VisualEffects' { return Get-VisualEffectsState }
         'FastStartupDiagnostic' {
-            if (-not $Diagnostic) { throw 'FastStartupDiagnostic requires -Diagnostic because disabling Fast Startup is a diagnostic isolation step, not a universal optimization.' }
+            if (-not $DiagnosticConfirmed) { throw 'FastStartupDiagnostic requires -Diagnostic in non-interactive runs because disabling Fast Startup is a diagnostic isolation step, not a universal optimization.' }
             return Get-RegistryValueState -Path $script:FastStartupPath -Name 'HiberbootEnabled'
         }
     }
@@ -1070,7 +1073,8 @@ function Invoke-Enhancement {
     param(
         [string]$Name,
         [string]$Root,
-        [switch]$Tier2Confirmed
+        [switch]$Tier2Confirmed,
+        [switch]$DiagnosticConfirmed
     )
 
     if (-not $Name) { throw '-Candidate is required for Enhance. ZBookPerf intentionally does not apply a bundle.' }
@@ -1082,7 +1086,7 @@ function Invoke-Enhancement {
         throw "Candidate '$Name' is Tier 2. Use a disposable image or dedicated lab system with a tested recovery path, then pass -LabTier2Confirmed."
     }
 
-    $original = Get-CandidateOriginalState -Name $Name
+    $original = Get-CandidateOriginalState -Name $Name -DiagnosticConfirmed:$DiagnosticConfirmed
     $requested = Get-CandidateRequestedState -Name $Name
     $rebootRequired = $Name -in @('NtfsLastAccess', 'FastStartupDiagnostic')
 
@@ -1266,6 +1270,14 @@ function Invoke-ZBookPerfMain {
                 $selectedCandidate = $EnhancementCandidate
                 if (-not $selectedCandidate) { $selectedCandidate = Select-CandidateInteractive }
                 $tier2ConfirmedForRun = [bool]$LabTier2Confirmed
+                $diagnosticConfirmedForRun = [bool]$Diagnostic
+                if (
+                    $script:Action -eq 'Menu' -and
+                    $selectedCandidate -eq 'FastStartupDiagnostic'
+                ) {
+                    $diagnosticConfirmedForRun = $true
+                    Write-Host 'Diagnostic intent accepted from explicit Fast Startup menu selection.' -ForegroundColor DarkYellow
+                }
                 if (
                     $script:Action -eq 'Menu' -and
                     $selectedCandidate -in $script:MachineCandidates -and
@@ -1277,7 +1289,7 @@ function Invoke-ZBookPerfMain {
                         continue
                     }
                 }
-                Invoke-Enhancement -Name $selectedCandidate -Root $DataRoot -Tier2Confirmed:$tier2ConfirmedForRun -WhatIf:$WhatIfPreference
+                Invoke-Enhancement -Name $selectedCandidate -Root $DataRoot -Tier2Confirmed:$tier2ConfirmedForRun -DiagnosticConfirmed:$diagnosticConfirmedForRun -WhatIf:$WhatIfPreference
             }
             'Remeasure' {
                 [void](Invoke-Measurement -Kind after -Seconds $DurationSeconds -Interval $SampleIntervalSeconds -Root $DataRoot -SkipTrace:$NoTrace)

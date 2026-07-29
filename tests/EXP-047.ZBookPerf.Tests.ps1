@@ -118,6 +118,40 @@ Describe 'EXP-047 ZBookPerf' {
             $standardOutput | Should -Match 'Cancelled. No setting was changed.'
             $standardError | Should -Not -Match 'pass -LabTier2Confirmed'
         }
+
+        It 'carries diagnostic intent from the explicit Fast Startup menu choice' {
+            $script:Action = 'Menu'
+            $script:menuCallCount = 0
+            $script:capturedDiagnosticIntent = $null
+
+            Mock Show-ZBookPerfMenu {
+                $script:menuCallCount++
+                if ($script:menuCallCount -eq 1) { return '3' }
+                return 'Q'
+            }
+            Mock Select-CandidateInteractive { return 'FastStartupDiagnostic' }
+            Mock Confirm-Tier2Interactive { return $true }
+            Mock Invoke-Enhancement {
+                $script:capturedDiagnosticIntent = [bool]$DiagnosticConfirmed
+            }
+
+            Invoke-ZBookPerfMain
+
+            $script:capturedDiagnosticIntent | Should -BeTrue
+            Should -Invoke Invoke-Enhancement -Times 1 -ParameterFilter {
+                $Name -eq 'FastStartupDiagnostic' -and
+                $Tier2Confirmed -and
+                $DiagnosticConfirmed
+            }
+        }
+
+        It 'retains the explicit diagnostic requirement outside the menu' {
+            Mock Test-IsAdministrator { return $true }
+
+            {
+                Invoke-Enhancement -Name FastStartupDiagnostic -Root $TestDrive -Tier2Confirmed -WhatIf
+            } | Should -Throw '*requires -Diagnostic in non-interactive runs*'
+        }
     }
 
     Context 'console chart helpers' {
