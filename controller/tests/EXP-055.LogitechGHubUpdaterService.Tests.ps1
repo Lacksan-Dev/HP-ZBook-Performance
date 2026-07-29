@@ -1,0 +1,8 @@
+Describe 'EXP-055 Logitech G Hub updater service provider' {
+ BeforeAll {$root=Split-Path $PSScriptRoot -Parent;$provider=Join-Path $root 'providers/LogitechGHubUpdaterService.ps1';$manifest=Join-Path $root 'lacksan.manifest.json'}
+ It 'parses without syntax errors' {$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($provider,[ref]$t,[ref]$e);$e.Count|Should -Be 0}
+ It 'exposes the reversible contract' {$c=Get-Content $provider -Raw;foreach($a in @('Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback')){$c|Should -Match "'$a'"}}
+ It 'targets one exact updater service and demand start only' {$c=Get-Content $provider -Raw;$c|Should -Match "serviceName='LGHUBUpdaterService'";$c|Should -Match 'lghub_updater\\.exe';$c|Should -Match 'sc\.exe config';$c|Should -Match 'start= demand';$c|Should -Not -Match 'Set-MpPreference|Remove-Service|Disable-WindowsOptionalFeature|Remove-AppxPackage'}
+ It 'captures startup delayed state binary and running state' {$c=Get-Content $provider -Raw;foreach($x in @('StartMode','DelayedAutoStart','PathName','State')){$c|Should -Match $x}}
+ It 'registers the profile and protected scopes' {$m=Get-Content $manifest -Raw|ConvertFrom-Json;@($m.profiles|Where-Object id -eq 'LogitechGHubUpdaterDemandStart').Count|Should -Be 1;$p=@($m.providers|Where-Object id -eq 'logitech-ghub-updater-service')[0];$p.mode|Should -Be 'Reversible';foreach($s in @('WindowsSecurity','WindowsUpdate','Recovery','EnterpriseManagement','DeviceCriticalDrivers','Omnissa','WindowsApp','RemoteDesktop','Tailscale')){@($p.protectedScopes)|Should -Contain $s}}
+}
