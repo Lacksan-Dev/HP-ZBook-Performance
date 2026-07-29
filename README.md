@@ -6,9 +6,10 @@ This repository develops measurable, reversible Windows responsiveness experimen
 
 `ZBookPerf.ps1` is the EXP-047 trace-first analyzer and reversible experiment harness. It runs on Windows PowerShell 5.1, records counters and optional Windows Performance Recorder (WPR) traces, shows compact console charts, and journals every applied candidate in `C:\ProgramData\ZBookPerf\changes.json`.
 
-Open an **administrator Windows PowerShell 5.1** console, inspect the script, and run it:
+Open an **administrator Windows PowerShell 5.1** console, move to a normal working folder instead of `C:\Windows\System32`, download the current build, and run it:
 
 ```powershell
+Set-Location $env:TEMP
 Invoke-WebRequest https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main/ZBookPerf.ps1 -OutFile .\ZBookPerf.ps1
 Set-ExecutionPolicy -Scope Process Bypass
 .\ZBookPerf.ps1
@@ -29,6 +30,12 @@ irm https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main/ZBoo
 ZBookPerf accepts `-Candidate` as before. Internally that parameter uses a
 collision-resistant name so the convenience command also works in Windows
 PowerShell 5.1.
+
+The menu prints a product version so an already-running, older copy is easy to
+spot. Downloading a new file does not replace code that is already loaded in an
+open menu; quit that menu and start the downloaded file again. Menu choices 7
+and 8 are read-only diagnostics. They add evidence to the product but do not
+appear under `Enhance`, which is reserved for reversible Windows state changes.
 
 Useful non-interactive examples:
 
@@ -56,6 +63,24 @@ Useful non-interactive examples:
 ```
 
 Run `Analyze` before applying a candidate; ZBookPerf refuses an application without preserved baseline evidence. In the interactive menu, a machine-wide candidate asks one recovery confirmation instead of requiring a typed command-line flag. Selecting the explicitly labeled Fast Startup diagnostic option also records diagnostic intent; non-interactive runs still require `-Diagnostic`. Non-interactive machine-wide runs require `-LabTier2Confirmed`. Either route is an assertion that the machine is a disposable image or dedicated lab system with a tested snapshot/image recovery path. The script attempts a restore point, captures original state, applies one candidate, verifies it, and can restore it. Restore points are not a substitute for an external recovery image. Candidates marked as reboot-dependent remain experimental until the operator reboots, runs `Status` plus `Remeasure`, preserves the evidence, and verifies the setting manually.
+
+`PowerAc` requires the built-in High performance plan to be enumerated by
+`powercfg /list`. ZBookPerf now marks the candidate unsupported before selection
+when that plan is absent. This is expected on this lab ZBook's Modern Standby
+configuration, where the Balanced plan and Windows Power mode are the supported
+surface. The tool does not manufacture or activate a substitute plan.
+
+Only one WPR recording can own the required system collectors at a time. If
+another recording is active, ZBookPerf preserves it, completes the counter
+baseline without an ETW trace, and prints these explicit choices from an
+elevated console:
+
+```powershell
+wpr -status
+wpr -stop C:\Temp\existing-trace.etl  # save the existing recording
+wpr -cancel                           # discard the existing recording
+.\ZBookPerf.ps1 -Action Analyze -NoTrace
+```
 
 `ShellProfile` is observation-only. It reads animations, transparency, notification duration, the documented Widgets and Game DVR policy locations, related app-package presence, and WPR/WPA availability. It then opens a private benchmark folder, measures when the new Explorer window reports ready through the documented Shell automation model, and closes only that benchmark window. Full readiness-probe overhead, raw runs, medians, variability, timeouts, power state, and Battery Saver state are retained. This is a baseline capability, not a performance-gain claim.
 

@@ -77,6 +77,12 @@ $ErrorActionPreference = 'Stop'
 
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
+$script:ProductVersion = '2026.07.30.1'
+$script:LoadedFrom = if ([string]::IsNullOrWhiteSpace([string]$PSCommandPath)) {
+    'in-memory content'
+} else {
+    $PSCommandPath
+}
 $script:HighPerformanceScheme = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
 $script:ProcessorSubgroup = '54533251-82be-4824-96c1-47b60b740d00'
 $script:PowerSettings = [ordered]@{
@@ -228,11 +234,18 @@ function Invoke-NativeCommand {
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
     }
+    $outputText = @($output | ForEach-Object {
+        if ($_ -is [System.Management.Automation.ErrorRecord] -and $_.Exception) {
+            $_.Exception.Message
+        } else {
+            [string]$_
+        }
+    })
     $result = [pscustomobject]@{
         FilePath = $FilePath
         Arguments = $Arguments
         ExitCode = $exitCode
-        Output = ($output -join [Environment]::NewLine)
+        Output = ($outputText -join [Environment]::NewLine)
     }
     if (-not $AllowFailure -and $exitCode -ne 0) {
         throw "$FilePath exited with code $exitCode. $($result.Output)"
@@ -593,10 +606,50 @@ function Show-MeasurementSummary {
     }
 }
 
+function Get-WprRecordingState {
+    if (-not (Get-Command 'wpr.exe' -ErrorAction SilentlyContinue)) {
+        return [pscustomobject][ordered]@{
+            available = $false
+            state = 'unavailable'
+            raw = $null
+        }
+    }
+
+    $status = Invoke-NativeCommand -FilePath 'wpr.exe' -Arguments @('-status') -AllowFailure
+    $state = 'unknown'
+    if ($status.ExitCode -eq 0) {
+        if ($status.Output -match '(?i)\bWPR is not recording\b') {
+            $state = 'idle'
+        } elseif (
+            $status.Output -match '(?i)\bWPR recording is in progress\b' -or
+            $status.Output -match '(?i)\bActively recording collectors\b'
+        ) {
+            $state = 'recording'
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        available = $true
+        state = $state
+        raw = $status.Output
+    }
+}
+
+function Get-WprBusyGuidance {
+    return 'An existing WPR recording is active and was preserved. In an elevated console, inspect it with "wpr -status"; save it with "wpr -stop C:\Temp\existing-trace.etl"; discard it with "wpr -cancel"; or rerun ZBookPerf Analyze with -NoTrace.'
+}
+
 function Start-WprCapture {
     param([string]$Root, [string]$Stamp, [switch]$Skip)
 
-    $trace = [ordered]@{ status = 'not-started'; reason = $null; etlPath = $null; csvPath = $null; summaryPath = $null }
+    $trace = [ordered]@{
+        status = 'not-started'
+        reason = $null
+        etlPath = $null
+        csvPath = $null
+        summaryPath = $null
+        existingRecordingPreserved = $false
+    }
     if ($Skip) {
         $trace.status = 'skipped'
         $trace.reason = 'Tracing was disabled with -NoTrace.'
@@ -613,8 +666,27 @@ function Start-WprCapture {
         return [pscustomobject]$trace
     }
 
+    $recordingState = Get-WprRecordingState
+    if ($recordingState.state -eq 'recording') {
+        $trace.status = 'busy'
+        $trace.reason = Get-WprBusyGuidance
+        $trace.existingRecordingPreserved = $true
+        return [pscustomobject]$trace
+    }
+    if ($recordingState.state -ne 'idle') {
+        $trace.status = 'status-unavailable'
+        $trace.reason = 'ZBookPerf could not prove that WPR was idle, so it did not start or cancel a trace. Run "wpr -status" in an elevated console, or rerun Analyze with -NoTrace.'
+        return [pscustomobject]$trace
+    }
+
     $start = Invoke-NativeCommand -FilePath 'wpr.exe' -Arguments @('-start', 'GeneralProfile', '-start', 'CPU', '-start', 'DiskIO', '-filemode') -AllowFailure
     if ($start.ExitCode -ne 0) {
+        if ($start.Output -match '(?i)0xc5583001|profiles are already running') {
+            $trace.status = 'busy'
+            $trace.reason = Get-WprBusyGuidance
+            $trace.existingRecordingPreserved = $true
+            return [pscustomobject]$trace
+        }
         $trace.status = 'failed-to-start'
         $trace.reason = $start.Output
         return [pscustomobject]$trace
@@ -779,12 +851,49 @@ function Get-PowerAcValue {
     return [Convert]::ToInt32($match.Groups[1].Value, 16)
 }
 
-function Get-PowerCandidateState {
-    $active = Get-PowerSchemeGuid -Output (Invoke-NativeCommand -FilePath 'powercfg.exe' -Arguments @('/getactivescheme')).Output
-    $schemes = (Invoke-NativeCommand -FilePath 'powercfg.exe' -Arguments @('/list')).Output
-    if ($schemes -notmatch [regex]::Escape($script:HighPerformanceScheme)) {
-        throw 'The built-in High performance scheme is not available. ZBookPerf will not create an undocumented substitute scheme.'
+function Get-PowerCandidateSupport {
+    $schemes = Invoke-NativeCommand -FilePath 'powercfg.exe' -Arguments @('/list') -AllowFailure
+    if ($schemes.ExitCode -ne 0) {
+        return [pscustomobject][ordered]@{
+            supported = $false
+            modernStandbyDetected = $null
+            reason = "powercfg could not enumerate power schemes: $($schemes.Output)"
+        }
     }
+
+    $sleepStates = Invoke-NativeCommand -FilePath 'powercfg.exe' -Arguments @('/availablesleepstates') -AllowFailure
+    $modernStandby = (
+        $sleepStates.ExitCode -eq 0 -and
+        $sleepStates.Output -match '(?i)Standby \(S0 Low Power Idle\)'
+    )
+    $highPerformanceListed = $schemes.Output -match [regex]::Escape($script:HighPerformanceScheme)
+
+    if (-not $highPerformanceListed) {
+        $reason = 'The built-in High performance plan is not enumerated by powercfg.'
+        if ($modernStandby) {
+            $reason += ' This PC uses Modern Standby, where the Balanced plan and Windows Power mode are the supported performance surface.'
+        }
+        $reason += ' ZBookPerf will not create or activate a substitute plan.'
+        return [pscustomobject][ordered]@{
+            supported = $false
+            modernStandbyDetected = [bool]$modernStandby
+            reason = $reason
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        supported = $true
+        modernStandbyDetected = [bool]$modernStandby
+        reason = 'The built-in High performance plan is enumerated and can be captured before application.'
+    }
+}
+
+function Get-PowerCandidateState {
+    $support = Get-PowerCandidateSupport
+    if (-not $support.supported) {
+        throw "PowerAc is unsupported on this PC. $($support.reason) No setting was changed."
+    }
+    $active = Get-PowerSchemeGuid -Output (Invoke-NativeCommand -FilePath 'powercfg.exe' -Arguments @('/getactivescheme')).Output
 
     $values = [ordered]@{}
     $attributes = [ordered]@{}
@@ -2046,6 +2155,12 @@ function Invoke-Enhancement {
     )
 
     if (-not $Name) { throw '-Candidate is required for Enhance. ZBookPerf intentionally does not apply a bundle.' }
+    if ($Name -eq 'PowerAc') {
+        $powerSupport = Get-PowerCandidateSupport
+        if (-not $powerSupport.supported) {
+            throw "PowerAc is unsupported on this PC. $($powerSupport.reason) No setting was changed."
+        }
+    }
     $isMachine = $Name -in $script:MachineCandidates
     if ($isMachine -and -not (Test-IsAdministrator)) {
         throw "Candidate '$Name' requires an administrator console."
@@ -2156,9 +2271,20 @@ function Invoke-RevertChanges {
 function Show-ZBookPerfStatus {
     param([string]$Root)
     Write-Host "Experiment: $script:ExperimentId" -ForegroundColor Cyan
+    Write-Host "Product version: $script:ProductVersion"
+    Write-Host "Loaded from: $script:LoadedFrom"
     Write-Host "Data root: $Root"
     Write-Host "Administrator: $(Test-IsAdministrator)"
-    Write-Host "WPR available: $([bool](Get-Command 'wpr.exe' -ErrorAction SilentlyContinue))"
+    $wprState = Get-WprRecordingState
+    Write-Host "WPR state: $($wprState.state)"
+    if ($wprState.state -eq 'recording') {
+        Write-Host (Get-WprBusyGuidance) -ForegroundColor DarkYellow
+    }
+    $powerSupport = Get-PowerCandidateSupport
+    Write-Host "PowerAc support: $($powerSupport.supported)"
+    if (-not $powerSupport.supported) {
+        Write-Host $powerSupport.reason -ForegroundColor DarkYellow
+    }
     $log = Get-ChangeLog -Root $Root
     if (@($log.entries).Count -eq 0) {
         Write-Host 'Recorded changes: none'
@@ -2169,27 +2295,39 @@ function Show-ZBookPerfStatus {
 
 function Show-ZBookPerfMenu {
     Write-Host ''
-    Write-Host 'ZBookPerf - EXP-047' -ForegroundColor Cyan
+    Write-Host "ZBookPerf $script:ProductVersion - EXP-047" -ForegroundColor Cyan
     Write-Host '1. Analyze and capture a baseline'
     Write-Host '2. Live performance watch'
-    Write-Host '3. Enhance (one candidate only)'
+    Write-Host '3. Apply one reversible experiment (Enhance)'
     Write-Host '4. Re-measure and compare'
     Write-Host '5. Revert the most recent applied change'
-    Write-Host '6. Status'
-    Write-Host '7. Layer 10 shell profile (read-only)'
-    Write-Host '8. Layer 11 workload runtime profile (read-only)'
+    Write-Host '6. Status, build, WPR, and candidate support'
+    Write-Host '7. Diagnose Layer 10 shell responsiveness (read-only)'
+    Write-Host '8. Diagnose Layer 11 application runtime (read-only)'
     Write-Host 'Q. Quit'
     return (Read-Host 'Choose an action')
 }
 
 function Select-CandidateInteractive {
-    Write-Host '1. AC High performance processor policy (Tier 2)'
+    $powerSupport = Get-PowerCandidateSupport
+    if ($powerSupport.supported) {
+        Write-Host '1. AC High performance processor policy (Tier 2)'
+    } else {
+        Write-Host '1. AC High performance processor policy [unsupported on this PC]' -ForegroundColor DarkGray
+    }
     Write-Host '2. MMCSS SystemResponsiveness = 10 (Tier 2)'
     Write-Host '3. NTFS DisableLastAccess = 1 (Tier 2, reboot)'
     Write-Host '4. Documented visual-effect APIs (Tier 1)'
     Write-Host '5. Fast Startup diagnostic isolation (Tier 2, diagnostic, reboot)'
     switch (Read-Host 'Choose one candidate') {
-        '1' { return 'PowerAc' }
+        '1' {
+            if (-not $powerSupport.supported) {
+                Write-Host "Unavailable: $($powerSupport.reason)" -ForegroundColor DarkYellow
+                Write-Host 'No setting was changed.' -ForegroundColor DarkYellow
+                return $null
+            }
+            return 'PowerAc'
+        }
         '2' { return 'MmcssResponsiveness' }
         '3' { return 'NtfsLastAccess' }
         '4' { return 'VisualEffects' }
@@ -2259,6 +2397,7 @@ function Invoke-ZBookPerfMain {
             'Enhance' {
                 $selectedCandidate = $EnhancementCandidate
                 if (-not $selectedCandidate) { $selectedCandidate = Select-CandidateInteractive }
+                if (-not $selectedCandidate) { continue }
                 $tier2ConfirmedForRun = [bool]$LabTier2Confirmed
                 $diagnosticConfirmedForRun = [bool]$Diagnostic
                 if (
