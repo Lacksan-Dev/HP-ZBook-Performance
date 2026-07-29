@@ -70,6 +70,31 @@ Describe 'EXP-047 ZBookPerf' {
             $standardError | Should -Not -Match 'ValidateSetFailure|variable Candidate'
         }
 
+        It 'preserves the original menu error through Invoke-Expression' {
+            $startInfo = New-Object Diagnostics.ProcessStartInfo
+            $startInfo.FileName = 'powershell.exe'
+            $startInfo.WorkingDirectory = Split-Path $scriptPath -Parent
+            $startInfo.Arguments = '-NoProfile -ExecutionPolicy Bypass -Command "Get-Content -LiteralPath ''.\ZBookPerf.ps1'' -Raw | Invoke-Expression"'
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardInput = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+
+            $process = New-Object Diagnostics.Process
+            $process.StartInfo = $startInfo
+            [void]$process.Start()
+            @('3', 'x') | ForEach-Object { $process.StandardInput.WriteLine($_) }
+            $process.StandardInput.Close()
+            $standardOutput = $process.StandardOutput.ReadToEnd()
+            $standardError = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+
+            $process.ExitCode | Should -Not -Be 0
+            $standardOutput | Should -Match 'Enhance \(one candidate only\)'
+            $standardError | Should -Match 'Unknown candidate selection.'
+            $standardError | Should -Not -Match 'variable.*PSCmdlet'
+        }
+
         It 'handles an interactive Tier 2 choice without requiring a command-line flag' {
             $startInfo = New-Object Diagnostics.ProcessStartInfo
             $startInfo.FileName = 'powershell.exe'

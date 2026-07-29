@@ -1291,9 +1291,8 @@ function Invoke-ZBookPerfMain {
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    try {
-        Invoke-ZBookPerfMain
-    } catch {
-        $PSCmdlet.ThrowTerminatingError($_)
-    }
+    # Invoke-Expression does not create the script-level $PSCmdlet variable
+    # that a directly invoked advanced script receives. Let PowerShell
+    # propagate the original exception so the real failure is not masked.
+    Invoke-ZBookPerfMain
 }
