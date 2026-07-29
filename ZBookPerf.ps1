@@ -17,12 +17,13 @@
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Menu', 'Analyze', 'Watch', 'ShellProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
+    [ValidateSet('Menu', 'Analyze', 'Watch', 'ShellProfile', 'WorkloadProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
     [string]$Action = 'Menu',
 
     [switch]$Analyze,
     [switch]$Watch,
     [switch]$ShellProfile,
+    [switch]$WorkloadProfile,
     [switch]$Enhance,
     [switch]$Remeasure,
     [switch]$Revert,
@@ -54,6 +55,15 @@ param(
 
     [ValidateRange(5, 100)]
     [int]$ShellProbeCalibrationIterations = 25,
+
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$')]
+    [string[]]$WorkloadProcessName = @('explorer.exe'),
+
+    [ValidateRange(250, 5000)]
+    [int]$WorkloadSampleIntervalMilliseconds = 1000,
+
+    [ValidateRange(3, 25)]
+    [int]$WorkloadCalibrationIterations = 5,
 
     [string]$DataRoot = 'C:\ProgramData\ZBookPerf',
 
@@ -1427,6 +1437,423 @@ function Invoke-ShellProfile {
     return $profile
 }
 
+function Resolve-WorkloadProcessNames {
+    param([Parameter(Mandatory = $true)][string[]]$Names)
+
+    $resolved = @()
+    foreach ($name in $Names) {
+        $candidate = ([string]$name).Trim()
+        if ($candidate -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$') {
+            throw "Invalid workload process name '$candidate'. Use an executable name, not a path, wildcard, or command line."
+        }
+        if (-not [IO.Path]::GetExtension($candidate)) {
+            $candidate = "$candidate.exe"
+        }
+        $resolved += $candidate.ToLowerInvariant()
+    }
+    return @($resolved | Sort-Object -Unique)
+}
+
+function Initialize-WorkloadNativeMethods {
+    if ('ZBookPerf.WorkloadNativeMethods' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace ZBookPerf {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ProcessIoCounters {
+        public UInt64 ReadOperationCount;
+        public UInt64 WriteOperationCount;
+        public UInt64 OtherOperationCount;
+        public UInt64 ReadTransferCount;
+        public UInt64 WriteTransferCount;
+        public UInt64 OtherTransferCount;
+    }
+
+    public static class WorkloadNativeMethods {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool GetProcessIoCounters(
+            IntPtr processHandle,
+            out ProcessIoCounters counters
+        );
+    }
+}
+'@
+}
+
+function Get-WorkloadProcessSnapshot {
+    param([Parameter(Mandatory = $true)][string[]]$ProcessNames)
+
+    Initialize-WorkloadNativeMethods
+    $queryTimer = [Diagnostics.Stopwatch]::StartNew()
+    $rows = @()
+    $errors = @()
+    foreach ($name in $ProcessNames) {
+        $processBaseName = [IO.Path]::GetFileNameWithoutExtension($name)
+        foreach ($process in @([Diagnostics.Process]::GetProcessesByName($processBaseName))) {
+            try {
+                $process.Refresh()
+                $creationUtc = $process.StartTime.ToUniversalTime().ToString('o')
+                $identity = "$([uint32]$process.Id)|$creationUtc"
+                $io = New-Object ZBookPerf.ProcessIoCounters
+                $ioAvailable = $false
+                $ioErrorType = $null
+                $ioWin32Error = $null
+                try {
+                    $ioAvailable = [ZBookPerf.WorkloadNativeMethods]::GetProcessIoCounters(
+                        $process.Handle,
+                        [ref]$io
+                    )
+                    if (-not $ioAvailable) {
+                        $ioWin32Error = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                    }
+                } catch {
+                    $ioErrorType = $_.Exception.GetType().FullName
+                }
+                $rows += [pscustomobject][ordered]@{
+                    name = $name
+                    processId = [uint32]$process.Id
+                    creationUtc = $creationUtc
+                    identity = $identity
+                    kernelModeTime100ns = [uint64]$process.PrivilegedProcessorTime.Ticks
+                    userModeTime100ns = [uint64]$process.UserProcessorTime.Ticks
+                    ioCountersAvailable = [bool]$ioAvailable
+                    ioCounterErrorType = $ioErrorType
+                    ioCounterWin32Error = $ioWin32Error
+                    readTransferBytes = if ($ioAvailable) { [uint64]$io.ReadTransferCount } else { $null }
+                    writeTransferBytes = if ($ioAvailable) { [uint64]$io.WriteTransferCount } else { $null }
+                    workingSetBytes = [uint64]$process.WorkingSet64
+                    privateMemoryBytes = [uint64]$process.PrivateMemorySize64
+                    handleCount = [uint32]$process.HandleCount
+                    threadCount = [uint32]$process.Threads.Count
+                }
+            } catch {
+                $errors += [pscustomobject][ordered]@{
+                    name = $name
+                    processId = [uint32]$process.Id
+                    errorType = $_.Exception.GetType().FullName
+                }
+            } finally {
+                $process.Dispose()
+            }
+        }
+    }
+    $queryTimer.Stop()
+
+    return [pscustomobject][ordered]@{
+        capturedUtc = [DateTime]::UtcNow.ToString('o')
+        monotonicTicks = [Diagnostics.Stopwatch]::GetTimestamp()
+        queryDurationMilliseconds = [Math]::Round($queryTimer.Elapsed.TotalMilliseconds, 3)
+        processes = @($rows)
+        errors = @($errors)
+    }
+}
+
+function Measure-WorkloadSnapshotOverhead {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$ProcessNames,
+        [ValidateRange(3, 25)][int]$Iterations
+    )
+
+    [void](Get-WorkloadProcessSnapshot -ProcessNames $ProcessNames)
+    $samples = @()
+    for ($index = 0; $index -lt $Iterations; $index++) {
+        $snapshot = Get-WorkloadProcessSnapshot -ProcessNames $ProcessNames
+        $samples += [double]$snapshot.queryDurationMilliseconds
+    }
+    return [pscustomobject][ordered]@{
+        iterations = $Iterations
+        medianMilliseconds = [Math]::Round((Get-Median -Values $samples), 3)
+        p95Milliseconds = [Math]::Round((Get-Percentile -Values $samples -Percentile 95), 3)
+        samplesMilliseconds = @($samples)
+    }
+}
+
+function Get-NonnegativeCounterDelta {
+    param(
+        [Parameter(Mandatory = $true)][double]$Before,
+        [Parameter(Mandatory = $true)][double]$After
+    )
+
+    if ($After -lt $Before) { return $null }
+    return ($After - $Before)
+}
+
+function Get-NumericPropertySum {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Rows,
+        [Parameter(Mandatory = $true)][string]$PropertyName
+    )
+
+    if ($Rows.Count -eq 0) { return 0.0 }
+    return [double](($Rows | Measure-Object -Property $PropertyName -Sum).Sum)
+}
+
+function ConvertTo-WorkloadInterval {
+    param(
+        [Parameter(Mandatory = $true)][object]$Previous,
+        [Parameter(Mandatory = $true)][object]$Current,
+        [ValidateRange(1, 1024)][int]$LogicalProcessorCount
+    )
+
+    $elapsedSeconds = ([double]$Current.monotonicTicks - [double]$Previous.monotonicTicks) /
+        [double][Diagnostics.Stopwatch]::Frequency
+    if ($elapsedSeconds -le 0) {
+        throw 'The workload snapshots do not have a positive monotonic interval.'
+    }
+
+    $previousByIdentity = @{}
+    foreach ($row in @($Previous.processes)) {
+        if ($row.identity) { $previousByIdentity[[string]$row.identity] = $row }
+    }
+    $currentByIdentity = @{}
+    foreach ($row in @($Current.processes)) {
+        if ($row.identity) { $currentByIdentity[[string]$row.identity] = $row }
+    }
+
+    $stableRows = @()
+    foreach ($identity in $currentByIdentity.Keys) {
+        if (-not $previousByIdentity.ContainsKey($identity)) { continue }
+        $before = $previousByIdentity[$identity]
+        $after = $currentByIdentity[$identity]
+        $cpuBefore = [double]$before.kernelModeTime100ns + [double]$before.userModeTime100ns
+        $cpuAfter = [double]$after.kernelModeTime100ns + [double]$after.userModeTime100ns
+        $cpuDelta = Get-NonnegativeCounterDelta -Before $cpuBefore -After $cpuAfter
+        if ($null -eq $cpuDelta) { continue }
+
+        $ioAvailable = [bool]$before.ioCountersAvailable -and [bool]$after.ioCountersAvailable
+        $readDelta = if ($ioAvailable) {
+            Get-NonnegativeCounterDelta `
+                -Before ([double]$before.readTransferBytes) `
+                -After ([double]$after.readTransferBytes)
+        } else { $null }
+        $writeDelta = if ($ioAvailable) {
+            Get-NonnegativeCounterDelta `
+                -Before ([double]$before.writeTransferBytes) `
+                -After ([double]$after.writeTransferBytes)
+        } else { $null }
+        if ($null -eq $readDelta -or $null -eq $writeDelta) { $ioAvailable = $false }
+
+        $logicalCpuPercent = (($cpuDelta * 0.0000001) / $elapsedSeconds) * 100
+        $stableRows += [pscustomobject][ordered]@{
+            name = $after.name
+            processId = $after.processId
+            creationUtc = $after.creationUtc
+            cpuLogicalProcessorPercent = [Math]::Round($logicalCpuPercent, 4)
+            cpuMachinePercent = [Math]::Round(($logicalCpuPercent / $LogicalProcessorCount), 4)
+            ioCountersAvailable = $ioAvailable
+            readBytesPerSecond = if ($ioAvailable) { [Math]::Round(($readDelta / $elapsedSeconds), 0) } else { $null }
+            writeBytesPerSecond = if ($ioAvailable) { [Math]::Round(($writeDelta / $elapsedSeconds), 0) } else { $null }
+            workingSetBytes = $after.workingSetBytes
+            privateMemoryBytes = $after.privateMemoryBytes
+            handleCount = $after.handleCount
+            threadCount = $after.threadCount
+        }
+    }
+
+    $currentRows = @($Current.processes)
+    $ioRows = @($stableRows | Where-Object { $_.ioCountersAvailable })
+    $started = @($currentByIdentity.Keys | Where-Object { -not $previousByIdentity.ContainsKey($_) }).Count
+    $exited = @($previousByIdentity.Keys | Where-Object { -not $currentByIdentity.ContainsKey($_) }).Count
+    return [pscustomobject][ordered]@{
+        capturedUtc = $Current.capturedUtc
+        elapsedMilliseconds = [Math]::Round(($elapsedSeconds * 1000), 3)
+        queryDurationMilliseconds = $Current.queryDurationMilliseconds
+        status = if ($stableRows.Count -gt 0) { 'Measured' } else { 'NoStableProcessPair' }
+        observedProcessCount = $currentRows.Count
+        stableProcessCount = $stableRows.Count
+        ioMeasuredProcessCount = $ioRows.Count
+        startedProcessCount = $started
+        exitedProcessCount = $exited
+        cpuLogicalProcessorPercent = [Math]::Round((Get-NumericPropertySum -Rows $stableRows -PropertyName cpuLogicalProcessorPercent), 4)
+        cpuMachinePercent = [Math]::Round((Get-NumericPropertySum -Rows $stableRows -PropertyName cpuMachinePercent), 4)
+        readBytesPerSecond = if ($ioRows.Count -gt 0) {
+            [Math]::Round((Get-NumericPropertySum -Rows $ioRows -PropertyName readBytesPerSecond), 0)
+        } else { $null }
+        writeBytesPerSecond = if ($ioRows.Count -gt 0) {
+            [Math]::Round((Get-NumericPropertySum -Rows $ioRows -PropertyName writeBytesPerSecond), 0)
+        } else { $null }
+        workingSetBytes = [uint64](Get-NumericPropertySum -Rows $currentRows -PropertyName workingSetBytes)
+        privateMemoryBytes = [uint64](Get-NumericPropertySum -Rows $currentRows -PropertyName privateMemoryBytes)
+        handleCount = [uint64](Get-NumericPropertySum -Rows $currentRows -PropertyName handleCount)
+        threadCount = [uint64](Get-NumericPropertySum -Rows $currentRows -PropertyName threadCount)
+        processes = @($stableRows)
+        queryErrors = @($Current.errors)
+    }
+}
+
+function Get-WorkloadDistribution {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [double[]]$Values
+    )
+
+    if ($Values.Count -eq 0) {
+        return [pscustomobject][ordered]@{
+            count = 0
+            median = $null
+            p95 = $null
+            minimum = $null
+            maximum = $null
+        }
+    }
+    return [pscustomobject][ordered]@{
+        count = $Values.Count
+        median = [Math]::Round((Get-Median -Values $Values), 4)
+        p95 = [Math]::Round((Get-Percentile -Values $Values -Percentile 95), 4)
+        minimum = [Math]::Round(($Values | Measure-Object -Minimum).Minimum, 4)
+        maximum = [Math]::Round(($Values | Measure-Object -Maximum).Maximum, 4)
+    }
+}
+
+function Get-WorkloadProfileSummary {
+    param([Parameter(Mandatory = $true)][object[]]$Intervals)
+
+    $measured = @($Intervals | Where-Object { $_.status -eq 'Measured' })
+    $metricNames = @(
+        'cpuLogicalProcessorPercent',
+        'cpuMachinePercent',
+        'readBytesPerSecond',
+        'writeBytesPerSecond',
+        'workingSetBytes',
+        'privateMemoryBytes',
+        'handleCount',
+        'threadCount',
+        'queryDurationMilliseconds'
+    )
+    $metrics = [ordered]@{}
+    foreach ($metric in $metricNames) {
+        $values = @($measured | ForEach-Object {
+            if ($null -ne $_.$metric) { [double]$_.$metric }
+        })
+        $metrics[$metric] = Get-WorkloadDistribution -Values $values
+    }
+
+    return [pscustomobject][ordered]@{
+        requestedIntervalCount = $Intervals.Count
+        measuredIntervalCount = $measured.Count
+        unmeasuredIntervalCount = $Intervals.Count - $measured.Count
+        maximumObservedProcessCount = if ($Intervals.Count -gt 0) {
+            [int]($Intervals | Measure-Object observedProcessCount -Maximum).Maximum
+        } else { 0 }
+        totalStartedProcessCount = [int](@($Intervals | Measure-Object startedProcessCount -Sum).Sum)
+        totalExitedProcessCount = [int](@($Intervals | Measure-Object exitedProcessCount -Sum).Sum)
+        metrics = [pscustomobject]$metrics
+        decision = if ($measured.Count -gt 0) {
+            'BaselineOnlyNoPerformanceClaim'
+        } else {
+            'NoStableTargetProcessObserved'
+        }
+    }
+}
+
+function Invoke-WorkloadProfile {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][string[]]$ProcessNames,
+        [ValidateRange(5, 3600)][int]$Seconds,
+        [ValidateRange(250, 5000)][int]$IntervalMilliseconds,
+        [ValidateRange(3, 25)][int]$CalibrationIterations
+    )
+
+    $targets = @(Resolve-WorkloadProcessNames -Names $ProcessNames)
+    Ensure-DataDirectories -Root $Root
+    $environment = Get-WindowsEnvironment
+    $logicalProcessors = [int]$environment.processor.logicalProcessors
+    if ($logicalProcessors -lt 1) {
+        throw 'A positive logical-processor count is required to normalize workload CPU use.'
+    }
+
+    $observer = Measure-WorkloadSnapshotOverhead `
+        -ProcessNames $targets `
+        -Iterations $CalibrationIterations
+    $intervals = New-Object System.Collections.ArrayList
+    $previous = Get-WorkloadProcessSnapshot -ProcessNames $targets
+    $runTimer = [Diagnostics.Stopwatch]::StartNew()
+    $sampleNumber = 1
+    try {
+        while ($runTimer.Elapsed.TotalSeconds -lt $Seconds) {
+            $nextDueMilliseconds = [Math]::Min(
+                ($sampleNumber * $IntervalMilliseconds),
+                ($Seconds * 1000)
+            )
+            $remaining = $nextDueMilliseconds - $runTimer.Elapsed.TotalMilliseconds
+            if ($remaining -gt 1) {
+                Start-Sleep -Milliseconds ([int][Math]::Floor($remaining))
+            }
+            $current = Get-WorkloadProcessSnapshot -ProcessNames $targets
+            [void]$intervals.Add((ConvertTo-WorkloadInterval `
+                -Previous $previous `
+                -Current $current `
+                -LogicalProcessorCount $logicalProcessors))
+            $previous = $current
+            $sampleNumber++
+        }
+    } finally {
+        $runTimer.Stop()
+    }
+
+    $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
+    $evidencePath = Join-Path (Join-Path $Root 'measurements') "$stamp-workload-profile.json"
+    $observerBudgetMilliseconds = [Math]::Round(
+        ($observer.p95Milliseconds * ($intervals.Count + 1)),
+        3
+    )
+    $profile = [pscustomobject][ordered]@{
+        schemaVersion = $script:SchemaVersion
+        experimentId = $script:ExperimentId
+        layer = 11
+        kind = 'workload-profile'
+        capturedUtc = [DateTime]::UtcNow.ToString('o')
+        observationOnly = $true
+        targets = @($targets)
+        requestedDurationSeconds = $Seconds
+        actualDurationSeconds = [Math]::Round($runTimer.Elapsed.TotalSeconds, 3)
+        requestedIntervalMilliseconds = $IntervalMilliseconds
+        environment = $environment
+        instrumentation = [pscustomobject][ordered]@{
+            source = 'System.Diagnostics.Process snapshots plus GetProcessIoCounters'
+            identity = 'ProcessId plus StartTime'
+            timer = 'System.Diagnostics.Stopwatch monotonic timestamps'
+            calibration = $observer
+            estimatedTotalObserverP95BudgetMilliseconds = $observerBudgetMilliseconds
+            estimatedObserverDutyCyclePercent = if ($runTimer.Elapsed.TotalMilliseconds -gt 0) {
+                [Math]::Round(
+                    (($observerBudgetMilliseconds / $runTimer.Elapsed.TotalMilliseconds) * 100),
+                    3
+                )
+            } else { $null }
+            qualification = 'Each filtered CIM snapshot has a measured observer cost. Raw interval and query durations are retained; metrics are not overhead-corrected.'
+        }
+        collectionScope = 'Exact executable names only. Command lines, executable paths, window titles, user content, and network endpoints are not collected. I/O metrics remain null when the process handle does not permit documented I/O-counter access.'
+        intervals = @($intervals)
+        summary = Get-WorkloadProfileSummary -Intervals @($intervals)
+        evidencePath = $evidencePath
+    }
+    $profile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
+    Write-StructuredEvent -Root $Root -Level Information -Event 'workload-profile-complete' -Data @{
+        evidencePath = $evidencePath
+        targets = @($targets)
+        measuredIntervalCount = $profile.summary.measuredIntervalCount
+        observationOnly = $true
+    }
+
+    Write-Host ''
+    Write-Host 'Layer 11 workload runtime profile (observation only)' -ForegroundColor Cyan
+    Write-Host "Targets: $($targets -join ', ')"
+    Write-Host "Measured intervals: $($profile.summary.measuredIntervalCount) / $($profile.summary.requestedIntervalCount)"
+    if ($profile.summary.measuredIntervalCount -gt 0) {
+        Write-Host "Machine CPU median (%): $($profile.summary.metrics.cpuMachinePercent.median)"
+        Write-Host "Read/write median (bytes/sec): $($profile.summary.metrics.readBytesPerSecond.median) / $($profile.summary.metrics.writeBytesPerSecond.median)"
+        Write-Host "Working set median (bytes): $($profile.summary.metrics.workingSetBytes.median)"
+    }
+    Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
+    Write-Host 'No process or Windows setting was changed and no performance-gain claim was made.' -ForegroundColor DarkYellow
+    return $profile
+}
+
 function Get-BaselineForEnhancement {
     param([string]$Root)
 
@@ -1750,6 +2177,7 @@ function Show-ZBookPerfMenu {
     Write-Host '5. Revert the most recent applied change'
     Write-Host '6. Status'
     Write-Host '7. Layer 10 shell profile (read-only)'
+    Write-Host '8. Layer 11 workload runtime profile (read-only)'
     Write-Host 'Q. Quit'
     return (Read-Host 'Choose an action')
 }
@@ -1784,6 +2212,7 @@ function Invoke-ZBookPerfMain {
     if ($Analyze) { $script:Action = 'Analyze' }
     elseif ($Watch) { $script:Action = 'Watch' }
     elseif ($ShellProfile) { $script:Action = 'ShellProfile' }
+    elseif ($WorkloadProfile) { $script:Action = 'WorkloadProfile' }
     elseif ($Enhance) { $script:Action = 'Enhance' }
     elseif ($Remeasure) { $script:Action = 'Remeasure' }
     elseif ($Revert) { $script:Action = 'Revert' }
@@ -1799,6 +2228,7 @@ function Invoke-ZBookPerfMain {
                 '5' { $selectedAction = 'Revert' }
                 '6' { $selectedAction = 'Status' }
                 '7' { $selectedAction = 'ShellProfile' }
+                '8' { $selectedAction = 'WorkloadProfile' }
                 'q' { return }
                 'Q' { return }
                 default { Write-Warning 'Unknown menu choice.'; continue }
@@ -1817,6 +2247,14 @@ function Invoke-ZBookPerfMain {
                     -WarmupRunCount $ShellWarmupRunCount `
                     -TimeoutMilliseconds $ShellTimeoutMilliseconds `
                     -ProbeCalibrationIterations $ShellProbeCalibrationIterations)
+            }
+            'WorkloadProfile' {
+                [void](Invoke-WorkloadProfile `
+                    -Root $DataRoot `
+                    -ProcessNames $WorkloadProcessName `
+                    -Seconds $DurationSeconds `
+                    -IntervalMilliseconds $WorkloadSampleIntervalMilliseconds `
+                    -CalibrationIterations $WorkloadCalibrationIterations)
             }
             'Enhance' {
                 $selectedCandidate = $EnhancementCandidate

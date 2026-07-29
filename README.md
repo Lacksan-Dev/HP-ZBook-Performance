@@ -39,6 +39,9 @@ Useful non-interactive examples:
 # Inventory Layer 10 controls and capture five Explorer readiness runs
 .\ZBookPerf.ps1 -Action ShellProfile -ShellRunCount 5
 
+# Profile one existing application workload for 30 seconds without changing it
+.\ZBookPerf.ps1 -Action WorkloadProfile -WorkloadProcessName msedge.exe -DurationSeconds 30
+
 # Show the exact proposed MMCSS change without applying it
 .\ZBookPerf.ps1 -Action Enhance -Candidate MmcssResponsiveness -LabTier2Confirmed -WhatIf
 
@@ -55,6 +58,8 @@ Useful non-interactive examples:
 Run `Analyze` before applying a candidate; ZBookPerf refuses an application without preserved baseline evidence. In the interactive menu, a machine-wide candidate asks one recovery confirmation instead of requiring a typed command-line flag. Selecting the explicitly labeled Fast Startup diagnostic option also records diagnostic intent; non-interactive runs still require `-Diagnostic`. Non-interactive machine-wide runs require `-LabTier2Confirmed`. Either route is an assertion that the machine is a disposable image or dedicated lab system with a tested snapshot/image recovery path. The script attempts a restore point, captures original state, applies one candidate, verifies it, and can restore it. Restore points are not a substitute for an external recovery image. Candidates marked as reboot-dependent remain experimental until the operator reboots, runs `Status` plus `Remeasure`, preserves the evidence, and verifies the setting manually.
 
 `ShellProfile` is observation-only. It reads animations, transparency, notification duration, the documented Widgets and Game DVR policy locations, related app-package presence, and WPR/WPA availability. It then opens a private benchmark folder, measures when the new Explorer window reports ready through the documented Shell automation model, and closes only that benchmark window. Full readiness-probe overhead, raw runs, medians, variability, timeouts, power state, and Battery Saver state are retained. This is a baseline capability, not a performance-gain claim.
+
+`WorkloadProfile` is also observation-only. It uses exact executable names, `System.Diagnostics.Process`, and the documented `GetProcessIoCounters` API to measure runtime CPU and I/O deltas by process ID plus start time, which prevents PID reuse from joining different processes. It retains working set, private memory, thread, handle, lifecycle, raw interval, access-error, and observer-cost data without collecting command lines, executable paths, window titles, user content, or network endpoints. It does not start, stop, suspend, reprioritize, or reconfigure the target application.
 
 ZBookPerf does **not** disable Defender, Memory Integrity, Windows Update, BitLocker, Secure Boot, Windows Search, SysMain, USB selective suspend, HP Wolf/Sure security, authentication, recovery, networking, or update services. It does not install drivers or firmware.
 
