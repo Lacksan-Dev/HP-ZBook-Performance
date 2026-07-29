@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "product": "Lacksan Controller",
   "profiles": [
-    {"id":"InventoryOnly","displayName":"Inventory only","description":"Read-only HP Windows 11 support and protected-application inventory.","providers":["system-inventory"]},
+    {"id":"InventoryOnly","displayName":"Inventory only","description":"Read-only Windows 11 support, OEM identity, reference-platform eligibility, and protected-application inventory.","providers":["system-inventory"]},
     {"id":"OneDriveDemandLaunch","displayName":"OneDrive demand launch","description":"Inventory the system and remove one exact current-user OneDrive /background Run registration with transaction rollback.","providers":["system-inventory","onedrive-background-run"]},
     {"id":"ClassicTeamsDemandLaunch","displayName":"Classic Teams demand launch","description":"Inventory the system and remove one exact classic Teams Squirrel Run registration with transaction rollback.","providers":["system-inventory","classic-teams-run"]},
     {"id":"LogiOptionsPlusDemandLaunch","displayName":"Logi Options+ demand launch","description":"Inventory the system and remove one exact Logi Options+ tray or background Run registration with transaction rollback.","providers":["system-inventory","logi-options-plus-run"]},

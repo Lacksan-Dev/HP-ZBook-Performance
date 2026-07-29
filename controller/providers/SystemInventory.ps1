@@ -36,17 +36,29 @@ function Get-SystemInventory {
     $os = Get-CimInstance Win32_OperatingSystem
     $computer = Get-CimInstance Win32_ComputerSystem
     $bios = Get-CimInstance Win32_BIOS
+    $processor = Get-CimInstance Win32_Processor | Select-Object -First 1
+    $isWindows11 = ([version]$os.Version).Major -ge 10 -and $os.Caption -match 'Windows 11'
+    $isHpReferencePlatform = [string]$computer.Manufacturer -match '^(HP|Hewlett-Packard)\b'
     [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         provider = 'system-inventory'
         capturedUtc = (Get-Date).ToUniversalTime().ToString('o')
-        supported = ([version]$os.Version).Major -ge 10 -and $os.Caption -match 'Windows 11' -and $computer.Manufacturer -match 'HP|Hewlett-Packard'
+        supported = $isWindows11
+        support = [ordered]@{
+            windows11 = $isWindows11
+            hpReferencePlatform = $isHpReferencePlatform
+            manufacturer = [string]$computer.Manufacturer
+            architecture = [string]$os.OSArchitecture
+        }
         system = [ordered]@{
             os = $os.Caption
+            version = $os.Version
             build = $os.BuildNumber
+            architecture = $os.OSArchitecture
             manufacturer = $computer.Manufacturer
             model = $computer.Model
             biosVersion = @($bios.SMBIOSBIOSVersion)[0]
+            processor = $processor.Name
         }
         protectedApplications = @(Get-ProtectedApplicationInventory)
         mutationCount = 0
@@ -58,7 +70,7 @@ function Write-ProviderLog([string]$Event,[string]$Result,[object]$Data) {
     if ([string]::IsNullOrWhiteSpace($LogPath)) { return }
     $record = [ordered]@{
         timestampUtc = (Get-Date).ToUniversalTime().ToString('o')
-        experiment = 'EXP-046'
+        experiment = 'EXP-056'
         provider = 'system-inventory'
         action = $Action
         event = $Event
@@ -70,14 +82,14 @@ function Write-ProviderLog([string]$Event,[string]$Result,[object]$Data) {
 
 try {
     $inventory = Get-SystemInventory
-    if (-not $inventory.supported) { throw 'System inventory provider supports HP systems running Windows 11 only.' }
+    if (-not $inventory.supported) { throw 'System inventory provider supports Windows 11 only.' }
     switch ($Action) {
-        'Check' { Write-ProviderLog 'support-detection' 'pass' $inventory.system; [pscustomobject]$inventory }
-        'Capture' { $inventory | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $StatePath -Encoding UTF8; Write-ProviderLog 'capture' 'pass' @{statePath=$StatePath}; [pscustomobject]$inventory }
-        'DryRun' { Write-ProviderLog 'dry-run' 'pass' @{mutationCount=0}; [pscustomobject]@{Provider='system-inventory';WouldChange=@();RebootRequired=$false} }
+        'Check' { Write-ProviderLog 'support-detection' 'pass' $inventory.support; [pscustomobject]$inventory }
+        'Capture' { $inventory | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $StatePath -Encoding UTF8; Write-ProviderLog 'capture' 'pass' @{statePath=$StatePath;mutationCount=0}; [pscustomobject]$inventory }
+        'DryRun' { Write-ProviderLog 'dry-run' 'pass' @{mutationCount=0}; [pscustomobject]@{Provider='system-inventory';WouldChange=@();MutationCount=0;RebootRequired=$false} }
         'Apply' { Write-ProviderLog 'apply' 'pass' @{mutationCount=0}; [pscustomobject]@{Provider='system-inventory';Applied=$true;MutationCount=0;RebootRequired=$false} }
-        'Verify' { Write-ProviderLog 'verify' 'pass' @{mutationCount=0}; $true }
-        'VerifyReboot' { Write-ProviderLog 'verify-reboot' 'pass' @{mutationCount=0}; $true }
+        'Verify' { Write-ProviderLog 'verify' 'pass' @{mutationCount=0;supported=$inventory.supported}; $inventory.supported }
+        'VerifyReboot' { Write-ProviderLog 'verify-reboot' 'pass' @{mutationCount=0;supported=$inventory.supported}; $inventory.supported }
         'Rollback' { Write-ProviderLog 'rollback' 'pass' @{mutationCount=0}; [pscustomobject]@{Provider='system-inventory';RolledBack=$true;MutationCount=0} }
     }
 } catch {
