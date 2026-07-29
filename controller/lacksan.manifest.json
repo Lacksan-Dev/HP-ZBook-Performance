@@ -19,6 +19,12 @@
       "displayName": "Classic Teams demand launch",
       "description": "Inventory the system and remove one exact classic Teams Squirrel Run registration with transaction rollback.",
       "providers": ["system-inventory", "classic-teams-run"]
+    },
+    {
+      "id": "LogiOptionsPlusDemandLaunch",
+      "displayName": "Logi Options+ demand launch",
+      "description": "Inventory the system and remove one exact Logi Options+ tray or background Run registration with transaction rollback.",
+      "providers": ["system-inventory", "logi-options-plus-run"]
     }
   ],
   "providers": [
@@ -46,6 +52,16 @@
       "id": "classic-teams-run",
       "displayName": "Classic Teams Squirrel Run registration",
       "script": "providers/ClassicTeamsRun.ps1",
+      "mode": "Reversible",
+      "requires": ["system-inventory"],
+      "conflicts": [],
+      "rebootRequired": false,
+      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
+    },
+    {
+      "id": "logi-options-plus-run",
+      "displayName": "Logi Options+ tray Run registration",
+      "script": "providers/LogiOptionsPlusRun.ps1",
       "mode": "Reversible",
       "requires": ["system-inventory"],
       "conflicts": [],
