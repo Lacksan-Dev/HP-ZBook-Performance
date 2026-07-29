@@ -87,7 +87,7 @@ Describe 'EXP-047 ZBookPerf' {
             $process.WaitForExit()
 
             $process.ExitCode | Should -Be 0
-            $standardOutput | Should -Match 'ZBookPerf - EXP-047'
+            $standardOutput | Should -Match 'ZBookPerf .* - EXP-047'
             $standardError | Should -Not -Match 'ValidateSetFailure|variable Candidate'
         }
 
@@ -111,7 +111,7 @@ Describe 'EXP-047 ZBookPerf' {
             $process.WaitForExit()
 
             $process.ExitCode | Should -Not -Be 0
-            $standardOutput | Should -Match 'Enhance \(one candidate only\)'
+            $standardOutput | Should -Match 'Apply one reversible experiment \(Enhance\)'
             $standardError | Should -Match 'Unknown candidate selection.'
             $standardError | Should -Not -Match 'variable.*PSCmdlet'
         }
@@ -172,6 +172,111 @@ Describe 'EXP-047 ZBookPerf' {
             {
                 Invoke-Enhancement -Name FastStartupDiagnostic -Root $TestDrive -Tier2Confirmed -WhatIf
             } | Should -Throw '*requires -Diagnostic in non-interactive runs*'
+        }
+    }
+
+    Context 'capability-aware console guidance' {
+        It 'normalizes native stderr without exposing the PowerShell RemoteException wrapper' {
+            $result = Invoke-NativeCommand -FilePath $env:ComSpec -Arguments @(
+                '/d',
+                '/c',
+                'echo simulated-native-stderr 1>&2'
+            )
+
+            $result.Output | Should -Match 'simulated-native-stderr'
+            $result.Output | Should -Not -Match 'RemoteException|NativeCommandError'
+        }
+
+        It 'preserves an existing WPR recording instead of attempting to replace it' {
+            Mock Test-IsAdministrator { return $true }
+            Mock Get-Command {
+                [pscustomobject]@{ Name = 'wpr.exe'; Source = 'C:\Windows\System32\wpr.exe' }
+            } -ParameterFilter { $Name -eq 'wpr.exe' }
+            Mock Get-WprRecordingState {
+                [pscustomobject]@{ available = $true; state = 'recording'; raw = 'WPR recording is in progress' }
+            }
+            Mock Invoke-NativeCommand { throw 'ZBookPerf must not start WPR while another recording is active.' }
+
+            $trace = Start-WprCapture -Root $TestDrive -Stamp 'busy-test'
+
+            $trace.status | Should -Be 'busy'
+            $trace.existingRecordingPreserved | Should -BeTrue
+            $trace.reason | Should -Match 'wpr -stop C:\\Temp\\existing-trace\.etl'
+            $trace.reason | Should -Match 'wpr -cancel'
+            Should -Invoke Invoke-NativeCommand -Times 0
+        }
+
+        It 'turns a WPR start race into actionable busy guidance' {
+            Mock Test-IsAdministrator { return $true }
+            Mock Get-Command {
+                [pscustomobject]@{ Name = 'wpr.exe'; Source = 'C:\Windows\System32\wpr.exe' }
+            } -ParameterFilter { $Name -eq 'wpr.exe' }
+            Mock Get-WprRecordingState {
+                [pscustomobject]@{ available = $true; state = 'idle'; raw = 'WPR is not recording' }
+            }
+            Mock Invoke-NativeCommand {
+                [pscustomobject]@{
+                    ExitCode = 1
+                    Output = "The profiles are already running.`r`nError code: 0xc5583001"
+                }
+            }
+
+            $trace = Start-WprCapture -Root $TestDrive -Stamp 'race-test'
+
+            $trace.status | Should -Be 'busy'
+            $trace.existingRecordingPreserved | Should -BeTrue
+            $trace.reason | Should -Not -Match 'RemoteException'
+        }
+
+        It 'detects when the legacy High performance candidate is unavailable' {
+            Mock Invoke-NativeCommand {
+                if ($Arguments[0] -eq '/list') {
+                    return [pscustomobject]@{
+                        ExitCode = 0
+                        Output = 'Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e (Balanced) *'
+                    }
+                }
+                return [pscustomobject]@{
+                    ExitCode = 0
+                    Output = 'Standby (S0 Low Power Idle) Network Connected'
+                }
+            }
+
+            $support = Get-PowerCandidateSupport
+
+            $support.supported | Should -BeFalse
+            $support.modernStandbyDetected | Should -BeTrue
+            $support.reason | Should -Match 'Balanced plan and Windows Power mode'
+        }
+
+        It 'returns to the menu without a Tier 2 prompt when PowerAc is unsupported' {
+            Mock Get-PowerCandidateSupport {
+                [pscustomobject]@{
+                    supported = $false
+                    modernStandbyDetected = $true
+                    reason = 'High performance is unavailable.'
+                }
+            }
+            Mock Read-Host { return '1' }
+            Mock Write-Host { }
+
+            $selected = Select-CandidateInteractive
+
+            $selected | Should -BeNullOrEmpty
+        }
+
+        It 'rejects command-line PowerAc before baseline or mutation work when unsupported' {
+            Mock Get-PowerCandidateSupport {
+                [pscustomobject]@{
+                    supported = $false
+                    modernStandbyDetected = $true
+                    reason = 'High performance is unavailable.'
+                }
+            }
+
+            {
+                Invoke-Enhancement -Name PowerAc -Root $TestDrive -Tier2Confirmed -Confirm:$false
+            } | Should -Throw '*PowerAc is unsupported*No setting was changed*'
         }
     }
 
