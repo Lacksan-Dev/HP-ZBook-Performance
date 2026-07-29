@@ -62,10 +62,11 @@ function Get-Support {
     $products = Get-LogiOptionsPlusProduct
     $installerExists = $OfflineInstaller -and (Test-Path -LiteralPath $OfflineInstaller -PathType Leaf)
     $installerHash = if ($installerExists) { (Get-FileHash -LiteralPath $OfflineInstaller -Algorithm SHA256).Hash } else { $null }
+    $managed = Test-EnterpriseManaged
     [pscustomobject]@{
-        Supported = ($os.Caption -match 'Windows 11' -and $products.Count -eq 1 -and $installerExists -and -not (Test-EnterpriseManaged))
+        Supported = ($os.Caption -match 'Windows 11' -and $products.Count -eq 1 -and $installerExists -and -not $managed)
         Elevated = Test-Administrator
-        EnterpriseManaged = Test-EnterpriseManaged
+        EnterpriseManaged = $managed
         OS = $os.Caption
         Build = $os.BuildNumber
         ProductCount = $products.Count
@@ -166,8 +167,13 @@ try {
             $preview
         }
         'Apply' {
+            if (Test-Removed) {
+                if (-not (Test-Path -LiteralPath $StatePath)) { throw 'Product is absent and no captured state exists to prove prior application.' }
+                [void](Read-State)
+                Write-Event 'apply' 'already-applied' $null
+                break
+            }
             Assert-Supported $support
-            if (Test-Removed) { Write-Event 'apply' 'already-applied' $null; break }
             $state = if (Test-Path -LiteralPath $StatePath) { Read-State } else { Save-State }
             if ((Get-FileHash -LiteralPath $state.installer.path -Algorithm SHA256).Hash -ne $state.installer.sha256) { throw 'Rollback installer hash drift detected.' }
             $invocation = Get-UninstallInvocation $support.Product
