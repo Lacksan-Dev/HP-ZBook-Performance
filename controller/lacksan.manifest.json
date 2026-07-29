@@ -43,6 +43,12 @@
       "displayName": "Logitech G Hub demand launch",
       "description": "Inventory the system and remove one exact Logitech G Hub tray or background Run registration with transaction rollback.",
       "providers": ["system-inventory", "logitech-ghub-run"]
+    },
+    {
+      "id": "EdgeTrueDemandLaunch",
+      "displayName": "Edge true demand launch",
+      "description": "Inventory the system and disable Edge Startup Boost through one recommended policy with transaction rollback.",
+      "providers": ["system-inventory", "edge-startup-boost-policy"]
     }
   ],
   "providers": [
@@ -110,6 +116,16 @@
       "id": "logitech-ghub-run",
       "displayName": "Logitech G Hub tray Run registration",
       "script": "providers/LogitechGHubRun.ps1",
+      "mode": "Reversible",
+      "requires": ["system-inventory"],
+      "conflicts": [],
+      "rebootRequired": false,
+      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
+    },
+    {
+      "id": "edge-startup-boost-policy",
+      "displayName": "Edge Startup Boost recommended policy",
+      "script": "providers/EdgeStartupBoostPolicy.ps1",
       "mode": "Reversible",
       "requires": ["system-inventory"],
       "conflicts": [],
