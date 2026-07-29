@@ -31,6 +31,12 @@
       "displayName": "Logi Bolt demand launch",
       "description": "Inventory the system and remove one exact Logi Bolt tray or background Run registration with transaction rollback.",
       "providers": ["system-inventory", "logi-bolt-run"]
+    },
+    {
+      "id": "LogiTuneDemandLaunch",
+      "displayName": "Logi Tune demand launch",
+      "description": "Inventory the system and remove one exact Logi Tune tray or background Run registration with transaction rollback.",
+      "providers": ["system-inventory", "logi-tune-run"]
     }
   ],
   "providers": [
@@ -78,6 +84,16 @@
       "id": "logi-bolt-run",
       "displayName": "Logi Bolt tray Run registration",
       "script": "providers/LogiBoltRun.ps1",
+      "mode": "Reversible",
+      "requires": ["system-inventory"],
+      "conflicts": [],
+      "rebootRequired": false,
+      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
+    },
+    {
+      "id": "logi-tune-run",
+      "displayName": "Logi Tune tray Run registration",
+      "script": "providers/LogiTuneRun.ps1",
       "mode": "Reversible",
       "requires": ["system-inventory"],
       "conflicts": [],
