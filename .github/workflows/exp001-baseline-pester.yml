@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'experiments/EXP-001/baseline/**'
+      - 'ZBookPerf.ps1'
+      - 'tests/EXP-047.ZBookPerf.Tests.ps1'
       - '.github/workflows/exp001-baseline-pester.yml'
   workflow_dispatch:
 
@@ -25,7 +27,10 @@ jobs:
         shell: pwsh
         run: |
           $config = New-PesterConfiguration
-          $config.Run.Path = 'experiments/EXP-001/baseline/tests'
+          $config.Run.Path = @(
+            'experiments/EXP-001/baseline/tests',
+            'tests/EXP-047.ZBookPerf.Tests.ps1'
+          )
           $config.Run.Exit = $true
           $config.Output.Verbosity = 'Detailed'
           $config.TestResult.Enabled = $true

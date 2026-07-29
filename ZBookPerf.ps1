@@ -17,11 +17,12 @@
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Menu', 'Analyze', 'Watch', 'Enhance', 'Remeasure', 'Revert', 'Status')]
+    [ValidateSet('Menu', 'Analyze', 'Watch', 'ShellProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
     [string]$Action = 'Menu',
 
     [switch]$Analyze,
     [switch]$Watch,
+    [switch]$ShellProfile,
     [switch]$Enhance,
     [switch]$Remeasure,
     [switch]$Revert,
@@ -41,6 +42,18 @@ param(
 
     [ValidateRange(0, 100000)]
     [int]$WatchMaxSamples = 0,
+
+    [ValidateRange(1, 25)]
+    [int]$ShellRunCount = 5,
+
+    [ValidateRange(0, 5)]
+    [int]$ShellWarmupRunCount = 1,
+
+    [ValidateRange(1000, 30000)]
+    [int]$ShellTimeoutMilliseconds = 10000,
+
+    [ValidateRange(5, 100)]
+    [int]$ShellProbeCalibrationIterations = 25,
 
     [string]$DataRoot = 'C:\ProgramData\ZBookPerf',
 
@@ -346,6 +359,7 @@ function Get-WindowsEnvironment {
             activeScheme = $activeScheme.Output.Trim()
             batteryStatus = if ($battery) { $battery.BatteryStatus } else { $null }
             estimatedChargeRemaining = if ($battery) { $battery.EstimatedChargeRemaining } else { $null }
+            systemPowerStatus = Get-SystemPowerStatusState
         }
         thermalZoneCelsius = $thermal
         physicalDisks = if (Get-Command 'Get-PhysicalDisk' -ErrorAction SilentlyContinue) {
@@ -886,6 +900,533 @@ function Set-VisualEffectsState {
     }
 }
 
+function Initialize-Layer10NativeMethods {
+    if ('ZBookPerf.Layer10NativeMethods' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace ZBookPerf {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SystemPowerStatus {
+        public byte ACLineStatus;
+        public byte BatteryFlag;
+        public byte BatteryLifePercent;
+        public byte SystemStatusFlag;
+        public UInt32 BatteryLifeTime;
+        public UInt32 BatteryFullLifeTime;
+    }
+
+    public static class Layer10NativeMethods {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool GetSystemPowerStatus(out SystemPowerStatus status);
+    }
+}
+'@
+}
+
+function Get-SystemPowerStatusState {
+    Initialize-Layer10NativeMethods
+    $status = New-Object ZBookPerf.SystemPowerStatus
+    if (-not [ZBookPerf.Layer10NativeMethods]::GetSystemPowerStatus([ref]$status)) {
+        return [pscustomobject][ordered]@{
+            available = $false
+            error = "GetSystemPowerStatus failed with Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())."
+        }
+    }
+
+    $acLineStatus = switch ([int]$status.ACLineStatus) {
+        0 { 'Offline' }
+        1 { 'Online' }
+        default { 'Unknown' }
+    }
+    return [pscustomobject][ordered]@{
+        available = $true
+        acLineStatus = $acLineStatus
+        batteryFlag = [int]$status.BatteryFlag
+        batteryLifePercent = if ($status.BatteryLifePercent -eq 255) { $null } else { [int]$status.BatteryLifePercent }
+        batterySaverOn = ([int]$status.SystemStatusFlag -eq 1)
+    }
+}
+
+function Get-UiSettingsState {
+    try {
+        $null = [Windows.UI.ViewManagement.UISettings, Windows.UI.ViewManagement, ContentType = WindowsRuntime]
+        $settings = New-Object Windows.UI.ViewManagement.UISettings
+        return [pscustomobject][ordered]@{
+            available = $true
+            source = 'Windows.UI.ViewManagement.UISettings'
+            animationsEnabled = [bool]$settings.AnimationsEnabled
+            transparencyEffectsEnabled = [bool]$settings.AdvancedEffectsEnabled
+            messageDurationSeconds = [uint32]$settings.MessageDuration
+        }
+    } catch {
+        return [pscustomobject][ordered]@{
+            available = $false
+            source = 'Windows.UI.ViewManagement.UISettings'
+            errorType = $_.Exception.GetType().FullName
+        }
+    }
+}
+
+function Get-ManagementJoinContext {
+    $context = [ordered]@{
+        dsregcmdAvailable = $false
+        azureAdJoined = $null
+        domainJoined = $null
+        workplaceJoined = $null
+        mdmEnrollmentUrlPresent = $null
+    }
+    if (-not (Get-Command 'dsregcmd.exe' -ErrorAction SilentlyContinue)) {
+        return [pscustomobject]$context
+    }
+
+    $context.dsregcmdAvailable = $true
+    $result = Invoke-NativeCommand -FilePath 'dsregcmd.exe' -Arguments @('/status') -AllowFailure
+    if ($result.ExitCode -ne 0) { return [pscustomobject]$context }
+
+    foreach ($mapping in @(
+        @{ Name = 'azureAdJoined'; Pattern = '(?m)^\s*AzureAdJoined\s*:\s*(YES|NO)\s*$' },
+        @{ Name = 'domainJoined'; Pattern = '(?m)^\s*DomainJoined\s*:\s*(YES|NO)\s*$' },
+        @{ Name = 'workplaceJoined'; Pattern = '(?m)^\s*WorkplaceJoined\s*:\s*(YES|NO)\s*$' }
+    )) {
+        $match = [regex]::Match($result.Output, $mapping.Pattern)
+        if ($match.Success) { $context[$mapping.Name] = ($match.Groups[1].Value -eq 'YES') }
+    }
+    $mdmMatch = [regex]::Match($result.Output, '(?m)^\s*MdmUrl\s*:\s*(.*?)\s*$')
+    if ($mdmMatch.Success) {
+        $context.mdmEnrollmentUrlPresent = -not [string]::IsNullOrWhiteSpace($mdmMatch.Groups[1].Value)
+    }
+    return [pscustomobject]$context
+}
+
+function Get-RsopPolicyOrigin {
+    param(
+        [Parameter(Mandatory = $true)][string]$RegistryKey,
+        [Parameter(Mandatory = $true)][string]$ValueName
+    )
+
+    try {
+        $settings = @(Get-CimInstance -Namespace 'root/rsop/computer' -ClassName RSOP_RegistryPolicySetting -ErrorAction Stop)
+        $normalizedKey = $RegistryKey.TrimStart('\')
+        $matches = @($settings | Where-Object {
+            ([string]$_.KeyName).TrimStart('\') -ieq $normalizedKey -and
+            [string]$_.ValueName -ieq $ValueName
+        })
+        return [pscustomobject][ordered]@{
+            available = $true
+            groupPolicyMatchCount = $matches.Count
+        }
+    } catch {
+        return [pscustomobject][ordered]@{
+            available = $false
+            groupPolicyMatchCount = 0
+            errorType = $_.Exception.GetType().FullName
+        }
+    }
+}
+
+function Get-DocumentedPolicyState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$RegistryPath,
+        [Parameter(Mandatory = $true)][string]$RegistryKey,
+        [Parameter(Mandatory = $true)][string]$ValueName,
+        [Parameter(Mandatory = $true)][int]$DocumentedDefault,
+        [Parameter(Mandatory = $true)][string]$PolicyCsp
+    )
+
+    $state = Get-RegistryValueState -Path $RegistryPath -Name $ValueName
+    $rsop = Get-RsopPolicyOrigin -RegistryKey $RegistryKey -ValueName $ValueName
+    $origin = if (-not $state.Exists) {
+        'NotConfiguredAtDocumentedPolicyPath'
+    } elseif ($rsop.available -and $rsop.groupPolicyMatchCount -gt 0) {
+        'GroupPolicy'
+    } else {
+        'ConfiguredAtDocumentedPolicyPath;DeliveryAuthorityUnresolved'
+    }
+
+    return [pscustomobject][ordered]@{
+        name = $Name
+        scope = 'Device'
+        policyCsp = $PolicyCsp
+        documentedDefault = $DocumentedDefault
+        configured = [bool]$state.Exists
+        configuredValue = if ($state.Exists) { $state.Value } else { $null }
+        registryKind = if ($state.Exists) { $state.Kind } else { $null }
+        managementOrigin = $origin
+        deliveryAuthorityResolved = ($origin -in @('GroupPolicy', 'NotConfiguredAtDocumentedPolicyPath'))
+        rsopAvailable = [bool]$rsop.available
+        mutationEligible = $false
+        note = 'Inventory only. A configured policy is never changed by ShellProfile.'
+    }
+}
+
+function Get-AppPackageInventory {
+    param([Parameter(Mandatory = $true)][string[]]$Names)
+
+    if (-not (Get-Command 'Get-AppxPackage' -ErrorAction SilentlyContinue)) {
+        return [pscustomobject][ordered]@{
+            available = $false
+            packages = @()
+        }
+    }
+
+    $packages = @()
+    foreach ($name in $Names) {
+        try {
+            $items = @(Get-AppxPackage -Name $name -ErrorAction Stop)
+            if ($items.Count -eq 0) {
+                $packages += [pscustomobject][ordered]@{ name = $name; installed = $false; version = $null; status = $null }
+            } else {
+                foreach ($item in $items) {
+                    $packages += [pscustomobject][ordered]@{
+                        name = $name
+                        installed = $true
+                        version = [string]$item.Version
+                        status = [string]$item.Status
+                    }
+                }
+            }
+        } catch {
+            $packages += [pscustomobject][ordered]@{
+                name = $name
+                installed = $null
+                version = $null
+                status = 'QueryFailed'
+                errorType = $_.Exception.GetType().FullName
+            }
+        }
+    }
+    return [pscustomobject][ordered]@{
+        available = $true
+        packages = @($packages)
+    }
+}
+
+function Get-PerformanceToolInventory {
+    $tools = @()
+    foreach ($name in @('wpr.exe', 'wpa.exe', 'wpaexporter.exe')) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue
+        $version = $null
+        if ($command -and $command.Source -and (Test-Path -LiteralPath $command.Source)) {
+            $version = (Get-Item -LiteralPath $command.Source).VersionInfo.ProductVersion
+        }
+        $tools += [pscustomobject][ordered]@{
+            name = $name
+            available = [bool]$command
+            productVersion = $version
+        }
+    }
+    return @($tools)
+}
+
+function Get-ShellLayerInventory {
+    $visualEffects = $null
+    try {
+        $visualEffects = Get-VisualEffectsState
+    } catch {
+        $visualEffects = [pscustomobject][ordered]@{
+            available = $false
+            errorType = $_.Exception.GetType().FullName
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        capturedUtc = [DateTime]::UtcNow.ToString('o')
+        uiSettings = Get-UiSettingsState
+        visualEffects = $visualEffects
+        managementContext = Get-ManagementJoinContext
+        policies = @(
+            Get-DocumentedPolicyState `
+                -Name 'Widgets' `
+                -RegistryPath 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh' `
+                -RegistryKey 'SOFTWARE\Policies\Microsoft\Dsh' `
+                -ValueName 'AllowNewsAndInterests' `
+                -DocumentedDefault 1 `
+                -PolicyCsp './Device/Vendor/MSFT/Policy/Config/NewsAndInterests/AllowNewsAndInterests'
+            Get-DocumentedPolicyState `
+                -Name 'WindowsGameRecordingAndBroadcasting' `
+                -RegistryPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR' `
+                -RegistryKey 'SOFTWARE\Policies\Microsoft\Windows\GameDVR' `
+                -ValueName 'AllowGameDVR' `
+                -DocumentedDefault 1 `
+                -PolicyCsp './Device/Vendor/MSFT/Policy/Config/ApplicationManagement/AllowGameDVR'
+        )
+        packages = Get-AppPackageInventory -Names @('Microsoft.XboxGamingOverlay', 'MicrosoftWindows.Client.WebExperience')
+        performanceTools = Get-PerformanceToolInventory
+    }
+}
+
+function New-ShellApplication {
+    return (New-Object -ComObject Shell.Application)
+}
+
+function Get-ShellWindowHandleSnapshot {
+    param([Parameter(Mandatory = $true)][object]$ShellApplication)
+
+    $items = @()
+    $windows = $ShellApplication.Windows()
+    for ($index = 0; $index -lt [int]$windows.Count; $index++) {
+        $window = $null
+        try {
+            $window = $windows.Item($index)
+            if ($null -eq $window) { continue }
+            $items += [pscustomobject][ordered]@{
+                hwnd = [int64]$window.HWND
+                busy = [bool]$window.Busy
+                readyState = [int]$window.ReadyState
+                window = $window
+            }
+        } catch {
+            continue
+        }
+    }
+    return @($items)
+}
+
+function Get-NewReadyShellWindow {
+    param(
+        [Parameter(Mandatory = $true)][object]$ShellApplication,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][int64[]]$ExistingHandles,
+        [Parameter(Mandatory = $true)][string]$TargetPath
+    )
+
+    $normalizedTarget = [IO.Path]::GetFullPath($TargetPath).TrimEnd('\')
+    $snapshot = @(Get-ShellWindowHandleSnapshot -ShellApplication $ShellApplication)
+    return @($snapshot | Where-Object {
+        if ($_.hwnd -in $ExistingHandles -or $_.busy -or $_.readyState -ne 4) { return $false }
+        try {
+            $windowPath = [Uri]::UnescapeDataString(([Uri]$_.window.LocationURL).LocalPath)
+            return ([IO.Path]::GetFullPath($windowPath).TrimEnd('\') -ieq $normalizedTarget)
+        } catch {
+            return $false
+        }
+    } | Select-Object -First 1)
+}
+
+function Get-Percentile {
+    param(
+        [Parameter(Mandatory = $true)][double[]]$Values,
+        [ValidateRange(0, 100)][double]$Percentile
+    )
+
+    $items = @($Values | Sort-Object)
+    if ($items.Count -eq 0) { return 0.0 }
+    $index = [int][Math]::Ceiling(($Percentile / 100) * $items.Count) - 1
+    $index = [Math]::Max(0, [Math]::Min($index, $items.Count - 1))
+    return [double]$items[$index]
+}
+
+function Measure-ShellProbeOverhead {
+    param(
+        [Parameter(Mandatory = $true)][object]$ShellApplication,
+        [Parameter(Mandatory = $true)][string]$TargetPath,
+        [ValidateRange(5, 100)][int]$Iterations
+    )
+
+    # Warm the complete readiness probe before timing so one-time COM
+    # activation does not inflate every run's observer-cost estimate.
+    [void](Get-NewReadyShellWindow `
+        -ShellApplication $ShellApplication `
+        -ExistingHandles @() `
+        -TargetPath $TargetPath)
+    $samples = @()
+    for ($index = 0; $index -lt $Iterations; $index++) {
+        $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+        [void](Get-NewReadyShellWindow `
+            -ShellApplication $ShellApplication `
+            -ExistingHandles @() `
+            -TargetPath $TargetPath)
+        $stopwatch.Stop()
+        $samples += $stopwatch.Elapsed.TotalMilliseconds
+    }
+    return [pscustomobject][ordered]@{
+        iterations = $Iterations
+        medianMilliseconds = [Math]::Round((Get-Median -Values $samples), 3)
+        p95Milliseconds = [Math]::Round((Get-Percentile -Values $samples -Percentile 95), 3)
+        samplesMilliseconds = @($samples | ForEach-Object { [Math]::Round($_, 3) })
+    }
+}
+
+function Close-NewShellWindows {
+    param(
+        [Parameter(Mandatory = $true)][object]$ShellApplication,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][int64[]]$ExistingHandles,
+        [Parameter(Mandatory = $true)][string]$TargetPath
+    )
+
+    $normalizedTarget = [IO.Path]::GetFullPath($TargetPath).TrimEnd('\')
+    foreach ($item in @(Get-ShellWindowHandleSnapshot -ShellApplication $ShellApplication)) {
+        if ($item.hwnd -in $ExistingHandles) { continue }
+        try {
+            $windowPath = [Uri]::UnescapeDataString(([Uri]$item.window.LocationURL).LocalPath)
+            if ([IO.Path]::GetFullPath($windowPath).TrimEnd('\') -ieq $normalizedTarget) {
+                $item.window.Quit()
+            }
+        } catch { }
+    }
+}
+
+function Invoke-ExplorerReadinessRun {
+    param(
+        [Parameter(Mandatory = $true)][object]$ShellApplication,
+        [ValidateRange(1000, 30000)][int]$TimeoutMilliseconds,
+        [Parameter(Mandatory = $true)][double]$ProbeP95Milliseconds,
+        [Parameter(Mandatory = $true)][string]$TargetPath,
+        [int]$RunNumber,
+        [switch]$Warmup
+    )
+
+    $before = @(Get-ShellWindowHandleSnapshot -ShellApplication $ShellApplication)
+    $beforeHandles = @($before | ForEach-Object { [int64]$_.hwnd })
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $probeCount = 0
+    $status = 'TimedOut'
+    try {
+        $ShellApplication.Explore($TargetPath)
+        while ($stopwatch.Elapsed.TotalMilliseconds -lt $TimeoutMilliseconds) {
+            $probeCount++
+            $ready = @(Get-NewReadyShellWindow `
+                -ShellApplication $ShellApplication `
+                -ExistingHandles $beforeHandles `
+                -TargetPath $TargetPath)
+            if ($ready.Count -gt 0) {
+                $status = 'Ready'
+                break
+            }
+            Start-Sleep -Milliseconds 25
+        }
+    } catch {
+        $status = 'LaunchFailed'
+    } finally {
+        $stopwatch.Stop()
+        Close-NewShellWindows `
+            -ShellApplication $ShellApplication `
+            -ExistingHandles $beforeHandles `
+            -TargetPath $TargetPath
+    }
+
+    $raw = [Math]::Round($stopwatch.Elapsed.TotalMilliseconds, 3)
+    $overheadBound = [Math]::Round(($probeCount * $ProbeP95Milliseconds), 3)
+    return [pscustomobject][ordered]@{
+        run = $RunNumber
+        warmup = [bool]$Warmup
+        status = $status
+        rawMilliseconds = $raw
+        probeCount = $probeCount
+        estimatedProbeOverheadP95BudgetMilliseconds = $overheadBound
+        readinessMinusEstimatedObserverBudgetMilliseconds = [Math]::Round([Math]::Max(0, $raw - $overheadBound), 3)
+    }
+}
+
+function Get-ShellReadinessSummary {
+    param([Parameter(Mandatory = $true)][object[]]$Runs)
+
+    $measured = @($Runs | Where-Object { -not $_.warmup })
+    $successful = @($measured | Where-Object { $_.status -eq 'Ready' })
+    $values = @($successful | ForEach-Object { [double]$_.rawMilliseconds })
+    $median = if ($values.Count -gt 0) { Get-Median -Values $values } else { 0.0 }
+    $deviations = @($values | ForEach-Object { [Math]::Abs($_ - $median) })
+    return [pscustomobject][ordered]@{
+        requestedRunCount = $measured.Count
+        successfulRunCount = $successful.Count
+        failedRunCount = $measured.Count - $successful.Count
+        medianMilliseconds = [Math]::Round($median, 3)
+        medianAbsoluteDeviationMilliseconds = if ($deviations.Count -gt 0) {
+            [Math]::Round((Get-Median -Values $deviations), 3)
+        } else { 0.0 }
+        minimumMilliseconds = if ($values.Count -gt 0) { [Math]::Round(($values | Measure-Object -Minimum).Minimum, 3) } else { $null }
+        maximumMilliseconds = if ($values.Count -gt 0) { [Math]::Round(($values | Measure-Object -Maximum).Maximum, 3) } else { $null }
+        decision = 'BaselineOnlyNoPerformanceClaim'
+    }
+}
+
+function Invoke-ShellProfile {
+    param(
+        [string]$Root,
+        [ValidateRange(1, 25)][int]$RunCount,
+        [ValidateRange(0, 5)][int]$WarmupRunCount,
+        [ValidateRange(1000, 30000)][int]$TimeoutMilliseconds,
+        [ValidateRange(5, 100)][int]$ProbeCalibrationIterations
+    )
+
+    if (-not [Environment]::UserInteractive) {
+        throw 'ShellProfile requires an interactive Windows user session. No setting was changed.'
+    }
+    if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) {
+        throw 'ShellProfile requires the Windows Explorer shell to be running. No setting was changed.'
+    }
+
+    Ensure-DataDirectories -Root $Root
+    $benchmarkTarget = Join-Path $Root 'shell-profile-target'
+    if (-not (Test-Path -LiteralPath $benchmarkTarget)) {
+        New-Item -ItemType Directory -Path $benchmarkTarget -Force | Out-Null
+    }
+    $shellApplication = New-ShellApplication
+    $probe = Measure-ShellProbeOverhead `
+        -ShellApplication $shellApplication `
+        -TargetPath $benchmarkTarget `
+        -Iterations $ProbeCalibrationIterations
+    $runs = @()
+    $total = $WarmupRunCount + $RunCount
+    for ($index = 1; $index -le $total; $index++) {
+        $isWarmup = $index -le $WarmupRunCount
+        $runNumber = if ($isWarmup) { $index } else { $index - $WarmupRunCount }
+        $runs += Invoke-ExplorerReadinessRun `
+            -ShellApplication $shellApplication `
+            -TimeoutMilliseconds $TimeoutMilliseconds `
+            -ProbeP95Milliseconds $probe.p95Milliseconds `
+            -TargetPath $benchmarkTarget `
+            -RunNumber $runNumber `
+            -Warmup:$isWarmup
+        Start-Sleep -Milliseconds 250
+    }
+
+    $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
+    $evidencePath = Join-Path (Join-Path $Root 'measurements') "$stamp-shell-profile.json"
+    $profile = [pscustomobject][ordered]@{
+        schemaVersion = $script:SchemaVersion
+        experimentId = $script:ExperimentId
+        layer = 10
+        kind = 'shell-profile'
+        capturedUtc = [DateTime]::UtcNow.ToString('o')
+        observationOnly = $true
+        environment = Get-WindowsEnvironment
+        inventory = Get-ShellLayerInventory
+        benchmark = [pscustomobject][ordered]@{
+            workflow = 'Shell.Explore to the private benchmark folder, then wait for its new IShellWindows item to report Busy=false and ReadyState=Complete.'
+            reset = 'Close only a new window whose LocationURL matches the private benchmark folder.'
+            timeoutMilliseconds = $TimeoutMilliseconds
+            pollIntervalMilliseconds = 25
+            warmupRunCount = $WarmupRunCount
+            probeOverhead = $probe
+            runs = @($runs)
+            summary = Get-ShellReadinessSummary -Runs @($runs)
+            qualification = 'The complete readiness-probe cost is measured before the runs. Raw duration and an estimated p95-per-probe observer budget are retained; results are not overhead-corrected and no gain is inferred from this baseline.'
+        }
+        evidencePath = $evidencePath
+    }
+    $profile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
+    Write-StructuredEvent -Root $Root -Level Information -Event 'shell-profile-complete' -Data @{
+        evidencePath = $evidencePath
+        runCount = $RunCount
+        successfulRunCount = $profile.benchmark.summary.successfulRunCount
+        observationOnly = $true
+    }
+
+    Write-Host ''
+    Write-Host 'Layer 10 shell profile (observation only)' -ForegroundColor Cyan
+    Write-Host "Animations enabled: $($profile.inventory.uiSettings.animationsEnabled)"
+    Write-Host "Transparency effects enabled: $($profile.inventory.uiSettings.transparencyEffectsEnabled)"
+    Write-Host "Notification duration (seconds): $($profile.inventory.uiSettings.messageDurationSeconds)"
+    Write-Host "Explorer readiness median (ms): $($profile.benchmark.summary.medianMilliseconds)"
+    Write-Host "Median absolute deviation (ms): $($profile.benchmark.summary.medianAbsoluteDeviationMilliseconds)"
+    Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
+    Write-Host 'No Windows setting was changed and no performance-gain claim was made.' -ForegroundColor DarkYellow
+    return $profile
+}
+
 function Get-BaselineForEnhancement {
     param([string]$Root)
 
@@ -1208,6 +1749,7 @@ function Show-ZBookPerfMenu {
     Write-Host '4. Re-measure and compare'
     Write-Host '5. Revert the most recent applied change'
     Write-Host '6. Status'
+    Write-Host '7. Layer 10 shell profile (read-only)'
     Write-Host 'Q. Quit'
     return (Read-Host 'Choose an action')
 }
@@ -1241,6 +1783,7 @@ function Confirm-Tier2Interactive {
 function Invoke-ZBookPerfMain {
     if ($Analyze) { $script:Action = 'Analyze' }
     elseif ($Watch) { $script:Action = 'Watch' }
+    elseif ($ShellProfile) { $script:Action = 'ShellProfile' }
     elseif ($Enhance) { $script:Action = 'Enhance' }
     elseif ($Remeasure) { $script:Action = 'Remeasure' }
     elseif ($Revert) { $script:Action = 'Revert' }
@@ -1255,6 +1798,7 @@ function Invoke-ZBookPerfMain {
                 '4' { $selectedAction = 'Remeasure' }
                 '5' { $selectedAction = 'Revert' }
                 '6' { $selectedAction = 'Status' }
+                '7' { $selectedAction = 'ShellProfile' }
                 'q' { return }
                 'Q' { return }
                 default { Write-Warning 'Unknown menu choice.'; continue }
@@ -1266,6 +1810,14 @@ function Invoke-ZBookPerfMain {
                 [void](Invoke-Measurement -Kind baseline -Seconds $DurationSeconds -Interval $SampleIntervalSeconds -Root $DataRoot -SkipTrace:$NoTrace)
             }
             'Watch' { Invoke-LiveWatch -Interval $SampleIntervalSeconds -MaximumSamples $WatchMaxSamples }
+            'ShellProfile' {
+                [void](Invoke-ShellProfile `
+                    -Root $DataRoot `
+                    -RunCount $ShellRunCount `
+                    -WarmupRunCount $ShellWarmupRunCount `
+                    -TimeoutMilliseconds $ShellTimeoutMilliseconds `
+                    -ProbeCalibrationIterations $ShellProbeCalibrationIterations)
+            }
             'Enhance' {
                 $selectedCandidate = $EnhancementCandidate
                 if (-not $selectedCandidate) { $selectedCandidate = Select-CandidateInteractive }

@@ -24,6 +24,16 @@ Describe 'EXP-047 ZBookPerf' {
             ($command.Parameters['EnhancementCandidate'].Aliases -contains 'Candidate') | Should -BeTrue
         }
 
+        It 'exposes the Layer 10 shell profile as a public read-only action' {
+            $command = Get-Command $scriptPath
+            ($command.Parameters.Keys -contains 'ShellProfile') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'ShellRunCount') | Should -BeTrue
+            $validateSet = @($command.Parameters['Action'].Attributes | Where-Object {
+                $_ -is [System.Management.Automation.ValidateSetAttribute]
+            })[0]
+            $validateSet.ValidValues | Should -Contain 'ShellProfile'
+        }
+
         It 'keeps security and management exclusions out of mutation commands' {
             $content = Get-Content -LiteralPath $scriptPath -Raw
             $content | Should -Not -Match 'Set-MpPreference'
@@ -205,6 +215,75 @@ Describe 'EXP-047 ZBookPerf' {
 
         It 'rejects an empty journal payload' {
             { ConvertFrom-ChangeLogJson -Json '' } | Should -Throw
+        }
+    }
+
+    Context 'Layer 10 shell profile' {
+        It 'summarizes measured runs without counting warmups' {
+            $runs = @(
+                [pscustomobject]@{ warmup = $true; status = 'Ready'; rawMilliseconds = 900 },
+                [pscustomobject]@{ warmup = $false; status = 'Ready'; rawMilliseconds = 500 },
+                [pscustomobject]@{ warmup = $false; status = 'Ready'; rawMilliseconds = 300 },
+                [pscustomobject]@{ warmup = $false; status = 'Ready'; rawMilliseconds = 320 }
+            )
+
+            $summary = Get-ShellReadinessSummary -Runs $runs
+            $summary.requestedRunCount | Should -Be 3
+            $summary.successfulRunCount | Should -Be 3
+            $summary.medianMilliseconds | Should -Be 320
+            $summary.medianAbsoluteDeviationMilliseconds | Should -Be 20
+            $summary.decision | Should -Be 'BaselineOnlyNoPerformanceClaim'
+        }
+
+        It 'marks an absent documented policy as not configured and never mutation eligible' {
+            Mock Get-RsopPolicyOrigin {
+                [pscustomobject]@{ available = $false; groupPolicyMatchCount = 0 }
+            }
+            $missing = Join-Path $TestDrive 'missing-policy-key'
+            $state = Get-DocumentedPolicyState `
+                -Name Widgets `
+                -RegistryPath $missing `
+                -RegistryKey 'SOFTWARE\Policies\Microsoft\Dsh' `
+                -ValueName AllowNewsAndInterests `
+                -DocumentedDefault 1 `
+                -PolicyCsp './Device/Vendor/MSFT/Policy/Config/NewsAndInterests/AllowNewsAndInterests'
+
+            $state.configured | Should -BeFalse
+            $state.managementOrigin | Should -Be 'NotConfiguredAtDocumentedPolicyPath'
+            $state.mutationEligible | Should -BeFalse
+        }
+
+        It 'calibrates shell-window probe overhead separately from readiness runs' {
+            Mock Get-NewReadyShellWindow { @() }
+            $measurement = Measure-ShellProbeOverhead `
+                -ShellApplication ([pscustomobject]@{}) `
+                -TargetPath $TestDrive `
+                -Iterations 5
+
+            $measurement.iterations | Should -Be 5
+            $measurement.samplesMilliseconds.Count | Should -Be 5
+            $measurement.medianMilliseconds | Should -BeGreaterOrEqual 0
+            $measurement.p95Milliseconds | Should -BeGreaterOrEqual $measurement.medianMilliseconds
+            Should -Invoke Get-NewReadyShellWindow -Times 6
+        }
+
+        It 'routes the public action to the shell profiler with bounded parameters' {
+            $script:Action = 'ShellProfile'
+            $script:ShellRunCount = 3
+            $script:ShellWarmupRunCount = 1
+            $script:ShellTimeoutMilliseconds = 4000
+            $script:ShellProbeCalibrationIterations = 10
+            $script:DataRoot = $TestDrive
+            Mock Invoke-ShellProfile { }
+
+            Invoke-ZBookPerfMain
+
+            Should -Invoke Invoke-ShellProfile -Times 1
+        }
+
+        It 'contains no Windows-setting mutation command in the shell profiler' {
+            $body = (Get-Command Invoke-ShellProfile).ScriptBlock.ToString()
+            $body | Should -Not -Match 'New-ItemProperty|Set-ItemProperty|Remove-ItemProperty|Set-Service|Stop-Service|schtasks|powercfg'
         }
     }
 
