@@ -1,4 +1,4 @@
-# EXP-047 — ZBookPerf trace-first console
+# EXP-047 — Lacksan UX-ROM performance-layer console
 
 Status: Experimental
 Issue: [#109](https://github.com/Lacksan-Dev/HP-ZBook-Performance/issues/109)
@@ -16,16 +16,57 @@ The root `ZBookPerf.ps1` script provides:
 3. Console CPU, memory, disk, DPC/ISR, thermal-zone, and per-process views with ASCII bars and Unicode sparklines.
 4. A Layer 10 shell profile that inventories documented UI and policy surfaces and records repeated Explorer-window readiness runs with measured probe overhead.
 5. A Layer 11 workload runtime profile that attributes bounded CPU, I/O, memory, thread, handle, and lifecycle observations to exact executable names and stable process identities.
-6. One named enhancement candidate per invocation.
-7. A required baseline-evidence gate before application.
-8. Exact state capture in `C:\ProgramData\ZBookPerf\changes.json`, structured JSONL events, post-change verification, idempotence, reboot-persistence handling, and rollback verification.
-9. A repeated measurement and side-by-side comparison. A single before/after pair is never labeled a proven improvement.
+6. One full-system read-only diagnostic entry point for every currently integrated check.
+7. A twelve-layer catalog with a plain-language description and one direct main-menu choice per layer.
+8. A resumable sequential workflow stored in `C:\ProgramData\ZBookPerf\layer-workflow.json`.
+9. One named enhancement candidate per measured layer step.
+10. An optional non-reboot synergy batch with individual state journals and a batch rollback record.
+11. A required fresh baseline-evidence gate before application.
+12. Exact state capture in `C:\ProgramData\ZBookPerf\changes.json`, structured JSONL events, post-change verification, idempotence, reboot-persistence handling, and rollback verification.
+13. A repeated measurement and side-by-side comparison. A single before/after pair is never labeled a proven improvement.
 
 The WPR ETL contains system activity and can be large. Review it before sharing. The JSON environment record deliberately avoids serial numbers, usernames, network addresses, command lines, and customer content.
 
+## Sequential performance-layer workflow
+
+The UX-ROM main menu contains one full diagnostic, the twelve EXP-001
+performance layers with short explanations, and one apply-all synergy option.
+Internal support and baseline checks no longer appear as separate diagnostic
+choices under every layer. Each layer has an explicit baseline integration,
+declared experiment queue, or an honest `NotIntegrated` state. A missing
+integration is not treated as proof that the layer is healthy.
+
+Within one continuous session, **Continue the next safe workflow step**:
+
+1. runs the current layer's integrated assessment or records the missing tool;
+2. chooses the next declared experiment for that layer without presenting a
+   cross-layer candidate list;
+3. captures a fresh baseline for the current cumulative state;
+4. applies at most one reversible change through the existing support,
+   original-state, verification, logging, and rollback contract;
+5. blocks advancement until the change is re-measured or reverted;
+6. retains an explicitly accepted change while testing the next experiment, so
+   cross-layer interactions can be measured; and
+7. advances from Layer 12 back to Layer 1 as a new cycle.
+
+Reboot-dependent changes persist the workflow at a reboot gate. UX-ROM never
+reboots automatically. The maintenance menu preserves direct analyzer, profiler,
+candidate, comparison, status, and rollback access for troubleshooting and
+automation compatibility.
+
+The **Apply all eligible tweaks** action is a named cumulative interaction
+experiment. It considers `MmcssResponsiveness`, supported `PowerAc`, and
+`VisualEffects`; it deliberately excludes the reboot-dependent
+`NtfsLastAccess` and `FastStartupDiagnostic` controls. It captures one baseline,
+applies each included control through its normal support/original-state/apply/
+verify journal contract, captures one after measurement, and writes
+`latest-synergy-batch.json`. A failure rolls back changes made by that batch in
+reverse order. The main rollback action restores the full active batch. The
+result is not treated as proof that each component improved performance.
+
 ## Layer 10 shell profile
 
-Run `.\ZBookPerf.ps1 -Action ShellProfile -ShellRunCount 5`, or choose option 7 in the interactive menu. The profile:
+Run `.\ZBookPerf.ps1 -Action ShellProfile -ShellRunCount 5`, use Layer 10 in the sequential workflow, or choose option 7 in the maintenance menu. The profile:
 
 - reads `UISettings.AnimationsEnabled`, `AdvancedEffectsEnabled`, and `MessageDuration`;
 - captures the existing documented `SystemParametersInfo` visual-effect values without changing them;
@@ -38,13 +79,20 @@ The benchmark uses a private folder below the selected data root so it can disti
 
 ## Layer 11 workload runtime profile
 
-Run `.\ZBookPerf.ps1 -Action WorkloadProfile -WorkloadProcessName explorer.exe -DurationSeconds 30`, or choose option 8 in the interactive menu. One or more exact executable names can be supplied. Paths, wildcards, and command lines are rejected.
+Run `.\ZBookPerf.ps1 -Action WorkloadProfile -WorkloadProcessName explorer.exe -DurationSeconds 30`, use Layer 11 in the sequential workflow, or choose option 8 in the maintenance menu. One or more exact executable names can be supplied. Paths, wildcards, and command lines are rejected.
 
 The profiler uses `System.Diagnostics.Process`, the documented `GetProcessIoCounters` API, and a monotonic `System.Diagnostics.Stopwatch` timestamp. Process ID plus start time forms the identity, preventing PID reuse from combining unrelated processes. Consecutive snapshots produce logical-processor and whole-machine CPU percentages, read/write transfer rates, working set, private memory, handle and thread counts, and process starts/exits. Snapshot duration is retained for every interval, and a separate warmup plus repeated calibration reports the median and p95 observer cost. The profiler does not overhead-correct the raw metrics. I/O values remain null instead of becoming a false zero when process-handle access does not permit the documented I/O query.
 
 The JSON excludes command lines, executable paths, window titles, customer content, and network endpoints. A missing target or process lifecycle transition becomes an unmeasured interval instead of a fabricated zero. The action never launches, terminates, suspends, reprioritizes, or reconfigures a process and never claims that one baseline is an optimization.
 
 ## Supported candidates
+
+The sequential queue owns these experiments by layer:
+
+- Layer 5: `MmcssResponsiveness`, then reboot-dependent `NtfsLastAccess`;
+- Layer 6: `PowerAc`, skipped automatically when the built-in High performance plan is not enumerated;
+- Layer 8: reboot-dependent `FastStartupDiagnostic`; and
+- Layer 10: `VisualEffects`.
 
 | Candidate | Tier | Exact action | Important boundary | Rollback |
 |---|---:|---|---|---|

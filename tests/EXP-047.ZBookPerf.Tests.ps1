@@ -45,6 +45,16 @@ Describe 'EXP-047 ZBookPerf' {
             $validateSet.ValidValues | Should -Contain 'WorkloadProfile'
         }
 
+        It 'exposes the sequential performance-layer workflow as a public action' {
+            $command = Get-Command $scriptPath
+            ($command.Parameters.Keys -contains 'LayerWorkflow') | Should -BeTrue
+            $validateSet = @($command.Parameters['Action'].Attributes | Where-Object {
+                $_ -is [System.Management.Automation.ValidateSetAttribute]
+            })[0]
+            $validateSet.ValidValues | Should -Contain 'LayerWorkflow'
+            $validateSet.ValidValues | Should -Contain 'LayerMap'
+        }
+
         It 'keeps security and management exclusions out of mutation commands' {
             $content = Get-Content -LiteralPath $scriptPath -Raw
             $content | Should -Not -Match 'Set-MpPreference'
@@ -87,7 +97,7 @@ Describe 'EXP-047 ZBookPerf' {
             $process.WaitForExit()
 
             $process.ExitCode | Should -Be 0
-            $standardOutput | Should -Match 'ZBookPerf .* - EXP-047'
+            $standardOutput | Should -Match 'U X - R O M'
             $standardError | Should -Not -Match 'ValidateSetFailure|variable Candidate'
         }
 
@@ -104,14 +114,14 @@ Describe 'EXP-047 ZBookPerf' {
             $process = New-Object Diagnostics.Process
             $process.StartInfo = $startInfo
             [void]$process.Start()
-            @('3', 'x') | ForEach-Object { $process.StandardInput.WriteLine($_) }
+            @('M', '3', 'x') | ForEach-Object { $process.StandardInput.WriteLine($_) }
             $process.StandardInput.Close()
             $standardOutput = $process.StandardOutput.ReadToEnd()
             $standardError = $process.StandardError.ReadToEnd()
             $process.WaitForExit()
 
             $process.ExitCode | Should -Not -Be 0
-            $standardOutput | Should -Match 'Apply one reversible experiment \(Enhance\)'
+            $standardOutput | Should -Match 'Apply one reversible experiment directly'
             $standardError | Should -Match 'Unknown candidate selection.'
             $standardError | Should -Not -Match 'variable.*PSCmdlet'
         }
@@ -129,7 +139,7 @@ Describe 'EXP-047 ZBookPerf' {
             $process = New-Object Diagnostics.Process
             $process.StartInfo = $startInfo
             [void]$process.Start()
-            @('3', '2', 'N', 'Q') | ForEach-Object { $process.StandardInput.WriteLine($_) }
+            @('M', '3', '2', 'N', 'Q') | ForEach-Object { $process.StandardInput.WriteLine($_) }
             $process.StandardInput.Close()
             $standardOutput = $process.StandardOutput.ReadToEnd()
             $standardError = $process.StandardError.ReadToEnd()
@@ -147,9 +157,10 @@ Describe 'EXP-047 ZBookPerf' {
 
             Mock Show-ZBookPerfMenu {
                 $script:menuCallCount++
-                if ($script:menuCallCount -eq 1) { return '3' }
+                if ($script:menuCallCount -eq 1) { return 'M' }
                 return 'Q'
             }
+            Mock Show-ZBookPerfAdvancedMenu { return '3' }
             Mock Select-CandidateInteractive { return 'FastStartupDiagnostic' }
             Mock Confirm-Tier2Interactive { return $true }
             Mock Invoke-Enhancement {
@@ -277,6 +288,198 @@ Describe 'EXP-047 ZBookPerf' {
             {
                 Invoke-Enhancement -Name PowerAc -Root $TestDrive -Tier2Confirmed -Confirm:$false
             } | Should -Throw '*PowerAc is unsupported*No setting was changed*'
+        }
+    }
+
+    Context 'sequential 12-layer workflow' {
+        It 'defines all twelve layers in order without claiming missing integrations are healthy' {
+            $catalog = @(Get-PerformanceLayerCatalog)
+
+            $catalog.Count | Should -Be 12
+            $catalog.number | Should -Be (1..12)
+            $catalog[2].assessment | Should -Be 'NotIntegrated'
+            $catalog[2].assessmentLabel | Should -Match 'No product-integrated'
+            $catalog[9].assessment | Should -Be 'ShellProfile'
+            $catalog[10].assessment | Should -Be 'WorkloadProfile'
+        }
+
+        It 'groups existing change experiments by their responsible performance layer' {
+            (Get-PerformanceLayer -Number 5).candidates | Should -Be @('MmcssResponsiveness', 'NtfsLastAccess')
+            (Get-PerformanceLayer -Number 6).candidates | Should -Be @('PowerAc')
+            (Get-PerformanceLayer -Number 8).candidates | Should -Be @('FastStartupDiagnostic')
+            (Get-PerformanceLayer -Number 10).candidates | Should -Be @('VisualEffects')
+            (Get-PerformanceLayer -Number 11).candidates.Count | Should -Be 0
+        }
+
+        It 'persists a resumable workflow cursor independently from the engineering automation cursor' {
+            $root = Join-Path $TestDrive 'workflow-state'
+            $state = Get-LayerWorkflowState -Root $root
+            $state.currentLayer | Should -Be 1
+            $state.phase | Should -Be 'assessment-required'
+
+            $state.currentLayer = 10
+            $state.phase = 'assessed'
+            Add-LayerWorkflowHistory -State $state -Action 'layer-selected' -Layer 10 -Candidate $null -EvidencePath $null -Reason 'test'
+            Save-LayerWorkflowState -Root $root -State $state
+            $restored = Get-LayerWorkflowState -Root $root
+
+            $restored.currentLayer | Should -Be 10
+            $restored.phase | Should -Be 'assessed'
+            @($restored.history).Count | Should -Be 1
+        }
+
+        It 'orders multiple experiments within one layer rather than bundling them' {
+            $state = New-LayerWorkflowState
+            $state.currentLayer = 5
+
+            (Get-NextLayerCandidate -State $state -Layer 5) | Should -Be 'MmcssResponsiveness'
+            Add-LayerWorkflowHistory -State $state -Action 'candidate-kept' -Layer 5 -Candidate 'MmcssResponsiveness' -EvidencePath $null -Reason 'test'
+            (Get-NextLayerCandidate -State $state -Layer 5) | Should -Be 'NtfsLastAccess'
+        }
+
+        It 'marks an unavailable assessment explicitly and lets the next safe step advance' {
+            $root = Join-Path $TestDrive 'unavailable-assessment'
+            $state = New-LayerWorkflowState
+            $state.currentLayer = 3
+            $runtime = @{
+                Seconds = 5
+                Interval = 1
+                SkipTrace = $true
+                ShellRuns = 3
+                ShellWarmups = 0
+                ShellTimeout = 1000
+                ShellCalibration = 5
+                WorkloadNames = @('explorer.exe')
+                WorkloadInterval = 500
+                WorkloadCalibration = 3
+                DryRun = $true
+            }
+            Mock Write-Host { }
+
+            Invoke-NextLayerWorkflowStep -Root $root -State $state -Runtime $runtime
+            $state.phase | Should -Be 'assessed'
+            @($state.history)[-1].action | Should -Be 'assessment-unavailable'
+
+            Invoke-NextLayerWorkflowStep -Root $root -State $state -Runtime $runtime
+            $state.currentLayer | Should -Be 4
+            $state.phase | Should -Be 'assessment-required'
+        }
+
+        It 'routes the Layer 10 assessment to the shell profiler' {
+            $root = Join-Path $TestDrive 'shell-layer'
+            $state = New-LayerWorkflowState
+            $state.currentLayer = 10
+            Mock Invoke-ShellProfile {
+                [pscustomobject]@{ evidencePath = 'shell-profile.json' }
+            }
+
+            Invoke-LayerAssessmentStep `
+                -Root $root `
+                -State $state `
+                -Seconds 5 `
+                -Interval 1 `
+                -SkipTrace `
+                -ShellRuns 3 `
+                -ShellWarmups 0 `
+                -ShellTimeout 1000 `
+                -ShellCalibration 5 `
+                -WorkloadNames @('explorer.exe') `
+                -WorkloadInterval 500 `
+                -WorkloadCalibration 3
+
+            Should -Invoke Invoke-ShellProfile -Times 1
+            $state.phase | Should -Be 'assessed'
+            @($state.history)[-1].evidencePath | Should -Be 'shell-profile.json'
+        }
+
+        It 'captures a fresh baseline, applies only the next Layer 10 experiment, and pauses for measurement' {
+            $root = Join-Path $TestDrive 'layer-apply'
+            $state = New-LayerWorkflowState
+            $state.currentLayer = 10
+            $state.phase = 'assessed'
+            $script:workflowLogCall = 0
+            Mock Invoke-Measurement {
+                [pscustomobject]@{ evidencePath = 'baseline.json' }
+            }
+            Mock Get-WorkflowCandidateSupport {
+                [pscustomobject]@{ supported = $true; reason = 'test' }
+            }
+            Mock Invoke-Enhancement { }
+            Mock Get-ChangeLog {
+                $script:workflowLogCall++
+                if ($script:workflowLogCall -eq 1) {
+                    return [pscustomobject]@{ entries = @() }
+                }
+                return [pscustomobject]@{
+                    entries = @(
+                        [pscustomobject]@{
+                            candidate = 'VisualEffects'
+                            status = 'applied'
+                            rebootRequired = $false
+                            baselinePath = 'baseline.json'
+                        }
+                    )
+                }
+            }
+
+            Invoke-LayerEnhancementStep -Root $root -State $state -Seconds 5 -Interval 1 -SkipTrace
+
+            Should -Invoke Invoke-Measurement -Times 1 -ParameterFilter { $Kind -eq 'baseline' }
+            Should -Invoke Invoke-Enhancement -Times 1 -ParameterFilter { $Name -eq 'VisualEffects' }
+            $state.activeCandidate | Should -Be 'VisualEffects'
+            $state.phase | Should -Be 'remeasure-required'
+            @($state.history)[-1].action | Should -Be 'candidate-applied'
+        }
+
+        It 'blocks advancement while a change has not passed the measurement gate' {
+            $root = Join-Path $TestDrive 'measurement-gate'
+            $state = New-LayerWorkflowState
+            $state.currentLayer = 10
+            $state.phase = 'remeasure-required'
+            $state.activeCandidate = 'VisualEffects'
+            Mock Write-Host { }
+
+            Complete-LayerWorkflowCandidate -Root $root -State $state
+
+            $state.currentLayer | Should -Be 10
+            $state.phase | Should -Be 'remeasure-required'
+            $state.activeCandidate | Should -Be 'VisualEffects'
+        }
+
+        It 'advances after a measured change is explicitly retained' {
+            $root = Join-Path $TestDrive 'measured-keep'
+            $state = New-LayerWorkflowState
+            $state.currentLayer = 10
+            $state.phase = 'review-required'
+            $state.activeCandidate = 'VisualEffects'
+
+            Complete-LayerWorkflowCandidate -Root $root -State $state
+
+            $state.currentLayer | Should -Be 11
+            $state.phase | Should -Be 'assessment-required'
+            $state.activeCandidate | Should -BeNullOrEmpty
+            @($state.history)[-1].action | Should -Be 'candidate-kept'
+        }
+
+        It 'keeps direct remeasure and revert actions synchronized with an active layer workflow' {
+            $root = Join-Path $TestDrive 'context-aware-actions'
+            $state = New-LayerWorkflowState
+            $state.currentLayer = 10
+            $state.phase = 'remeasure-required'
+            $state.activeCandidate = 'VisualEffects'
+            Save-LayerWorkflowState -Root $root -State $state
+            Mock Invoke-LayerRemeasureStep { }
+            Mock Revert-LayerWorkflowCandidate { }
+            Mock Invoke-Measurement { throw 'Direct measurement must not bypass the layer workflow.' }
+            Mock Invoke-RevertChanges { throw 'Direct rollback must not bypass the layer workflow.' }
+
+            Invoke-ContextAwareRemeasure -Root $root -Seconds 5 -Interval 1 -SkipTrace
+            Invoke-ContextAwareRevert -Root $root
+
+            Should -Invoke Invoke-LayerRemeasureStep -Times 1
+            Should -Invoke Revert-LayerWorkflowCandidate -Times 1
+            Should -Invoke Invoke-Measurement -Times 0
+            Should -Invoke Invoke-RevertChanges -Times 0
         }
     }
 
@@ -601,6 +804,176 @@ Describe 'EXP-047 ZBookPerf' {
         It 'contains no process or Windows-setting mutation command in the workload profiler' {
             $body = (Get-Command Invoke-WorkloadProfile).ScriptBlock.ToString()
             $body | Should -Not -Match 'Stop-Process|Start-Process|Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|Set-Service|Stop-Service|powercfg'
+        }
+    }
+
+    Context 'UX-ROM layer-centered interface' {
+        It 'uses the UX-ROM product identity and gives every layer a plain-language description' {
+            $script:ProductName | Should -Be 'Lacksan UX-ROM'
+            $catalog = @(Get-PerformanceLayerCatalog)
+
+            @($catalog | Where-Object { [string]::IsNullOrWhiteSpace($_.description) }).Count | Should -Be 0
+            $catalog[9].description | Should -Match 'Explorer'
+        }
+
+        It 'shows one full diagnostic, twelve layer choices, and one synergy batch on the main menu' {
+            Mock Read-Host { return 'Q' }
+            Mock Write-Host { }
+
+            Show-ZBookPerfMenu | Should -Be 'Q'
+
+            Should -Invoke Write-Host -ParameterFilter { $Object -match 'Full system diagnostics' }
+            Should -Invoke Write-Host -ParameterFilter { $Object -match 'Apply all eligible tweaks' }
+            Should -Invoke Write-Host -Times 1 -ParameterFilter { $Object -match '^10\. Shell, GUI' }
+        }
+
+        It 'does not scatter a read-only run behind a layer that has no eligible tweak' {
+            $state = New-LayerWorkflowState
+            Mock Get-LayerWorkflowState { return $state }
+            Mock Invoke-LayerAssessmentStep { }
+            Mock Write-Host { }
+
+            Invoke-SelectedPerformanceLayer -Root $TestDrive -LayerNumber 3 -Runtime @{}
+
+            Should -Invoke Invoke-LayerAssessmentStep -Times 0
+        }
+
+        It 'runs the required baseline internally before applying the selected layer tweak' {
+            $state = New-LayerWorkflowState
+            Mock Get-LayerWorkflowState { return $state }
+            Mock Save-LayerWorkflowState { }
+            Mock Invoke-LayerAssessmentStep { $State.phase = 'assessed' }
+            Mock Invoke-LayerEnhancementStep { }
+            Mock Write-Host { }
+            $runtime = @{
+                Seconds = 5; Interval = 1; SkipTrace = $true; DryRun = $true
+                ShellRuns = 1; ShellWarmups = 0; ShellTimeout = 1000; ShellCalibration = 5
+                WorkloadNames = @('explorer.exe'); WorkloadInterval = 1000; WorkloadCalibration = 3
+            }
+
+            Invoke-SelectedPerformanceLayer -Root $TestDrive -LayerNumber 10 -Runtime $runtime
+
+            Should -Invoke Invoke-LayerAssessmentStep -Times 1
+            Should -Invoke Invoke-LayerEnhancementStep -Times 1 -ParameterFilter {
+                [int]$State.currentLayer -eq 10
+            }
+        }
+
+        It 'combines the integrated read-only checks into one full diagnostic manifest' {
+            Mock Invoke-Measurement {
+                [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'baseline.json') }
+            }
+            Mock Invoke-ShellProfile {
+                [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'shell.json') }
+            }
+            Mock Invoke-WorkloadProfile {
+                [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'workload.json') }
+            }
+            Mock Write-StructuredEvent { }
+            Mock Write-Host { }
+            $runtime = @{
+                Seconds = 5; Interval = 1; SkipTrace = $true
+                ShellRuns = 1; ShellWarmups = 0; ShellTimeout = 1000; ShellCalibration = 5
+                WorkloadNames = @('explorer.exe'); WorkloadInterval = 1000; WorkloadCalibration = 3
+            }
+
+            $result = Invoke-FullSystemDiagnostics -Root $TestDrive -Runtime $runtime
+
+            $result.observationOnly | Should -BeTrue
+            $result.coveredLayers | Should -Be @(1, 2, 5, 6, 10, 11)
+            Test-Path -LiteralPath $result.evidence.systemBaseline | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $TestDrive 'measurements') | Should -BeTrue
+            Should -Invoke Invoke-Measurement -Times 1
+            Should -Invoke Invoke-ShellProfile -Times 1
+            Should -Invoke Invoke-WorkloadProfile -Times 1
+        }
+
+        It 'routes the public full-diagnostics action to the single diagnostic entry point' {
+            $script:Action = 'FullDiagnostics'
+            $script:DataRoot = $TestDrive
+            Mock Invoke-FullSystemDiagnostics { }
+
+            Invoke-ZBookPerfMain
+
+            Should -Invoke Invoke-FullSystemDiagnostics -Times 1
+        }
+
+        It 'routes the public apply-all action to the synergy batch controller' {
+            $script:Action = 'ApplyAll'
+            $script:DataRoot = $TestDrive
+            $script:LabTier2Confirmed = $true
+            Mock Invoke-AllEligibleTweaks { }
+
+            Invoke-ZBookPerfMain
+
+            Should -Invoke Invoke-AllEligibleTweaks -Times 1
+        }
+
+        It 'keeps reboot-dependent controls out of the apply-all synergy batch' {
+            Mock Get-WorkflowCandidateSupport {
+                [pscustomobject]@{ supported = $true; reason = 'supported' }
+            }
+
+            $plan = @(Get-SynergyBatchPlan)
+
+            $plan.candidate | Should -Be @('MmcssResponsiveness', 'PowerAc', 'VisualEffects')
+            $plan.candidate | Should -Not -Contain 'NtfsLastAccess'
+            $plan.candidate | Should -Not -Contain 'FastStartupDiagnostic'
+        }
+
+        It 'makes the apply-all dry run mutation-free while previewing every eligible candidate' {
+            Mock Get-WorkflowCandidateSupport {
+                [pscustomobject]@{ supported = $true; reason = 'supported' }
+            }
+            Mock Get-LayerWorkflowState { return (New-LayerWorkflowState) }
+            Mock Invoke-Enhancement { }
+            Mock Invoke-Measurement { throw 'A dry run must not collect an apply baseline.' }
+            Mock Write-Host { }
+            $runtime = @{ Seconds = 5; Interval = 1; SkipTrace = $true }
+
+            Invoke-AllEligibleTweaks -Root $TestDrive -Runtime $runtime -Tier2Confirmed -DryRun
+
+            Should -Invoke Invoke-Enhancement -Times 3
+            Should -Invoke Invoke-Measurement -Times 0
+        }
+
+        It 'journals and measures all eligible controls as one reversible synergy batch' {
+            $state = New-LayerWorkflowState
+            $script:batchTestLog = [pscustomobject][ordered]@{ entries = @() }
+            $script:batchMeasurementCall = 0
+            Mock Get-WorkflowCandidateSupport {
+                [pscustomobject]@{ supported = $true; reason = 'supported' }
+            }
+            Mock Get-LayerWorkflowState { return $state }
+            Mock Get-ChangeLog { return $script:batchTestLog }
+            Mock Invoke-Enhancement {
+                $entry = [pscustomobject]@{
+                    id = [guid]::NewGuid().ToString()
+                    candidate = $Name
+                    status = 'applied'
+                }
+                $script:batchTestLog.entries = @($script:batchTestLog.entries) + @($entry)
+            }
+            Mock Invoke-Measurement {
+                $script:batchMeasurementCall++
+                [pscustomobject]@{
+                    evidencePath = Join-Path $TestDrive "measurement-$script:batchMeasurementCall.json"
+                }
+            }
+            Mock Show-MeasurementComparison { }
+            Mock Save-LayerWorkflowState { }
+            Mock Write-StructuredEvent { }
+            Mock Write-Host { }
+            $runtime = @{ Seconds = 5; Interval = 1; SkipTrace = $true }
+
+            $batch = Invoke-AllEligibleTweaks -Root $TestDrive -Runtime $runtime -Tier2Confirmed
+
+            $batch.entryIds.Count | Should -Be 3
+            $batch.candidates | Should -Be @('MmcssResponsiveness', 'PowerAc', 'VisualEffects')
+            $batch.status | Should -Be 'active'
+            $batch.decision | Should -Be 'AppliedAsRequestedNoStandalonePerformanceClaim'
+            Should -Invoke Invoke-Enhancement -Times 3
+            Should -Invoke Invoke-Measurement -Times 2
         }
     }
 

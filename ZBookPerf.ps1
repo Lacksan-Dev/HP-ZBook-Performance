@@ -2,14 +2,15 @@
 
 <#
 .SYNOPSIS
-    Trace-first HP ZBook performance analyzer and reversible experiment harness.
+    Lacksan UX-ROM performance-layer controller for supported Windows systems.
 
 .DESCRIPTION
-    EXP-047 records Windows performance evidence and can apply one supported,
-    reversible candidate per invocation. Machine-wide candidates require an
-    administrator console and explicit confirmation that the computer is a
-    recoverable Tier 2 lab system. The script never applies every candidate as
-    a bundle.
+    EXP-047 records Windows performance evidence and applies supported,
+    reversible experiments through a twelve-layer workflow. Machine-wide
+    candidates require an administrator console and explicit confirmation that
+    the computer is a recoverable Tier 2 lab system. The optional synergy batch
+    contains only supported, non-reboot experiments and preserves one journal
+    entry per change plus a batch rollback record.
 
     No argument opens the interactive console. Automation can use -Action or
     the equivalent action switches.
@@ -17,9 +18,12 @@
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Menu', 'Analyze', 'Watch', 'ShellProfile', 'WorkloadProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
+    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ShellProfile', 'WorkloadProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
     [string]$Action = 'Menu',
 
+    [switch]$FullDiagnostics,
+    [switch]$ApplyAll,
+    [switch]$LayerWorkflow,
     [switch]$Analyze,
     [switch]$Watch,
     [switch]$ShellProfile,
@@ -77,7 +81,9 @@ $ErrorActionPreference = 'Stop'
 
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
-$script:ProductVersion = '2026.07.30.1'
+$script:ProductName = 'Lacksan UX-ROM'
+$script:ProductVersion = '2026.07.30.3'
+$script:LayerWorkflowSchemaVersion = 1
 $script:LoadedFrom = if ([string]::IsNullOrWhiteSpace([string]$PSCommandPath)) {
     'in-memory content'
 } else {
@@ -2154,7 +2160,7 @@ function Invoke-Enhancement {
         [switch]$DiagnosticConfirmed
     )
 
-    if (-not $Name) { throw '-Candidate is required for Enhance. ZBookPerf intentionally does not apply a bundle.' }
+    if (-not $Name) { throw '-Candidate is required for direct Enhance. Use -Action ApplyAll for the named, reversible synergy batch.' }
     if ($Name -eq 'PowerAc') {
         $powerSupport = Get-PowerCandidateSupport
         if (-not $powerSupport.supported) {
@@ -2162,10 +2168,10 @@ function Invoke-Enhancement {
         }
     }
     $isMachine = $Name -in $script:MachineCandidates
-    if ($isMachine -and -not (Test-IsAdministrator)) {
+    if ($isMachine -and -not $WhatIfPreference -and -not (Test-IsAdministrator)) {
         throw "Candidate '$Name' requires an administrator console."
     }
-    if ($isMachine -and -not $Tier2Confirmed) {
+    if ($isMachine -and -not $WhatIfPreference -and -not $Tier2Confirmed) {
         throw "Candidate '$Name' is Tier 2. Use a disposable image or dedicated lab system with a tested recovery path, then pass -LabTier2Confirmed."
     }
 
@@ -2268,8 +2274,1010 @@ function Invoke-RevertChanges {
     }
 }
 
+function Get-PerformanceLayerCatalog {
+    return @(
+        [pscustomobject][ordered]@{
+            number = 1
+            name = 'Physical and thermal health'
+            description = 'Checks heat, cooling, power source, and throttling before software tuning.'
+            assessment = 'Baseline'
+            assessmentLabel = 'Thermal, power-source, and environment baseline'
+            candidates = @()
+        },
+        [pscustomobject][ordered]@{
+            number = 2
+            name = 'Hardware resources and bottlenecks'
+            description = 'Finds pressure on the CPU, memory, storage, and hardware queues.'
+            assessment = 'Baseline'
+            assessmentLabel = 'CPU, memory, storage, process, and thermal baseline'
+            candidates = @()
+        },
+        [pscustomobject][ordered]@{
+            number = 3
+            name = 'BIOS, UEFI, embedded-controller, and firmware interactions'
+            description = 'Covers firmware timing, hardware control, and supported HP firmware behavior.'
+            assessment = 'NotIntegrated'
+            assessmentLabel = 'No product-integrated assessment yet'
+            candidates = @()
+        },
+        [pscustomobject][ordered]@{
+            number = 4
+            name = 'Platform drivers and OEM components'
+            description = 'Reviews graphics, storage, network, dock, and HP driver coordination.'
+            assessment = 'NotIntegrated'
+            assessmentLabel = 'No product-integrated assessment yet'
+            candidates = @()
+        },
+        [pscustomobject][ordered]@{
+            number = 5
+            name = 'Kernel, scheduler, memory, storage, interrupts, and DPC/ISR behavior'
+            description = 'Tunes documented scheduling and storage behavior that affects response time.'
+            assessment = 'Baseline'
+            assessmentLabel = 'CPU, storage, DPC, and ISR baseline'
+            candidates = @('MmcssResponsiveness', 'NtfsLastAccess')
+        },
+        [pscustomobject][ordered]@{
+            number = 6
+            name = 'Power management and performance policy'
+            description = 'Aligns supported processor and power policy with plugged-in performance.'
+            assessment = 'Baseline'
+            assessmentLabel = 'Power source, mode, battery, and processor baseline'
+            candidates = @('PowerAc')
+        },
+        [pscustomobject][ordered]@{
+            number = 7
+            name = 'Security and isolation overhead without reducing protection'
+            description = 'Measures security cost while keeping Windows protection fully enabled.'
+            assessment = 'NotIntegrated'
+            assessmentLabel = 'No product-integrated assessment yet'
+            candidates = @()
+        },
+        [pscustomobject][ordered]@{
+            number = 8
+            name = 'Boot, services, tasks, background permissions, and startup applications'
+            description = 'Improves the path from power-on and sign-in to a genuinely usable desktop.'
+            assessment = 'NotIntegrated'
+            assessmentLabel = 'No product-integrated off-to-usable assessment yet'
+            candidates = @('FastStartupDiagnostic')
+        },
+        [pscustomobject][ordered]@{
+            number = 9
+            name = 'Group Policy, MDM, registry, and system configuration'
+            description = 'Finds configuration conflicts and changes only documented, unmanaged settings.'
+            assessment = 'NotIntegrated'
+            assessmentLabel = 'No product-integrated assessment yet'
+            candidates = @()
+        },
+        [pscustomobject][ordered]@{
+            number = 10
+            name = 'Shell, GUI, capture, notifications, and perceived responsiveness'
+            description = 'Targets Explorer, menus, visual effects, capture, and visible response time.'
+            assessment = 'ShellProfile'
+            assessmentLabel = 'Shell configuration inventory and Explorer readiness baseline'
+            candidates = @('VisualEffects')
+        },
+        [pscustomobject][ordered]@{
+            number = 11
+            name = 'Application/runtime efficiency and workload profiles'
+            description = 'Measures the real apps you use and their CPU, I/O, memory, and launch behavior.'
+            assessment = 'WorkloadProfile'
+            assessmentLabel = 'Existing-process CPU, I/O, memory, thread, and handle profile'
+            candidates = @()
+        },
+        [pscustomobject][ordered]@{
+            number = 12
+            name = 'Workload data, storage locality, network dependencies, and reproducibility'
+            description = 'Checks whether files, storage, and network dependencies make work feel slow.'
+            assessment = 'NotIntegrated'
+            assessmentLabel = 'No product-integrated end-to-end assessment yet'
+            candidates = @()
+        }
+    )
+}
+
+function Get-PerformanceLayer {
+    param([ValidateRange(1, 12)][int]$Number)
+
+    return @(Get-PerformanceLayerCatalog | Where-Object { $_.number -eq $Number })[0]
+}
+
+function Get-CandidateDisplayName {
+    param([string]$Name)
+
+    switch ($Name) {
+        'PowerAc' { return 'AC High performance processor policy' }
+        'MmcssResponsiveness' { return 'MMCSS SystemResponsiveness = 10' }
+        'NtfsLastAccess' { return 'NTFS DisableLastAccess = 1' }
+        'VisualEffects' { return 'Documented visual-effect APIs' }
+        'FastStartupDiagnostic' { return 'Fast Startup diagnostic isolation' }
+        default { return $Name }
+    }
+}
+
+function Get-LayerWorkflowPath {
+    param([string]$Root)
+    return (Join-Path $Root 'layer-workflow.json')
+}
+
+function New-LayerWorkflowState {
+    return [pscustomobject][ordered]@{
+        schemaVersion = $script:LayerWorkflowSchemaVersion
+        productVersion = $script:ProductVersion
+        cycleNumber = 1
+        currentLayer = 1
+        phase = 'assessment-required'
+        activeCandidate = $null
+        createdUtc = [DateTime]::UtcNow.ToString('o')
+        updatedUtc = [DateTime]::UtcNow.ToString('o')
+        history = @()
+    }
+}
+
+function Get-LayerWorkflowState {
+    param([string]$Root)
+
+    $path = Get-LayerWorkflowPath -Root $Root
+    if (-not (Test-Path -LiteralPath $path)) {
+        return (New-LayerWorkflowState)
+    }
+    $state = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    if (
+        [int]$state.schemaVersion -ne $script:LayerWorkflowSchemaVersion -or
+        [int]$state.currentLayer -lt 1 -or
+        [int]$state.currentLayer -gt 12
+    ) {
+        throw "Unsupported or invalid layer workflow state: $path"
+    }
+    return $state
+}
+
+function Save-LayerWorkflowState {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][object]$State
+    )
+
+    Ensure-DataDirectories -Root $Root
+    $State.productVersion = $script:ProductVersion
+    $State.updatedUtc = [DateTime]::UtcNow.ToString('o')
+    $State | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Get-LayerWorkflowPath -Root $Root) -Encoding UTF8
+}
+
+function Add-LayerWorkflowHistory {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [string]$Action,
+        [int]$Layer,
+        [AllowNull()][string]$Candidate,
+        [AllowNull()][string]$EvidencePath,
+        [AllowNull()][string]$Reason
+    )
+
+    $entry = [pscustomobject][ordered]@{
+        timestampUtc = [DateTime]::UtcNow.ToString('o')
+        layer = $Layer
+        action = $Action
+        candidate = $Candidate
+        evidencePath = $EvidencePath
+        reason = $Reason
+    }
+    $State.history = @($State.history) + @($entry)
+}
+
+function Get-ProcessedLayerCandidates {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [ValidateRange(1, 12)][int]$Layer
+    )
+
+    return @($State.history | Where-Object {
+        [int]$_.layer -eq $Layer -and
+        $_.candidate -and
+        $_.action -in @('candidate-kept', 'candidate-reverted', 'candidate-skipped', 'candidate-unsupported')
+    } | ForEach-Object { [string]$_.candidate } | Sort-Object -Unique)
+}
+
+function Get-NextLayerCandidate {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [ValidateRange(1, 12)][int]$Layer
+    )
+
+    $catalogEntry = Get-PerformanceLayer -Number $Layer
+    $processed = @(Get-ProcessedLayerCandidates -State $State -Layer $Layer)
+    foreach ($candidate in @($catalogEntry.candidates)) {
+        if ($candidate -notin $processed) {
+            return [string]$candidate
+        }
+    }
+    return $null
+}
+
+function Get-WorkflowCandidateSupport {
+    param([string]$Name)
+
+    if ($Name -eq 'PowerAc') {
+        return (Get-PowerCandidateSupport)
+    }
+    return [pscustomobject][ordered]@{
+        supported = $true
+        reason = 'Candidate-specific support detection runs again before original-state capture and application.'
+    }
+}
+
+function Move-LayerWorkflowForward {
+    param([Parameter(Mandatory = $true)][object]$State)
+
+    if ([int]$State.currentLayer -eq 12) {
+        $State.currentLayer = 1
+        $State.cycleNumber = [int]$State.cycleNumber + 1
+    } else {
+        $State.currentLayer = [int]$State.currentLayer + 1
+    }
+    $State.phase = 'assessment-required'
+    $State.activeCandidate = $null
+}
+
+function Show-PerformanceLayerMap {
+    param(
+        [string]$Root,
+        [object]$State = $null
+    )
+
+    if (-not $State) { $State = Get-LayerWorkflowState -Root $Root }
+    Write-Host ''
+    Write-Host "Sequential performance-layer workflow - cycle $($State.cycleNumber)" -ForegroundColor Cyan
+    foreach ($layer in Get-PerformanceLayerCatalog) {
+        $nextCandidate = Get-NextLayerCandidate -State $State -Layer $layer.number
+        $marker = if ([int]$State.currentLayer -eq $layer.number) { '>' } else { ' ' }
+        $assessmentColor = if ($layer.assessment -eq 'NotIntegrated') { 'DarkYellow' } else { 'Gray' }
+        Write-Host ("{0} Layer {1,2}: {2}" -f $marker, $layer.number, $layer.name) -ForegroundColor $(if ($marker -eq '>') { 'Cyan' } else { 'White' })
+        Write-Host ("    Internal baseline: {0}" -f $layer.assessmentLabel) -ForegroundColor $assessmentColor
+        Write-Host ("    Next experiment: {0}" -f $(if ($nextCandidate) { Get-CandidateDisplayName -Name $nextCandidate } else { 'none' })) -ForegroundColor DarkGray
+    }
+    Write-Host 'A missing integration is a product gap, not evidence that the layer is healthy.' -ForegroundColor DarkYellow
+}
+
+function Invoke-LayerAssessmentStep {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][object]$State,
+        [int]$Seconds,
+        [int]$Interval,
+        [switch]$SkipTrace,
+        [int]$ShellRuns,
+        [int]$ShellWarmups,
+        [int]$ShellTimeout,
+        [int]$ShellCalibration,
+        [string[]]$WorkloadNames,
+        [int]$WorkloadInterval,
+        [int]$WorkloadCalibration,
+        [switch]$DryRun
+    )
+
+    $layer = Get-PerformanceLayer -Number ([int]$State.currentLayer)
+    $evidencePath = $null
+    $reason = $null
+    switch ($layer.assessment) {
+        'Baseline' {
+            $measurement = Invoke-Measurement -Kind baseline -Seconds $Seconds -Interval $Interval -Root $Root -SkipTrace:$SkipTrace
+            $evidencePath = $measurement.evidencePath
+        }
+        'ShellProfile' {
+            $profile = Invoke-ShellProfile `
+                -Root $Root `
+                -RunCount $ShellRuns `
+                -WarmupRunCount $ShellWarmups `
+                -TimeoutMilliseconds $ShellTimeout `
+                -ProbeCalibrationIterations $ShellCalibration
+            $evidencePath = $profile.evidencePath
+        }
+        'WorkloadProfile' {
+            $profile = Invoke-WorkloadProfile `
+                -Root $Root `
+                -ProcessNames $WorkloadNames `
+                -Seconds $Seconds `
+                -IntervalMilliseconds $WorkloadInterval `
+                -CalibrationIterations $WorkloadCalibration
+            $evidencePath = $profile.evidencePath
+        }
+        default {
+            $reason = $layer.assessmentLabel
+            Write-Host "Layer $($layer.number) assessment unavailable: $reason" -ForegroundColor DarkYellow
+        }
+    }
+
+    Add-LayerWorkflowHistory `
+        -State $State `
+        -Action $(if ($evidencePath) { 'assessment-complete' } else { 'assessment-unavailable' }) `
+        -Layer $layer.number `
+        -Candidate $null `
+        -EvidencePath $evidencePath `
+        -Reason $reason
+    $State.phase = 'assessed'
+    Save-LayerWorkflowState -Root $Root -State $State
+}
+
+function Invoke-LayerEnhancementStep {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][object]$State,
+        [int]$Seconds,
+        [int]$Interval,
+        [switch]$SkipTrace,
+        [switch]$DryRun
+    )
+
+    if ($State.activeCandidate) {
+        Write-Host "Candidate '$($State.activeCandidate)' is already active in this workflow. Re-measure or revert it before another change." -ForegroundColor DarkYellow
+        return
+    }
+
+    $layerNumber = [int]$State.currentLayer
+    $candidate = Get-NextLayerCandidate -State $State -Layer $layerNumber
+    if (-not $candidate) {
+        Write-Host "Layer $layerNumber has no remaining integrated change experiment." -ForegroundColor DarkYellow
+        return
+    }
+
+    $support = Get-WorkflowCandidateSupport -Name $candidate
+    if (-not $support.supported) {
+        Write-Host "Skipping unsupported experiment: $(Get-CandidateDisplayName -Name $candidate)" -ForegroundColor DarkYellow
+        Write-Host $support.reason -ForegroundColor DarkYellow
+        Add-LayerWorkflowHistory -State $State -Action 'candidate-unsupported' -Layer $layerNumber -Candidate $candidate -EvidencePath $null -Reason $support.reason
+        Save-LayerWorkflowState -Root $Root -State $State
+        return
+    }
+
+    Write-Host "Capturing a fresh cumulative-state baseline before: $(Get-CandidateDisplayName -Name $candidate)" -ForegroundColor Cyan
+    [void](Invoke-Measurement -Kind baseline -Seconds $Seconds -Interval $Interval -Root $Root -SkipTrace:$SkipTrace)
+
+    $tier2Confirmed = $false
+    if ($candidate -in $script:MachineCandidates) {
+        $tier2Confirmed = Confirm-Tier2Interactive -Name $candidate
+        if (-not $tier2Confirmed) {
+            Write-Host 'Cancelled. No setting was changed.' -ForegroundColor DarkYellow
+            return
+        }
+    }
+    $diagnosticConfirmed = ($candidate -eq 'FastStartupDiagnostic')
+    $beforeLog = Get-ChangeLog -Root $Root
+    $beforeCount = @($beforeLog.entries).Count
+    Invoke-Enhancement `
+        -Name $candidate `
+        -Root $Root `
+        -Tier2Confirmed:$tier2Confirmed `
+        -DiagnosticConfirmed:$diagnosticConfirmed `
+        -WhatIf:$DryRun
+    $afterLog = Get-ChangeLog -Root $Root
+    $afterEntries = @($afterLog.entries)
+    if ($afterEntries.Count -le $beforeCount) {
+        Add-LayerWorkflowHistory -State $State -Action 'candidate-dry-run-or-cancelled' -Layer $layerNumber -Candidate $candidate -EvidencePath $null -Reason 'No applied journal entry was added.'
+        Save-LayerWorkflowState -Root $Root -State $State
+        return
+    }
+
+    $entry = $afterEntries[-1]
+    if ($entry.candidate -ne $candidate -or $entry.status -ne 'applied') {
+        throw "The layer workflow could not verify the applied journal entry for '$candidate'."
+    }
+    $State.activeCandidate = $candidate
+    $State.phase = if ($entry.rebootRequired) { 'reboot-required' } else { 'remeasure-required' }
+    Add-LayerWorkflowHistory -State $State -Action 'candidate-applied' -Layer $layerNumber -Candidate $candidate -EvidencePath $entry.baselinePath -Reason $State.phase
+    Save-LayerWorkflowState -Root $Root -State $State
+
+    if ($entry.rebootRequired) {
+        Write-Host 'A reboot is required. Reopen ZBookPerf afterward and continue this persisted workflow before re-measuring.' -ForegroundColor DarkYellow
+    } else {
+        Write-Host 'The workflow is paused at the measurement gate. Continue to re-measure before keeping or advancing.' -ForegroundColor DarkYellow
+    }
+}
+
+function Invoke-LayerRemeasureStep {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][object]$State,
+        [int]$Seconds,
+        [int]$Interval,
+        [switch]$SkipTrace
+    )
+
+    if (-not $State.activeCandidate) {
+        Write-Host 'No layer-workflow candidate is active. Apply an experiment first.' -ForegroundColor DarkYellow
+        return
+    }
+    $measurement = Invoke-Measurement -Kind after -Seconds $Seconds -Interval $Interval -Root $Root -SkipTrace:$SkipTrace
+    Show-MeasurementComparison -Root $Root
+    $State.phase = 'review-required'
+    Add-LayerWorkflowHistory -State $State -Action 'candidate-measured' -Layer ([int]$State.currentLayer) -Candidate ([string]$State.activeCandidate) -EvidencePath $measurement.evidencePath -Reason 'Review before keep or revert.'
+    Save-LayerWorkflowState -Root $Root -State $State
+}
+
+function Complete-LayerWorkflowCandidate {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][object]$State
+    )
+
+    if ($State.activeCandidate -and $State.phase -ne 'review-required') {
+        Write-Host 'The active change cannot be kept or advanced until its repeated measurement is complete.' -ForegroundColor DarkYellow
+        return
+    }
+    if ($State.activeCandidate) {
+        Add-LayerWorkflowHistory -State $State -Action 'candidate-kept' -Layer ([int]$State.currentLayer) -Candidate ([string]$State.activeCandidate) -EvidencePath $null -Reason 'Operator retained the measured change for cumulative interaction testing.'
+        $State.activeCandidate = $null
+    }
+
+    $remaining = Get-NextLayerCandidate -State $State -Layer ([int]$State.currentLayer)
+    if ($remaining) {
+        $State.phase = 'assessed'
+        Write-Host "Staying on Layer $($State.currentLayer) for the next experiment: $(Get-CandidateDisplayName -Name $remaining)" -ForegroundColor Cyan
+    } else {
+        Move-LayerWorkflowForward -State $State
+        Write-Host "Advanced to Layer $($State.currentLayer)." -ForegroundColor Green
+    }
+    Save-LayerWorkflowState -Root $Root -State $State
+}
+
+function Skip-LayerWorkflowCandidate {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][object]$State
+    )
+
+    if ($State.activeCandidate) {
+        Write-Host 'An applied change cannot be skipped. Re-measure it or revert it.' -ForegroundColor DarkYellow
+        return
+    }
+    $candidate = Get-NextLayerCandidate -State $State -Layer ([int]$State.currentLayer)
+    if ($candidate) {
+        Add-LayerWorkflowHistory -State $State -Action 'candidate-skipped' -Layer ([int]$State.currentLayer) -Candidate $candidate -EvidencePath $null -Reason 'Operator skipped this declared experiment.'
+        Write-Host "Skipped: $(Get-CandidateDisplayName -Name $candidate)" -ForegroundColor DarkYellow
+    }
+    $remaining = Get-NextLayerCandidate -State $State -Layer ([int]$State.currentLayer)
+    if (-not $remaining) {
+        Move-LayerWorkflowForward -State $State
+        Write-Host "Advanced to Layer $($State.currentLayer)." -ForegroundColor Green
+    } else {
+        $State.phase = 'assessed'
+        Write-Host "Next Layer $($State.currentLayer) experiment: $(Get-CandidateDisplayName -Name $remaining)" -ForegroundColor Cyan
+    }
+    Save-LayerWorkflowState -Root $Root -State $State
+}
+
+function Revert-LayerWorkflowCandidate {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][object]$State,
+        [switch]$DryRun
+    )
+
+    if (-not $State.activeCandidate) {
+        Write-Host 'No layer-workflow candidate is active.' -ForegroundColor DarkYellow
+        return
+    }
+    $candidate = [string]$State.activeCandidate
+    Invoke-RevertChanges -Root $Root -WhatIf:$DryRun
+    if ($DryRun) { return }
+
+    $log = Get-ChangeLog -Root $Root
+    $entry = @($log.entries | Where-Object { $_.candidate -eq $candidate } | Select-Object -Last 1)[0]
+    if (-not $entry -or $entry.status -ne 'reverted') {
+        throw "The layer workflow could not verify rollback for '$candidate'."
+    }
+    Add-LayerWorkflowHistory -State $State -Action 'candidate-reverted' -Layer ([int]$State.currentLayer) -Candidate $candidate -EvidencePath $null -Reason 'Rollback verified by the change journal.'
+    $State.activeCandidate = $null
+    $State.phase = 'assessed'
+    Save-LayerWorkflowState -Root $Root -State $State
+}
+
+function Set-LayerWorkflowCurrentLayer {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][object]$State,
+        [ValidateRange(1, 12)][int]$Layer
+    )
+
+    if ($State.activeCandidate) {
+        Write-Host 'Cannot change layers while a workflow change awaits measurement or rollback.' -ForegroundColor DarkYellow
+        return
+    }
+    Add-LayerWorkflowHistory -State $State -Action 'layer-selected' -Layer $Layer -Candidate $null -EvidencePath $null -Reason 'Operator selected a layer.'
+    $State.currentLayer = $Layer
+    $State.phase = 'assessment-required'
+    Save-LayerWorkflowState -Root $Root -State $State
+}
+
+function Show-LayerControlMenu {
+    param(
+        [Parameter(Mandatory = $true)][object]$Layer,
+        [Parameter(Mandatory = $true)][object]$State
+    )
+
+    $nextCandidate = Get-NextLayerCandidate -State $State -Layer $Layer.number
+    Write-Host ''
+    Write-Host "Layer $($Layer.number) of 12 - $($Layer.name)" -ForegroundColor Cyan
+    Write-Host $Layer.description -ForegroundColor DarkGray
+    Write-Host "Cycle: $($State.cycleNumber)  Phase: $($State.phase)"
+    Write-Host "Internal baseline: $($Layer.assessmentLabel)"
+    Write-Host "Next experiment: $(if ($nextCandidate) { Get-CandidateDisplayName -Name $nextCandidate } else { 'none' })"
+    if ($State.activeCandidate) {
+        Write-Host "Active change: $(Get-CandidateDisplayName -Name ([string]$State.activeCandidate))" -ForegroundColor DarkYellow
+    }
+    Write-Host '1. Continue this layer'
+    Write-Host '2. Refresh the required internal baseline'
+    Write-Host '3. Apply this layer''s next eligible tweak'
+    Write-Host '4. Re-measure the active experiment'
+    Write-Host '5. Keep the measured change and continue'
+    Write-Host '6. Revert the active experiment'
+    Write-Host '7. Skip the next experiment or advance'
+    Write-Host '8. Show all 12 layers'
+    Write-Host 'B. Back to main menu'
+    return (Read-Host 'Choose a layer action')
+}
+
+function Invoke-NextLayerWorkflowStep {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][object]$State,
+        [hashtable]$Runtime
+    )
+
+    switch ([string]$State.phase) {
+        'assessment-required' {
+            Invoke-LayerAssessmentStep @Runtime -Root $Root -State $State
+        }
+        'assessed' {
+            if (Get-NextLayerCandidate -State $State -Layer ([int]$State.currentLayer)) {
+                Invoke-LayerEnhancementStep `
+                    -Root $Root `
+                    -State $State `
+                    -Seconds $Runtime.Seconds `
+                    -Interval $Runtime.Interval `
+                    -SkipTrace:$Runtime.SkipTrace `
+                    -DryRun:$Runtime.DryRun
+            } else {
+                Complete-LayerWorkflowCandidate -Root $Root -State $State
+            }
+        }
+        'remeasure-required' {
+            Invoke-LayerRemeasureStep -Root $Root -State $State -Seconds $Runtime.Seconds -Interval $Runtime.Interval -SkipTrace:$Runtime.SkipTrace
+        }
+        'reboot-required' {
+            Write-Host 'Confirm that the required reboot and health check are complete, then choose re-measure.' -ForegroundColor DarkYellow
+        }
+        'review-required' {
+            Write-Host 'Review the comparison, then explicitly keep or revert the measured change.' -ForegroundColor DarkYellow
+        }
+        default {
+            throw "Unknown layer workflow phase '$($State.phase)'."
+        }
+    }
+}
+
+function Invoke-LayerWorkflowUntilGate {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][object]$State,
+        [hashtable]$Runtime
+    )
+
+    $startingCycle = [int]$State.cycleNumber
+    for ($step = 0; $step -lt 48; $step++) {
+        if ([int]$State.cycleNumber -gt $startingCycle) {
+            Write-Host "Completed cycle $startingCycle. The next run begins again at Layer 1." -ForegroundColor Green
+            return
+        }
+        switch ([string]$State.phase) {
+            'assessment-required' {
+                Invoke-LayerAssessmentStep @Runtime -Root $Root -State $State
+                continue
+            }
+            'assessed' {
+                if (Get-NextLayerCandidate -State $State -Layer ([int]$State.currentLayer)) {
+                    $beforeHistoryCount = @($State.history).Count
+                    Invoke-LayerEnhancementStep `
+                        -Root $Root `
+                        -State $State `
+                        -Seconds $Runtime.Seconds `
+                        -Interval $Runtime.Interval `
+                        -SkipTrace:$Runtime.SkipTrace `
+                        -DryRun:$Runtime.DryRun
+                    if ($State.activeCandidate) { return }
+                    if (@($State.history).Count -eq $beforeHistoryCount) { return }
+                    if (@($State.history)[-1].action -eq 'candidate-dry-run-or-cancelled') { return }
+                    continue
+                }
+                Complete-LayerWorkflowCandidate -Root $Root -State $State
+                continue
+            }
+            'remeasure-required' {
+                Invoke-LayerRemeasureStep -Root $Root -State $State -Seconds $Runtime.Seconds -Interval $Runtime.Interval -SkipTrace:$Runtime.SkipTrace
+                return
+            }
+            'reboot-required' {
+                Write-Host 'The workflow is paused for a reboot and health check. Reopen ZBookPerf afterward, then choose re-measure.' -ForegroundColor DarkYellow
+                return
+            }
+            'review-required' {
+                Write-Host 'The workflow is paused for a keep-or-revert decision based on the comparison.' -ForegroundColor DarkYellow
+                return
+            }
+            default {
+                throw "Unknown layer workflow phase '$($State.phase)'."
+            }
+        }
+    }
+    throw 'The sequential workflow exceeded its bounded step count without reaching a gate.'
+}
+
+function New-LayerRuntime {
+    param(
+        [int]$Seconds,
+        [int]$Interval,
+        [switch]$SkipTrace,
+        [int]$ShellRuns,
+        [int]$ShellWarmups,
+        [int]$ShellTimeout,
+        [int]$ShellCalibration,
+        [string[]]$WorkloadNames,
+        [int]$WorkloadInterval,
+        [int]$WorkloadCalibration,
+        [switch]$DryRun
+    )
+
+    return @{
+        Seconds = $Seconds
+        Interval = $Interval
+        SkipTrace = [bool]$SkipTrace
+        ShellRuns = $ShellRuns
+        ShellWarmups = $ShellWarmups
+        ShellTimeout = $ShellTimeout
+        ShellCalibration = $ShellCalibration
+        WorkloadNames = $WorkloadNames
+        WorkloadInterval = $WorkloadInterval
+        WorkloadCalibration = $WorkloadCalibration
+        DryRun = [bool]$DryRun
+    }
+}
+
+function Invoke-SelectedPerformanceLayer {
+    param(
+        [string]$Root,
+        [ValidateRange(1, 12)][int]$LayerNumber,
+        [hashtable]$Runtime
+    )
+
+    $state = Get-LayerWorkflowState -Root $Root
+    if ($state.activeCandidate) {
+        if ([int]$state.currentLayer -ne $LayerNumber) {
+            Write-Host "Layer $($state.currentLayer) has an unfinished change. Finish its measurement or rollback before changing layers." -ForegroundColor DarkYellow
+            return
+        }
+        Invoke-NextLayerWorkflowStep -Root $Root -State $state -Runtime $Runtime
+        return
+    }
+
+    $layer = Get-PerformanceLayer -Number $LayerNumber
+    $candidate = Get-NextLayerCandidate -State $state -Layer $LayerNumber
+    Write-Host ''
+    Write-Host "Layer $LayerNumber - $($layer.name)" -ForegroundColor Cyan
+    Write-Host $layer.description
+    if (-not $candidate) {
+        Write-Host 'UX-ROM does not yet contain an eligible tweak for this layer.' -ForegroundColor DarkYellow
+        Write-Host 'Use Full system diagnostics for one read-only health pass; this layer remains visible as an engineering gap.' -ForegroundColor DarkGray
+        return
+    }
+
+    Set-LayerWorkflowCurrentLayer -Root $Root -State $state -Layer $LayerNumber
+    Write-Host "Preparing: $(Get-CandidateDisplayName -Name $candidate)" -ForegroundColor Cyan
+    Write-Host 'The required baseline and support checks run automatically before the change.'
+    Invoke-LayerAssessmentStep @Runtime -Root $Root -State $state
+    Invoke-LayerEnhancementStep `
+        -Root $Root `
+        -State $state `
+        -Seconds $Runtime.Seconds `
+        -Interval $Runtime.Interval `
+        -SkipTrace:$Runtime.SkipTrace `
+        -DryRun:$Runtime.DryRun
+}
+
+function Invoke-FullSystemDiagnostics {
+    param(
+        [string]$Root,
+        [hashtable]$Runtime
+    )
+
+    Ensure-DataDirectories -Root $Root
+    Write-Host ''
+    Write-Host 'Full system diagnostics' -ForegroundColor Cyan
+    Write-Host 'One read-only pass: system baseline, Explorer readiness, and selected workload activity.'
+    $baseline = Invoke-Measurement `
+        -Kind baseline `
+        -Seconds $Runtime.Seconds `
+        -Interval $Runtime.Interval `
+        -Root $Root `
+        -SkipTrace:$Runtime.SkipTrace
+    $shell = Invoke-ShellProfile `
+        -Root $Root `
+        -RunCount $Runtime.ShellRuns `
+        -WarmupRunCount $Runtime.ShellWarmups `
+        -TimeoutMilliseconds $Runtime.ShellTimeout `
+        -ProbeCalibrationIterations $Runtime.ShellCalibration
+    $workload = Invoke-WorkloadProfile `
+        -Root $Root `
+        -ProcessNames $Runtime.WorkloadNames `
+        -Seconds $Runtime.Seconds `
+        -IntervalMilliseconds $Runtime.WorkloadInterval `
+        -CalibrationIterations $Runtime.WorkloadCalibration
+
+    $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')
+    $manifestPath = Join-Path (Join-Path $Root 'measurements') "$stamp-full-diagnostics.json"
+    $manifest = [pscustomobject][ordered]@{
+        schemaVersion = $script:SchemaVersion
+        product = $script:ProductName
+        productVersion = $script:ProductVersion
+        experimentId = $script:ExperimentId
+        capturedUtc = [DateTime]::UtcNow.ToString('o')
+        observationOnly = $true
+        evidence = [pscustomobject][ordered]@{
+            systemBaseline = $baseline.evidencePath
+            shellReadiness = $shell.evidencePath
+            workloadProfile = $workload.evidencePath
+        }
+        coveredLayers = @(1, 2, 5, 6, 10, 11)
+        integrationGaps = @(3, 4, 7, 8, 9, 12)
+        statement = 'No Windows setting was changed. A missing layer integration is not a clean bill of health.'
+    }
+    $manifest | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    Write-StructuredEvent -Root $Root -Level Information -Event 'full-diagnostics-complete' -Data @{ evidencePath = $manifestPath; observationOnly = $true }
+    Write-Host "Full diagnostic manifest: $manifestPath" -ForegroundColor Green
+    Write-Host 'No Windows setting was changed.' -ForegroundColor DarkYellow
+    return $manifest
+}
+
+function Get-SynergyBatchPlan {
+    $items = New-Object System.Collections.ArrayList
+    foreach ($candidate in @('MmcssResponsiveness', 'PowerAc', 'VisualEffects')) {
+        $support = Get-WorkflowCandidateSupport -Name $candidate
+        $layer = @(Get-PerformanceLayerCatalog | Where-Object { $candidate -in @($_.candidates) })[0]
+        [void]$items.Add([pscustomobject][ordered]@{
+            candidate = $candidate
+            displayName = Get-CandidateDisplayName -Name $candidate
+            layer = [int]$layer.number
+            supported = [bool]$support.supported
+            reason = $support.reason
+        })
+    }
+    return @($items)
+}
+
+function Get-SynergyBatchPath {
+    param([string]$Root)
+    return (Join-Path $Root 'latest-synergy-batch.json')
+}
+
+function Invoke-AllEligibleTweaks {
+    param(
+        [string]$Root,
+        [hashtable]$Runtime,
+        [switch]$Tier2Confirmed,
+        [switch]$DryRun,
+        [switch]$Interactive
+    )
+
+    $workflowState = Get-LayerWorkflowState -Root $Root
+    if ($workflowState.activeCandidate) {
+        throw "Layer $($workflowState.currentLayer) has an unfinished change. Measure or revert it before starting a synergy batch."
+    }
+    $plan = @(Get-SynergyBatchPlan)
+    $eligible = @($plan | Where-Object supported)
+    Write-Host ''
+    Write-Host 'Apply all eligible tweaks - synergy batch' -ForegroundColor Cyan
+    foreach ($item in $plan) {
+        $status = if ($item.supported) { 'included' } else { 'skipped: unsupported' }
+        Write-Host ("Layer {0}: {1} [{2}]" -f $item.layer, $item.displayName, $status)
+        if (-not $item.supported) { Write-Host "  $($item.reason)" -ForegroundColor DarkYellow }
+    }
+    Write-Host 'Excluded: NTFS last-access and Fast Startup experiments require reboot-specific validation.' -ForegroundColor DarkGray
+    Write-Host 'The included controls are applied as one named synergy experiment with one before/after measurement and a batch rollback record.'
+    if ($eligible.Count -eq 0) {
+        Write-Host 'No eligible tweak is supported on this PC.' -ForegroundColor DarkYellow
+        return
+    }
+
+    if ($DryRun) {
+        foreach ($item in $eligible) {
+            Invoke-Enhancement -Name $item.candidate -Root $Root -WhatIf -Confirm:$false
+        }
+        Write-Host 'Batch dry run complete. No setting was changed.' -ForegroundColor DarkYellow
+        return
+    }
+
+    $containsTier2 = @($eligible | Where-Object { $_.candidate -in $script:MachineCandidates }).Count -gt 0
+    if ($containsTier2 -and -not $Tier2Confirmed) {
+        if (-not $Interactive) {
+            throw 'The synergy batch contains Tier 2 machine changes. Pass -LabTier2Confirmed only on a dedicated, recoverable lab system.'
+        }
+        Write-Warning 'This batch contains machine-wide Windows settings.'
+        $answer = Read-Host 'Is this a dedicated, recoverable lab system and should UX-ROM apply the whole eligible batch? [y/N]'
+        if ($answer -notin @('y', 'Y', 'yes', 'YES', 'Yes')) {
+            Write-Host 'Cancelled. No setting was changed.' -ForegroundColor DarkYellow
+            return
+        }
+        $Tier2Confirmed = $true
+    } elseif ($Interactive) {
+        $answer = Read-Host 'Apply the complete eligible batch? [y/N]'
+        if ($answer -notin @('y', 'Y', 'yes', 'YES', 'Yes')) {
+            Write-Host 'Cancelled. No setting was changed.' -ForegroundColor DarkYellow
+            return
+        }
+    }
+
+    $baseline = Invoke-Measurement -Kind baseline -Seconds $Runtime.Seconds -Interval $Runtime.Interval -Root $Root -SkipTrace:$Runtime.SkipTrace
+    $entryIds = New-Object System.Collections.ArrayList
+    try {
+        foreach ($item in $eligible) {
+            $beforeLog = Get-ChangeLog -Root $Root
+            $beforeCount = @($beforeLog.entries).Count
+            Invoke-Enhancement -Name $item.candidate -Root $Root -Tier2Confirmed:$Tier2Confirmed -Confirm:$false
+            $afterLog = Get-ChangeLog -Root $Root
+            if (@($afterLog.entries).Count -gt $beforeCount) {
+                $entry = @($afterLog.entries)[-1]
+                if ($entry.status -ne 'applied') { throw "Batch verification failed for '$($item.candidate)'." }
+                [void]$entryIds.Add([string]$entry.id)
+            }
+        }
+        $after = Invoke-Measurement -Kind after -Seconds $Runtime.Seconds -Interval $Runtime.Interval -Root $Root -SkipTrace:$Runtime.SkipTrace
+        Show-MeasurementComparison -Root $Root
+    } catch {
+        for ($index = 0; $index -lt $entryIds.Count; $index++) {
+            Invoke-RevertChanges -Root $Root -Confirm:$false
+        }
+        throw
+    }
+
+    $batch = [pscustomobject][ordered]@{
+        schemaVersion = 1
+        product = $script:ProductName
+        batchId = [guid]::NewGuid().ToString()
+        status = 'active'
+        appliedUtc = [DateTime]::UtcNow.ToString('o')
+        entryIds = @($entryIds)
+        candidates = @($eligible.candidate)
+        baselineEvidencePath = $baseline.evidencePath
+        afterEvidencePath = $after.evidencePath
+        rebootRequired = $false
+        decision = 'AppliedAsRequestedNoStandalonePerformanceClaim'
+    }
+    $batch | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Get-SynergyBatchPath -Root $Root) -Encoding UTF8
+    foreach ($item in $eligible) {
+        Add-LayerWorkflowHistory -State $workflowState -Action 'candidate-kept' -Layer $item.layer -Candidate $item.candidate -EvidencePath $after.evidencePath -Reason "Retained as part of synergy batch $($batch.batchId); no standalone gain claim."
+    }
+    Save-LayerWorkflowState -Root $Root -State $workflowState
+    Write-StructuredEvent -Root $Root -Level Information -Event 'synergy-batch-applied' -Data @{ batchId = $batch.batchId; entryIds = @($entryIds); afterEvidencePath = $after.evidencePath }
+    Write-Host "Applied and verified $($entryIds.Count) change(s). Batch rollback is available from the main menu." -ForegroundColor Green
+    Write-Host 'This is a cumulative configuration experiment, not a claim that each item improved performance.' -ForegroundColor DarkYellow
+    return $batch
+}
+
+function Invoke-LayerWorkflow {
+    param(
+        [string]$Root,
+        [int]$Seconds,
+        [int]$Interval,
+        [switch]$SkipTrace,
+        [int]$ShellRuns,
+        [int]$ShellWarmups,
+        [int]$ShellTimeout,
+        [int]$ShellCalibration,
+        [string[]]$WorkloadNames,
+        [int]$WorkloadInterval,
+        [int]$WorkloadCalibration,
+        [switch]$DryRun
+    )
+
+    $runtime = New-LayerRuntime `
+        -Seconds $Seconds `
+        -Interval $Interval `
+        -SkipTrace:$SkipTrace `
+        -ShellRuns $ShellRuns `
+        -ShellWarmups $ShellWarmups `
+        -ShellTimeout $ShellTimeout `
+        -ShellCalibration $ShellCalibration `
+        -WorkloadNames $WorkloadNames `
+        -WorkloadInterval $WorkloadInterval `
+        -WorkloadCalibration $WorkloadCalibration `
+        -DryRun:$DryRun
+    $state = Get-LayerWorkflowState -Root $Root
+    Save-LayerWorkflowState -Root $Root -State $state
+    do {
+        $layer = Get-PerformanceLayer -Number ([int]$state.currentLayer)
+        switch (Show-LayerControlMenu -Layer $layer -State $state) {
+            '1' { Invoke-NextLayerWorkflowStep -Root $Root -State $state -Runtime $runtime }
+            '2' { Invoke-LayerAssessmentStep @runtime -Root $Root -State $state }
+            '3' {
+                Invoke-LayerEnhancementStep `
+                    -Root $Root `
+                    -State $state `
+                    -Seconds $Seconds `
+                    -Interval $Interval `
+                    -SkipTrace:$SkipTrace `
+                    -DryRun:$DryRun
+            }
+            '4' { Invoke-LayerRemeasureStep -Root $Root -State $state -Seconds $Seconds -Interval $Interval -SkipTrace:$SkipTrace }
+            '5' { Complete-LayerWorkflowCandidate -Root $Root -State $state }
+            '6' { Revert-LayerWorkflowCandidate -Root $Root -State $state -DryRun:$DryRun }
+            '7' { Skip-LayerWorkflowCandidate -Root $Root -State $state }
+            '8' { Show-PerformanceLayerMap -Root $Root -State $state }
+            'b' { return }
+            'B' { return }
+            default { Write-Warning 'Unknown layer action.' }
+        }
+        $state = Get-LayerWorkflowState -Root $Root
+    } while ($true)
+}
+
+function Invoke-ContextAwareRemeasure {
+    param(
+        [string]$Root,
+        [int]$Seconds,
+        [int]$Interval,
+        [switch]$SkipTrace
+    )
+
+    $state = Get-LayerWorkflowState -Root $Root
+    if ($state.activeCandidate) {
+        Invoke-LayerRemeasureStep -Root $Root -State $state -Seconds $Seconds -Interval $Interval -SkipTrace:$SkipTrace
+        return
+    }
+    [void](Invoke-Measurement -Kind after -Seconds $Seconds -Interval $Interval -Root $Root -SkipTrace:$SkipTrace)
+    Show-MeasurementComparison -Root $Root
+}
+
+function Invoke-ContextAwareRevert {
+    param(
+        [string]$Root,
+        [switch]$DryRun
+    )
+
+    $state = Get-LayerWorkflowState -Root $Root
+    if ($state.activeCandidate) {
+        Revert-LayerWorkflowCandidate -Root $Root -State $state -DryRun:$DryRun
+        return
+    }
+    $batchPath = Get-SynergyBatchPath -Root $Root
+    if (Test-Path -LiteralPath $batchPath) {
+        $batch = Get-Content -LiteralPath $batchPath -Raw | ConvertFrom-Json
+        if ($batch.status -eq 'active' -and @($batch.entryIds).Count -gt 0) {
+            $log = Get-ChangeLog -Root $Root
+            $activeEntries = @($log.entries | Where-Object { $_.status -eq 'applied' })
+            $batchIds = @($batch.entryIds | ForEach-Object { [string]$_ })
+            $tailIds = @($activeEntries | Select-Object -Last $batchIds.Count | ForEach-Object { [string]$_.id })
+            if (($tailIds -join '|') -ne ($batchIds -join '|')) {
+                throw 'The latest active changes no longer match the recorded synergy batch. Revert individual changes from newest to oldest.'
+            }
+            if ($DryRun) {
+                Write-Host "Batch revert dry run: UX-ROM would restore $($batchIds.Count) captured changes in reverse order." -ForegroundColor DarkYellow
+                return
+            }
+            for ($index = 0; $index -lt $batchIds.Count; $index++) {
+                Invoke-RevertChanges -Root $Root -Confirm:$false
+            }
+            $batch.status = 'reverted'
+            $batch | Add-Member -NotePropertyName revertedUtc -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
+            $batch | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $batchPath -Encoding UTF8
+            Write-StructuredEvent -Root $Root -Level Information -Event 'synergy-batch-reverted' -Data @{ batchId = $batch.batchId; entryIds = $batchIds }
+            Write-Host "Reverted and verified the full synergy batch ($($batchIds.Count) changes)." -ForegroundColor Green
+            return
+        }
+    }
+    Invoke-RevertChanges -Root $Root -WhatIf:$DryRun
+}
+
 function Show-ZBookPerfStatus {
     param([string]$Root)
+    Write-Host "$script:ProductName $script:ProductVersion" -ForegroundColor Cyan
     Write-Host "Experiment: $script:ExperimentId" -ForegroundColor Cyan
     Write-Host "Product version: $script:ProductVersion"
     Write-Host "Loaded from: $script:LoadedFrom"
@@ -2285,6 +3293,13 @@ function Show-ZBookPerfStatus {
     if (-not $powerSupport.supported) {
         Write-Host $powerSupport.reason -ForegroundColor DarkYellow
     }
+    $layerState = Get-LayerWorkflowState -Root $Root
+    $layer = Get-PerformanceLayer -Number ([int]$layerState.currentLayer)
+    Write-Host "Layer workflow: cycle $($layerState.cycleNumber), Layer $($layer.number), phase $($layerState.phase)"
+    Write-Host "Layer area: $($layer.name)"
+    if ($layerState.activeCandidate) {
+        Write-Host "Layer active change: $(Get-CandidateDisplayName -Name ([string]$layerState.activeCandidate))" -ForegroundColor DarkYellow
+    }
     $log = Get-ChangeLog -Root $Root
     if (@($log.entries).Count -eq 0) {
         Write-Host 'Recorded changes: none'
@@ -2293,19 +3308,68 @@ function Show-ZBookPerfStatus {
     }
 }
 
+function Show-UxRomHeader {
+    $logo = @'
+ _        _    ____ _  __ ____    _    _   _
+| |      / \  / ___| |/ // ___|  / \  | \ | |
+| |     / _ \| |   | ' / \___ \ / _ \ |  \| |
+| |___ / ___ \ |___| . \  ___) / ___ \| |\  |
+|_____/_/   \_\____|_|\_\|____/_/   \_\_| \_|
+                    U X - R O M
+'@
+    Write-Host $logo -ForegroundColor Cyan
+    Write-Host "Windows performance-layer controller  $script:ProductVersion" -ForegroundColor DarkGray
+}
+
 function Show-ZBookPerfMenu {
     Write-Host ''
-    Write-Host "ZBookPerf $script:ProductVersion - EXP-047" -ForegroundColor Cyan
+    Show-UxRomHeader
+    Write-Host ''
+    Write-Host 'D. Full system diagnostics - one read-only pass across every integrated check' -ForegroundColor White
+    Write-Host ''
+    foreach ($layer in Get-PerformanceLayerCatalog) {
+        Write-Host ("{0,2}. {1}" -f $layer.number, $layer.name) -ForegroundColor White
+        Write-Host ("    {0}" -f $layer.description) -ForegroundColor DarkGray
+    }
+    Write-Host ''
+    Write-Host 'A. Apply all eligible tweaks - one measured, reversible synergy batch' -ForegroundColor Yellow
+    Write-Host 'K. Keep the measured layer change and continue'
+    Write-Host 'R. Revert the active layer change or latest synergy batch'
+    Write-Host 'S. Show workflow, build, WPR, and support status'
+    Write-Host 'M. Maintenance and direct measurement tools'
+    Write-Host 'Q. Quit'
+    return (Read-Host 'Choose diagnostics, a layer, or an action')
+}
+
+function Show-ZBookPerfAdvancedMenu {
+    Write-Host ''
+    Write-Host 'Maintenance and direct measurement tools' -ForegroundColor Cyan
     Write-Host '1. Analyze and capture a baseline'
     Write-Host '2. Live performance watch'
-    Write-Host '3. Apply one reversible experiment (Enhance)'
-    Write-Host '4. Re-measure and compare'
+    Write-Host '3. Apply one reversible experiment directly'
+    Write-Host '4. Re-measure and compare directly'
     Write-Host '5. Revert the most recent applied change'
-    Write-Host '6. Status, build, WPR, and candidate support'
-    Write-Host '7. Diagnose Layer 10 shell responsiveness (read-only)'
-    Write-Host '8. Diagnose Layer 11 application runtime (read-only)'
-    Write-Host 'Q. Quit'
-    return (Read-Host 'Choose an action')
+    Write-Host '6. Status'
+    Write-Host '7. Measure Explorer readiness and shell settings'
+    Write-Host '8. Measure a selected application workload'
+    Write-Host '9. Show the detailed capability map'
+    Write-Host 'B. Back'
+    return (Read-Host 'Choose a maintenance action')
+}
+
+function Select-LayerInteractive {
+    param([string]$Root)
+
+    $state = Get-LayerWorkflowState -Root $Root
+    Show-PerformanceLayerMap -Root $Root -State $state
+    $selection = Read-Host 'Choose Layer 1-12'
+    $layerNumber = 0
+    if (-not [int]::TryParse($selection, [ref]$layerNumber) -or $layerNumber -lt 1 -or $layerNumber -gt 12) {
+        Write-Warning 'Choose a layer number from 1 through 12.'
+        return $false
+    }
+    Set-LayerWorkflowCurrentLayer -Root $Root -State $state -Layer $layerNumber
+    return $true
 }
 
 function Select-CandidateInteractive {
@@ -2347,7 +3411,10 @@ function Confirm-Tier2Interactive {
 }
 
 function Invoke-ZBookPerfMain {
-    if ($Analyze) { $script:Action = 'Analyze' }
+    if ($FullDiagnostics) { $script:Action = 'FullDiagnostics' }
+    elseif ($ApplyAll) { $script:Action = 'ApplyAll' }
+    elseif ($LayerWorkflow) { $script:Action = 'LayerWorkflow' }
+    elseif ($Analyze) { $script:Action = 'Analyze' }
     elseif ($Watch) { $script:Action = 'Watch' }
     elseif ($ShellProfile) { $script:Action = 'ShellProfile' }
     elseif ($WorkloadProfile) { $script:Action = 'WorkloadProfile' }
@@ -2355,10 +3422,49 @@ function Invoke-ZBookPerfMain {
     elseif ($Remeasure) { $script:Action = 'Remeasure' }
     elseif ($Revert) { $script:Action = 'Revert' }
 
+    $runtime = New-LayerRuntime `
+        -Seconds $DurationSeconds `
+        -Interval $SampleIntervalSeconds `
+        -SkipTrace:$NoTrace `
+        -ShellRuns $ShellRunCount `
+        -ShellWarmups $ShellWarmupRunCount `
+        -ShellTimeout $ShellTimeoutMilliseconds `
+        -ShellCalibration $ShellProbeCalibrationIterations `
+        -WorkloadNames $WorkloadProcessName `
+        -WorkloadInterval $WorkloadSampleIntervalMilliseconds `
+        -WorkloadCalibration $WorkloadCalibrationIterations `
+        -DryRun:$WhatIfPreference
+
     do {
         $selectedAction = $script:Action
         if ($selectedAction -eq 'Menu') {
-            switch (Show-ZBookPerfMenu) {
+            $menuChoice = Show-ZBookPerfMenu
+            $layerChoice = 0
+            if ([int]::TryParse($menuChoice, [ref]$layerChoice) -and $layerChoice -ge 1 -and $layerChoice -le 12) {
+                $selectedAction = "Layer:$layerChoice"
+            } else {
+                switch ($menuChoice) {
+                'd' { $selectedAction = 'FullDiagnostics' }
+                'D' { $selectedAction = 'FullDiagnostics' }
+                'a' { $selectedAction = 'ApplyAll' }
+                'A' { $selectedAction = 'ApplyAll' }
+                'k' { $selectedAction = 'KeepLayerChange' }
+                'K' { $selectedAction = 'KeepLayerChange' }
+                'r' { $selectedAction = 'Revert' }
+                'R' { $selectedAction = 'Revert' }
+                's' { $selectedAction = 'Status' }
+                'S' { $selectedAction = 'Status' }
+                'm' { $selectedAction = 'Advanced' }
+                'M' { $selectedAction = 'Advanced' }
+                'q' { return }
+                'Q' { return }
+                default { Write-Warning 'Unknown menu choice.'; continue }
+                }
+            }
+        }
+
+        if ($selectedAction -eq 'Advanced') {
+            switch (Show-ZBookPerfAdvancedMenu) {
                 '1' { $selectedAction = 'Analyze' }
                 '2' { $selectedAction = 'Watch' }
                 '3' { $selectedAction = 'Enhance' }
@@ -2367,13 +3473,69 @@ function Invoke-ZBookPerfMain {
                 '6' { $selectedAction = 'Status' }
                 '7' { $selectedAction = 'ShellProfile' }
                 '8' { $selectedAction = 'WorkloadProfile' }
-                'q' { return }
-                'Q' { return }
-                default { Write-Warning 'Unknown menu choice.'; continue }
+                '9' { $selectedAction = 'LayerMap' }
+                'b' { continue }
+                'B' { continue }
+                default { Write-Warning 'Unknown advanced choice.'; continue }
             }
         }
 
+        if ($selectedAction -like 'Layer:*') {
+            $selectedLayerNumber = [int]($selectedAction.Substring(6))
+            Invoke-SelectedPerformanceLayer -Root $DataRoot -LayerNumber $selectedLayerNumber -Runtime $runtime
+            if ($script:Action -ne 'Menu') { return }
+            continue
+        }
+
         switch ($selectedAction) {
+            'FullDiagnostics' {
+                [void](Invoke-FullSystemDiagnostics -Root $DataRoot -Runtime $runtime)
+            }
+            'ApplyAll' {
+                [void](Invoke-AllEligibleTweaks `
+                    -Root $DataRoot `
+                    -Runtime $runtime `
+                    -Tier2Confirmed:$LabTier2Confirmed `
+                    -DryRun:$WhatIfPreference `
+                    -Interactive:($script:Action -eq 'Menu'))
+            }
+            'KeepLayerChange' {
+                $state = Get-LayerWorkflowState -Root $DataRoot
+                Complete-LayerWorkflowCandidate -Root $DataRoot -State $state
+            }
+            'LayerWorkflow' {
+                Invoke-LayerWorkflow `
+                    -Root $DataRoot `
+                    -Seconds $DurationSeconds `
+                    -Interval $SampleIntervalSeconds `
+                    -SkipTrace:$NoTrace `
+                    -ShellRuns $ShellRunCount `
+                    -ShellWarmups $ShellWarmupRunCount `
+                    -ShellTimeout $ShellTimeoutMilliseconds `
+                    -ShellCalibration $ShellProbeCalibrationIterations `
+                    -WorkloadNames $WorkloadProcessName `
+                    -WorkloadInterval $WorkloadSampleIntervalMilliseconds `
+                    -WorkloadCalibration $WorkloadCalibrationIterations `
+                    -DryRun:$WhatIfPreference
+            }
+            'ChooseLayer' {
+                if (Select-LayerInteractive -Root $DataRoot) {
+                    Invoke-LayerWorkflow `
+                        -Root $DataRoot `
+                        -Seconds $DurationSeconds `
+                        -Interval $SampleIntervalSeconds `
+                        -SkipTrace:$NoTrace `
+                        -ShellRuns $ShellRunCount `
+                        -ShellWarmups $ShellWarmupRunCount `
+                        -ShellTimeout $ShellTimeoutMilliseconds `
+                        -ShellCalibration $ShellProbeCalibrationIterations `
+                        -WorkloadNames $WorkloadProcessName `
+                        -WorkloadInterval $WorkloadSampleIntervalMilliseconds `
+                        -WorkloadCalibration $WorkloadCalibrationIterations `
+                        -DryRun:$WhatIfPreference
+                }
+            }
+            'LayerMap' { Show-PerformanceLayerMap -Root $DataRoot }
             'Analyze' {
                 [void](Invoke-Measurement -Kind baseline -Seconds $DurationSeconds -Interval $SampleIntervalSeconds -Root $DataRoot -SkipTrace:$NoTrace)
             }
@@ -2421,10 +3583,13 @@ function Invoke-ZBookPerfMain {
                 Invoke-Enhancement -Name $selectedCandidate -Root $DataRoot -Tier2Confirmed:$tier2ConfirmedForRun -DiagnosticConfirmed:$diagnosticConfirmedForRun -WhatIf:$WhatIfPreference
             }
             'Remeasure' {
-                [void](Invoke-Measurement -Kind after -Seconds $DurationSeconds -Interval $SampleIntervalSeconds -Root $DataRoot -SkipTrace:$NoTrace)
-                Show-MeasurementComparison -Root $DataRoot
+                Invoke-ContextAwareRemeasure `
+                    -Root $DataRoot `
+                    -Seconds $DurationSeconds `
+                    -Interval $SampleIntervalSeconds `
+                    -SkipTrace:$NoTrace
             }
-            'Revert' { Invoke-RevertChanges -Root $DataRoot -WhatIf:$WhatIfPreference }
+            'Revert' { Invoke-ContextAwareRevert -Root $DataRoot -DryRun:$WhatIfPreference }
             'Status' { Show-ZBookPerfStatus -Root $DataRoot }
         }
         if ($script:Action -ne 'Menu') { return }
