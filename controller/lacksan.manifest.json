@@ -25,6 +25,12 @@
       "displayName": "Logi Options+ demand launch",
       "description": "Inventory the system and remove one exact Logi Options+ tray or background Run registration with transaction rollback.",
       "providers": ["system-inventory", "logi-options-plus-run"]
+    },
+    {
+      "id": "LogiBoltDemandLaunch",
+      "displayName": "Logi Bolt demand launch",
+      "description": "Inventory the system and remove one exact Logi Bolt tray or background Run registration with transaction rollback.",
+      "providers": ["system-inventory", "logi-bolt-run"]
     }
   ],
   "providers": [
@@ -62,6 +68,16 @@
       "id": "logi-options-plus-run",
       "displayName": "Logi Options+ tray Run registration",
       "script": "providers/LogiOptionsPlusRun.ps1",
+      "mode": "Reversible",
+      "requires": ["system-inventory"],
+      "conflicts": [],
+      "rebootRequired": false,
+      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
+    },
+    {
+      "id": "logi-bolt-run",
+      "displayName": "Logi Bolt tray Run registration",
+      "script": "providers/LogiBoltRun.ps1",
       "mode": "Reversible",
       "requires": ["system-inventory"],
       "conflicts": [],
