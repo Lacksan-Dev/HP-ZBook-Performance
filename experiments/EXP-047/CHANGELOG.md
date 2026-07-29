@@ -16,6 +16,8 @@
   inspection and not part of execution.
 - Stopped the `Invoke-Expression` error path from replacing the real failure
   with an undefined script-level `$PSCmdlet` error.
+- Made the explicitly labeled interactive Fast Startup diagnostic selection
+  carry diagnostic intent, while preserving `-Diagnostic` for automated runs.
 - Added regression coverage for native stderr capture and both the saved-file
   and trusted one-line launch paths, including an error after menu entry.
 
