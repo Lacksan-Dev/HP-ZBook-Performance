@@ -4,7 +4,7 @@
 - Layer: 10 — Windows shell, GUI, capture, notifications, and perceived responsiveness
 - Outcome: implemented
 - Evidence state: observation-only baseline; no Windows setting changed
-- Implementation commit: pending initial engineering commit
+- Implementation commit: `254bc8a6e3b6a1ca8dc5400c056e71ee85177d07`
 - Private raw evidence identifier: `20260729-055337-shell-profile.json`
 
 ## Customer-visible interval and layer ownership
