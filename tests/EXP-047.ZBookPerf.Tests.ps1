@@ -34,6 +34,17 @@ Describe 'EXP-047 ZBookPerf' {
             $validateSet.ValidValues | Should -Contain 'ShellProfile'
         }
 
+        It 'exposes the Layer 11 workload profile as a public read-only action' {
+            $command = Get-Command $scriptPath
+            ($command.Parameters.Keys -contains 'WorkloadProfile') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'WorkloadProcessName') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'WorkloadSampleIntervalMilliseconds') | Should -BeTrue
+            $validateSet = @($command.Parameters['Action'].Attributes | Where-Object {
+                $_ -is [System.Management.Automation.ValidateSetAttribute]
+            })[0]
+            $validateSet.ValidValues | Should -Contain 'WorkloadProfile'
+        }
+
         It 'keeps security and management exclusions out of mutation commands' {
             $content = Get-Content -LiteralPath $scriptPath -Raw
             $content | Should -Not -Match 'Set-MpPreference'
@@ -284,6 +295,207 @@ Describe 'EXP-047 ZBookPerf' {
         It 'contains no Windows-setting mutation command in the shell profiler' {
             $body = (Get-Command Invoke-ShellProfile).ScriptBlock.ToString()
             $body | Should -Not -Match 'New-ItemProperty|Set-ItemProperty|Remove-ItemProperty|Set-Service|Stop-Service|schtasks|powercfg'
+        }
+    }
+
+    Context 'Layer 11 workload runtime profile' {
+        It 'normalizes exact executable names without accepting paths or wildcards' {
+            $resolved = @(Resolve-WorkloadProcessNames -Names @('EXPLORER', 'msedge.exe', 'explorer'))
+
+            $resolved | Should -Be @('explorer.exe', 'msedge.exe')
+            { Resolve-WorkloadProcessNames -Names @('C:\Windows\notepad.exe') } | Should -Throw
+            { Resolve-WorkloadProcessNames -Names @('edge*') } | Should -Throw
+        }
+
+        It 'computes CPU and IO deltas only for a stable process identity' {
+            $frequency = [double][Diagnostics.Stopwatch]::Frequency
+            $beforeRow = [pscustomobject]@{
+                name = 'example.exe'
+                processId = 42
+                creationUtc = '2026-07-29T00:00:00.0000000Z'
+                identity = '42|2026-07-29T00:00:00.0000000Z'
+                kernelModeTime100ns = [uint64]0
+                userModeTime100ns = [uint64]0
+                ioCountersAvailable = $true
+                readTransferBytes = [uint64]100
+                writeTransferBytes = [uint64]50
+                workingSetBytes = [uint64]900
+                privateMemoryBytes = [uint64]800
+                handleCount = [uint32]4
+                threadCount = [uint32]2
+            }
+            $afterRow = $beforeRow.PSObject.Copy()
+            $afterRow.kernelModeTime100ns = [uint64]5000000
+            $afterRow.userModeTime100ns = [uint64]5000000
+            $afterRow.readTransferBytes = [uint64]300
+            $afterRow.writeTransferBytes = [uint64]150
+            $afterRow.workingSetBytes = [uint64]1000
+            $afterRow.privateMemoryBytes = [uint64]850
+            $afterRow.handleCount = [uint32]5
+            $afterRow.threadCount = [uint32]3
+            $before = [pscustomobject]@{
+                monotonicTicks = [int64]0
+                processes = @($beforeRow)
+            }
+            $after = [pscustomobject]@{
+                capturedUtc = '2026-07-29T00:00:02.0000000Z'
+                monotonicTicks = [int64]($frequency * 2)
+                queryDurationMilliseconds = 3
+                processes = @($afterRow)
+                errors = @()
+            }
+
+            $interval = ConvertTo-WorkloadInterval -Previous $before -Current $after -LogicalProcessorCount 2
+
+            $interval.status | Should -Be 'Measured'
+            $interval.stableProcessCount | Should -Be 1
+            $interval.cpuLogicalProcessorPercent | Should -Be 50
+            $interval.cpuMachinePercent | Should -Be 25
+            $interval.readBytesPerSecond | Should -Be 100
+            $interval.writeBytesPerSecond | Should -Be 50
+            $interval.workingSetBytes | Should -Be 1000
+        }
+
+        It 'does not join reused process identifiers across different creation times' {
+            $before = [pscustomobject]@{
+                monotonicTicks = [int64]0
+                processes = @([pscustomobject]@{
+                    identity = '42|first'
+                    processId = 42
+                })
+            }
+            $after = [pscustomobject]@{
+                capturedUtc = '2026-07-29T00:00:01.0000000Z'
+                monotonicTicks = [int64][Diagnostics.Stopwatch]::Frequency
+                queryDurationMilliseconds = 1
+                processes = @([pscustomobject]@{
+                    name = 'example.exe'
+                    identity = '42|second'
+                    processId = 42
+                    creationUtc = 'second'
+                    workingSetBytes = [uint64]100
+                    privateMemoryBytes = [uint64]100
+                    handleCount = [uint32]1
+                    threadCount = [uint32]1
+                })
+                errors = @()
+            }
+
+            $interval = ConvertTo-WorkloadInterval -Previous $before -Current $after -LogicalProcessorCount 2
+
+            $interval.status | Should -Be 'NoStableProcessPair'
+            $interval.stableProcessCount | Should -Be 0
+            $interval.startedProcessCount | Should -Be 1
+            $interval.exitedProcessCount | Should -Be 1
+        }
+
+        It 'retains CPU and memory while leaving unavailable IO metrics null' {
+            $identity = '7|2026-07-29T00:00:00.0000000Z'
+            $beforeRow = [pscustomobject]@{
+                name = 'protected.exe'; processId = 7; creationUtc = '2026-07-29T00:00:00.0000000Z'; identity = $identity
+                kernelModeTime100ns = [uint64]0; userModeTime100ns = [uint64]0
+                ioCountersAvailable = $false; readTransferBytes = $null; writeTransferBytes = $null
+                workingSetBytes = [uint64]100; privateMemoryBytes = [uint64]80
+                handleCount = [uint32]2; threadCount = [uint32]1
+            }
+            $afterRow = $beforeRow.PSObject.Copy()
+            $afterRow.userModeTime100ns = [uint64]1000000
+            $afterRow.workingSetBytes = [uint64]120
+            $before = [pscustomobject]@{ monotonicTicks = [int64]0; processes = @($beforeRow) }
+            $after = [pscustomobject]@{
+                capturedUtc = '2026-07-29T00:00:01.0000000Z'
+                monotonicTicks = [int64][Diagnostics.Stopwatch]::Frequency
+                queryDurationMilliseconds = 1
+                processes = @($afterRow)
+                errors = @()
+            }
+
+            $interval = ConvertTo-WorkloadInterval -Previous $before -Current $after -LogicalProcessorCount 2
+
+            $interval.status | Should -Be 'Measured'
+            $interval.cpuMachinePercent | Should -Be 5
+            $interval.workingSetBytes | Should -Be 120
+            $interval.ioMeasuredProcessCount | Should -Be 0
+            $interval.readBytesPerSecond | Should -BeNullOrEmpty
+            $interval.writeBytesPerSecond | Should -BeNullOrEmpty
+        }
+
+        It 'reports distributions only from measured intervals' {
+            $intervals = @(
+                [pscustomobject]@{
+                    status = 'Measured'; observedProcessCount = 1; startedProcessCount = 0; exitedProcessCount = 0
+                    cpuLogicalProcessorPercent = 20; cpuMachinePercent = 10
+                    readBytesPerSecond = 100; writeBytesPerSecond = 50
+                    workingSetBytes = 1000; privateMemoryBytes = 800
+                    handleCount = 5; threadCount = 3; queryDurationMilliseconds = 2
+                },
+                [pscustomobject]@{
+                    status = 'NoStableProcessPair'; observedProcessCount = 0; startedProcessCount = 0; exitedProcessCount = 1
+                },
+                [pscustomobject]@{
+                    status = 'Measured'; observedProcessCount = 1; startedProcessCount = 0; exitedProcessCount = 0
+                    cpuLogicalProcessorPercent = 40; cpuMachinePercent = 20
+                    readBytesPerSecond = 300; writeBytesPerSecond = 150
+                    workingSetBytes = 1200; privateMemoryBytes = 900
+                    handleCount = 7; threadCount = 5; queryDurationMilliseconds = 4
+                }
+            )
+
+            $summary = Get-WorkloadProfileSummary -Intervals $intervals
+
+            $summary.requestedIntervalCount | Should -Be 3
+            $summary.measuredIntervalCount | Should -Be 2
+            $summary.metrics.cpuMachinePercent.median | Should -Be 15
+            $summary.metrics.readBytesPerSecond.p95 | Should -Be 300
+            $summary.decision | Should -Be 'BaselineOnlyNoPerformanceClaim'
+        }
+
+        It 'records a missing target as unavailable instead of fabricating zero activity' {
+            $interval = [pscustomobject]@{
+                status = 'NoStableProcessPair'
+                observedProcessCount = 0
+                startedProcessCount = 0
+                exitedProcessCount = 0
+            }
+
+            $summary = Get-WorkloadProfileSummary -Intervals @($interval)
+
+            $summary.measuredIntervalCount | Should -Be 0
+            $summary.metrics.cpuMachinePercent.count | Should -Be 0
+            $summary.metrics.cpuMachinePercent.median | Should -BeNullOrEmpty
+            $summary.decision | Should -Be 'NoStableTargetProcessObserved'
+        }
+
+        It 'calibrates the complete filtered snapshot query separately' {
+            Mock Get-WorkloadProcessSnapshot {
+                [pscustomobject]@{ queryDurationMilliseconds = 2 }
+            }
+
+            $measurement = Measure-WorkloadSnapshotOverhead -ProcessNames @('explorer.exe') -Iterations 3
+
+            $measurement.iterations | Should -Be 3
+            $measurement.samplesMilliseconds.Count | Should -Be 3
+            $measurement.medianMilliseconds | Should -Be 2
+            Should -Invoke Get-WorkloadProcessSnapshot -Times 4
+        }
+
+        It 'routes the public action with bounded runtime-profile parameters' {
+            $script:Action = 'WorkloadProfile'
+            $script:WorkloadProcessName = @('explorer.exe')
+            $script:DurationSeconds = 5
+            $script:WorkloadSampleIntervalMilliseconds = 500
+            $script:WorkloadCalibrationIterations = 3
+            $script:DataRoot = $TestDrive
+            Mock Invoke-WorkloadProfile { }
+
+            Invoke-ZBookPerfMain
+
+            Should -Invoke Invoke-WorkloadProfile -Times 1
+        }
+
+        It 'contains no process or Windows-setting mutation command in the workload profiler' {
+            $body = (Get-Command Invoke-WorkloadProfile).ScriptBlock.ToString()
+            $body | Should -Not -Match 'Stop-Process|Start-Process|Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|Set-Service|Stop-Service|powercfg'
         }
     }
 

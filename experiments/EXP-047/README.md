@@ -15,10 +15,11 @@ The root `ZBookPerf.ps1` script provides:
 2. A counter/CIM fallback when WPR is missing, not elevated, or fails to start.
 3. Console CPU, memory, disk, DPC/ISR, thermal-zone, and per-process views with ASCII bars and Unicode sparklines.
 4. A Layer 10 shell profile that inventories documented UI and policy surfaces and records repeated Explorer-window readiness runs with measured probe overhead.
-5. One named enhancement candidate per invocation.
-6. A required baseline-evidence gate before application.
-7. Exact state capture in `C:\ProgramData\ZBookPerf\changes.json`, structured JSONL events, post-change verification, idempotence, reboot-persistence handling, and rollback verification.
-8. A repeated measurement and side-by-side comparison. A single before/after pair is never labeled a proven improvement.
+5. A Layer 11 workload runtime profile that attributes bounded CPU, I/O, memory, thread, handle, and lifecycle observations to exact executable names and stable process identities.
+6. One named enhancement candidate per invocation.
+7. A required baseline-evidence gate before application.
+8. Exact state capture in `C:\ProgramData\ZBookPerf\changes.json`, structured JSONL events, post-change verification, idempotence, reboot-persistence handling, and rollback verification.
+9. A repeated measurement and side-by-side comparison. A single before/after pair is never labeled a proven improvement.
 
 The WPR ETL contains system activity and can be large. Review it before sharing. The JSON environment record deliberately avoids serial numbers, usernames, network addresses, command lines, and customer content.
 
@@ -34,6 +35,14 @@ Run `.\ZBookPerf.ps1 -Action ShellProfile -ShellRunCount 5`, or choose option 7 
 - measures a defined interval from `Shell.Explore` to a new matching `IShellWindows` entry reporting `Busy = false` and `ReadyState = Complete`.
 
 The benchmark uses a private folder below the selected data root so it can distinguish its own Explorer window. It snapshots existing window handles, closes only the new matching benchmark window, bounds each run with a timeout, and measures the complete readiness-probe overhead before collecting the repeated runs. The JSON retains raw durations, an estimated p95-per-probe observer budget, median, median absolute deviation, failures, AC state, and Battery Saver state. The profile writes evidence files but does not change a Windows setting, restart Explorer, or claim a speed-up.
+
+## Layer 11 workload runtime profile
+
+Run `.\ZBookPerf.ps1 -Action WorkloadProfile -WorkloadProcessName explorer.exe -DurationSeconds 30`, or choose option 8 in the interactive menu. One or more exact executable names can be supplied. Paths, wildcards, and command lines are rejected.
+
+The profiler uses `System.Diagnostics.Process`, the documented `GetProcessIoCounters` API, and a monotonic `System.Diagnostics.Stopwatch` timestamp. Process ID plus start time forms the identity, preventing PID reuse from combining unrelated processes. Consecutive snapshots produce logical-processor and whole-machine CPU percentages, read/write transfer rates, working set, private memory, handle and thread counts, and process starts/exits. Snapshot duration is retained for every interval, and a separate warmup plus repeated calibration reports the median and p95 observer cost. The profiler does not overhead-correct the raw metrics. I/O values remain null instead of becoming a false zero when process-handle access does not permit the documented I/O query.
+
+The JSON excludes command lines, executable paths, window titles, customer content, and network endpoints. A missing target or process lifecycle transition becomes an unmeasured interval instead of a fabricated zero. The action never launches, terminates, suspends, reprioritizes, or reconfigures a process and never claims that one baseline is an optimization.
 
 ## Supported candidates
 
