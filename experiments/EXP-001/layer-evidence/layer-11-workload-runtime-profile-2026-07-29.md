@@ -4,7 +4,7 @@
 - Layer: 11 - application/runtime efficiency and workload profiles
 - Outcome: implemented
 - Evidence state: observation-only baseline; no process or Windows setting changed
-- Implementation commit: pending initial engineering commit
+- Implementation commit: `99793eca0bf48d217042919b6e83bbbc759285ef`
 - Private final raw evidence identifier: `20260729-223714-workload-profile.json`
 - Private rejected-prototype identifier: `20260729-223245-workload-profile.json`
 
