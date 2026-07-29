@@ -2,135 +2,25 @@
   "schemaVersion": 1,
   "product": "Lacksan Controller",
   "profiles": [
-    {
-      "id": "InventoryOnly",
-      "displayName": "Inventory only",
-      "description": "Read-only HP Windows 11 support and protected-application inventory.",
-      "providers": ["system-inventory"]
-    },
-    {
-      "id": "OneDriveDemandLaunch",
-      "displayName": "OneDrive demand launch",
-      "description": "Inventory the system and remove one exact current-user OneDrive /background Run registration with transaction rollback.",
-      "providers": ["system-inventory", "onedrive-background-run"]
-    },
-    {
-      "id": "ClassicTeamsDemandLaunch",
-      "displayName": "Classic Teams demand launch",
-      "description": "Inventory the system and remove one exact classic Teams Squirrel Run registration with transaction rollback.",
-      "providers": ["system-inventory", "classic-teams-run"]
-    },
-    {
-      "id": "LogiOptionsPlusDemandLaunch",
-      "displayName": "Logi Options+ demand launch",
-      "description": "Inventory the system and remove one exact Logi Options+ tray or background Run registration with transaction rollback.",
-      "providers": ["system-inventory", "logi-options-plus-run"]
-    },
-    {
-      "id": "LogiBoltDemandLaunch",
-      "displayName": "Logi Bolt demand launch",
-      "description": "Inventory the system and remove one exact Logi Bolt tray or background Run registration with transaction rollback.",
-      "providers": ["system-inventory", "logi-bolt-run"]
-    },
-    {
-      "id": "LogiTuneDemandLaunch",
-      "displayName": "Logi Tune demand launch",
-      "description": "Inventory the system and remove one exact Logi Tune tray or background Run registration with transaction rollback.",
-      "providers": ["system-inventory", "logi-tune-run"]
-    },
-    {
-      "id": "LogitechGHubDemandLaunch",
-      "displayName": "Logitech G Hub demand launch",
-      "description": "Inventory the system and remove one exact Logitech G Hub tray or background Run registration with transaction rollback.",
-      "providers": ["system-inventory", "logitech-ghub-run"]
-    },
-    {
-      "id": "EdgeTrueDemandLaunch",
-      "displayName": "Edge true demand launch",
-      "description": "Inventory the system and disable Edge Startup Boost through one recommended policy with transaction rollback.",
-      "providers": ["system-inventory", "edge-startup-boost-policy"]
-    }
+    {"id":"InventoryOnly","displayName":"Inventory only","description":"Read-only HP Windows 11 support and protected-application inventory.","providers":["system-inventory"]},
+    {"id":"OneDriveDemandLaunch","displayName":"OneDrive demand launch","description":"Inventory the system and remove one exact current-user OneDrive /background Run registration with transaction rollback.","providers":["system-inventory","onedrive-background-run"]},
+    {"id":"ClassicTeamsDemandLaunch","displayName":"Classic Teams demand launch","description":"Inventory the system and remove one exact classic Teams Squirrel Run registration with transaction rollback.","providers":["system-inventory","classic-teams-run"]},
+    {"id":"LogiOptionsPlusDemandLaunch","displayName":"Logi Options+ demand launch","description":"Inventory the system and remove one exact Logi Options+ tray or background Run registration with transaction rollback.","providers":["system-inventory","logi-options-plus-run"]},
+    {"id":"LogiBoltDemandLaunch","displayName":"Logi Bolt demand launch","description":"Inventory the system and remove one exact Logi Bolt tray or background Run registration with transaction rollback.","providers":["system-inventory","logi-bolt-run"]},
+    {"id":"LogiTuneDemandLaunch","displayName":"Logi Tune demand launch","description":"Inventory the system and remove one exact Logi Tune tray or background Run registration with transaction rollback.","providers":["system-inventory","logi-tune-run"]},
+    {"id":"LogitechGHubDemandLaunch","displayName":"Logitech G Hub demand launch","description":"Inventory the system and remove one exact Logitech G Hub tray or background Run registration with transaction rollback.","providers":["system-inventory","logitech-ghub-run"]},
+    {"id":"EdgeTrueDemandLaunch","displayName":"Edge true demand launch","description":"Inventory the system and disable Edge Startup Boost through one recommended policy with transaction rollback.","providers":["system-inventory","edge-startup-boost-policy"]},
+    {"id":"LogitechGHubUpdaterDemandStart","displayName":"Logitech G Hub updater demand start","description":"Inventory the system and set the exact Logitech G Hub updater service to Manual while preserving transaction rollback.","providers":["system-inventory","logitech-ghub-updater-service"]}
   ],
   "providers": [
-    {
-      "id": "system-inventory",
-      "displayName": "System inventory",
-      "script": "providers/SystemInventory.ps1",
-      "mode": "ReadOnly",
-      "requires": [],
-      "conflicts": [],
-      "rebootRequired": false,
-      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
-    },
-    {
-      "id": "onedrive-background-run",
-      "displayName": "OneDrive background Run registration",
-      "script": "providers/OneDriveBackgroundRun.ps1",
-      "mode": "Reversible",
-      "requires": ["system-inventory"],
-      "conflicts": [],
-      "rebootRequired": false,
-      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
-    },
-    {
-      "id": "classic-teams-run",
-      "displayName": "Classic Teams Squirrel Run registration",
-      "script": "providers/ClassicTeamsRun.ps1",
-      "mode": "Reversible",
-      "requires": ["system-inventory"],
-      "conflicts": [],
-      "rebootRequired": false,
-      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
-    },
-    {
-      "id": "logi-options-plus-run",
-      "displayName": "Logi Options+ tray Run registration",
-      "script": "providers/LogiOptionsPlusRun.ps1",
-      "mode": "Reversible",
-      "requires": ["system-inventory"],
-      "conflicts": [],
-      "rebootRequired": false,
-      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
-    },
-    {
-      "id": "logi-bolt-run",
-      "displayName": "Logi Bolt tray Run registration",
-      "script": "providers/LogiBoltRun.ps1",
-      "mode": "Reversible",
-      "requires": ["system-inventory"],
-      "conflicts": [],
-      "rebootRequired": false,
-      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
-    },
-    {
-      "id": "logi-tune-run",
-      "displayName": "Logi Tune tray Run registration",
-      "script": "providers/LogiTuneRun.ps1",
-      "mode": "Reversible",
-      "requires": ["system-inventory"],
-      "conflicts": [],
-      "rebootRequired": false,
-      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
-    },
-    {
-      "id": "logitech-ghub-run",
-      "displayName": "Logitech G Hub tray Run registration",
-      "script": "providers/LogitechGHubRun.ps1",
-      "mode": "Reversible",
-      "requires": ["system-inventory"],
-      "conflicts": [],
-      "rebootRequired": false,
-      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
-    },
-    {
-      "id": "edge-startup-boost-policy",
-      "displayName": "Edge Startup Boost recommended policy",
-      "script": "providers/EdgeStartupBoostPolicy.ps1",
-      "mode": "Reversible",
-      "requires": ["system-inventory"],
-      "conflicts": [],
-      "rebootRequired": false,
-      "protectedScopes": ["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
-    }
+    {"id":"system-inventory","displayName":"System inventory","script":"providers/SystemInventory.ps1","mode":"ReadOnly","requires":[],"conflicts":[],"rebootRequired":false,"protectedScopes":["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]},
+    {"id":"onedrive-background-run","displayName":"OneDrive background Run registration","script":"providers/OneDriveBackgroundRun.ps1","mode":"Reversible","requires":["system-inventory"],"conflicts":[],"rebootRequired":false,"protectedScopes":["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]},
+    {"id":"classic-teams-run","displayName":"Classic Teams Squirrel Run registration","script":"providers/ClassicTeamsRun.ps1","mode":"Reversible","requires":["system-inventory"],"conflicts":[],"rebootRequired":false,"protectedScopes":["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]},
+    {"id":"logi-options-plus-run","displayName":"Logi Options+ tray Run registration","script":"providers/LogiOptionsPlusRun.ps1","mode":"Reversible","requires":["system-inventory"],"conflicts":[],"rebootRequired":false,"protectedScopes":["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]},
+    {"id":"logi-bolt-run","displayName":"Logi Bolt tray Run registration","script":"providers/LogiBoltRun.ps1","mode":"Reversible","requires":["system-inventory"],"conflicts":[],"rebootRequired":false,"protectedScopes":["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]},
+    {"id":"logi-tune-run","displayName":"Logi Tune tray Run registration","script":"providers/LogiTuneRun.ps1","mode":"Reversible","requires":["system-inventory"],"conflicts":[],"rebootRequired":false,"protectedScopes":["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]},
+    {"id":"logitech-ghub-run","displayName":"Logitech G Hub tray Run registration","script":"providers/LogitechGHubRun.ps1","mode":"Reversible","requires":["system-inventory"],"conflicts":[],"rebootRequired":false,"protectedScopes":["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]},
+    {"id":"edge-startup-boost-policy","displayName":"Edge Startup Boost recommended policy","script":"providers/EdgeStartupBoostPolicy.ps1","mode":"Reversible","requires":["system-inventory"],"conflicts":[],"rebootRequired":false,"protectedScopes":["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]},
+    {"id":"logitech-ghub-updater-service","displayName":"Logitech G Hub updater service","script":"providers/LogitechGHubUpdaterService.ps1","mode":"Reversible","requires":["system-inventory"],"conflicts":[],"rebootRequired":false,"protectedScopes":["WindowsSecurity","WindowsUpdate","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]}
   ]
 }
