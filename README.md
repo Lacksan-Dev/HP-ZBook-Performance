@@ -44,9 +44,10 @@ ZBookPerf accepts `-Candidate` as before. Internally that parameter uses a
 collision-resistant name so the convenience command also works in Windows
 PowerShell 5.1.
 
-The menu prints a product version so an already-running, older copy is easy to
-spot. Downloading a new file does not replace code that is already loaded in an
-open menu; quit that menu and start the downloaded file again.
+On startup, the console prints the Lacksan and UX-ROM ASCII marks plus the
+product version once. It does not redraw the large banner whenever the menu
+returns. Downloading a new file does not replace code that is already loaded in
+an open menu; quit that menu and start the downloaded file again.
 
 The main UI now has one full-system diagnostic, one plainly described choice
 for each of the twelve performance layers, and one **Apply all eligible tweaks**

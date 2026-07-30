@@ -96,8 +96,9 @@ $ErrorActionPreference = 'Stop'
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
 $script:ProductName = 'Lacksan UX-ROM'
-$script:ProductVersion = '2026.07.30.4'
+$script:ProductVersion = '2026.07.30.5'
 $script:LayerWorkflowSchemaVersion = 1
+$script:SplashShown = $false
 $script:LoadedFrom = if ([string]::IsNullOrWhiteSpace([string]$PSCommandPath)) {
     'in-memory content'
 } else {
@@ -3794,21 +3795,37 @@ function Show-ZBookPerfStatus {
 }
 
 function Show-UxRomHeader {
-    $logo = @'
- _        _    ____ _  __ ____    _    _   _
-| |      / \  / ___| |/ // ___|  / \  | \ | |
-| |     / _ \| |   | ' / \___ \ / _ \ |  \| |
-| |___ / ___ \ |___| . \  ___) / ___ \| |\  |
-|_____/_/   \_\____|_|\_\|____/_/   \_\_| \_|
-                    U X - R O M
+    $lacksanLogo = @'
+   _        _    ____ _  __ ____    _    _   _
+  | |      / \  / ___| |/ // ___|  / \  | \ | |
+  | |     / _ \| |   | ' / \___ \ / _ \ |  \| |
+  | |___ / ___ \ |___| . \  ___) / ___ \| |\  |
+  |_____/_/   \_\____|_|\_\|____/_/   \_\_| \_|
 '@
-    Write-Host $logo -ForegroundColor Cyan
+    $uxRomLogo = @'
+   _   _ __  __       ____   ___  __  __
+  | | | |\ \/ /      |  _ \ / _ \|  \/  |
+  | | | | \  / _____ | |_) | | | | |\/| |
+  | |_| | /  \|_____| |  _ <| |_| | |  | |
+   \___/ /_/\_\      |_| \_\\___/|_|  |_|
+'@
+    Write-Host $lacksanLogo -ForegroundColor Cyan
+    Write-Host $uxRomLogo -ForegroundColor Green
+    Write-Host 'LACKSAN  //  UX-ROM' -ForegroundColor White
+    Write-Host 'U X - R O M' -ForegroundColor Green
     Write-Host "Windows performance-layer controller  $script:ProductVersion" -ForegroundColor DarkGray
 }
 
-function Show-ZBookPerfMenu {
+function Show-UxRomSplash {
+    if ($script:SplashShown) { return }
+    $script:SplashShown = $true
     Write-Host ''
     Show-UxRomHeader
+    Write-Host 'Loading the twelve performance layers...' -ForegroundColor DarkGray
+    Write-Host ''
+}
+
+function Show-ZBookPerfMenu {
     Write-Host ''
     Write-Host 'D. Full system diagnostics - one read-only pass across every integrated check' -ForegroundColor White
     Write-Host ''
@@ -3897,6 +3914,8 @@ function Confirm-Tier2Interactive {
 }
 
 function Invoke-ZBookPerfMain {
+    Show-UxRomSplash
+
     if ($FullDiagnostics) { $script:Action = 'FullDiagnostics' }
     elseif ($ApplyAll) { $script:Action = 'ApplyAll' }
     elseif ($LayerWorkflow) { $script:Action = 'LayerWorkflow' }
