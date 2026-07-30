@@ -17,7 +17,7 @@ $protectedPattern='(?i)defender|firewall|bitlocker|credential|vbs|security|updat
 
 function Write-StructuredLog([string]$Event,[string]$Result,[object]$Data){
     if($LogPath){
-        $record=[ordered]@{timestampUtc=(Get-Date).ToUniversalTime().ToString('o');experiment='EXP-064';provider='hp-system-info-hsa-service';action=$Action;event=$Event;result=$Result;data=$Data}
+        $record=[ordered]@{timestampUtc=(Get-Date).ToUniversalTime().ToString('o');experiment='EXP-065';provider='hp-system-info-hsa-service';action=$Action;event=$Event;result=$Result;data=$Data}
         Add-Content -LiteralPath $LogPath -Value ($record|ConvertTo-Json -Compress -Depth 12) -Encoding UTF8
     }
 }
@@ -69,7 +69,7 @@ function Get-State{
 }
 function Save-State($State,$Support){
     if([string]::IsNullOrWhiteSpace($StatePath)){throw 'StatePath is required.'}
-    $saved=[ordered]@{schemaVersion=1;experiment='EXP-064';provider='hp-system-info-hsa-service';machine=$env:COMPUTERNAME;capturedUtc=(Get-Date).ToUniversalTime().ToString('o');windowsBuild=$Support.Build;manufacturer=$Support.Manufacturer;model=$Support.Model;service=$State}
+    $saved=[ordered]@{schemaVersion=1;experiment='EXP-065';provider='hp-system-info-hsa-service';machine=$env:COMPUTERNAME;capturedUtc=(Get-Date).ToUniversalTime().ToString('o');windowsBuild=$Support.Build;manufacturer=$Support.Manufacturer;model=$Support.Model;service=$State}
     $parent=Split-Path -Parent $StatePath;if($parent){New-Item -ItemType Directory -Path $parent -Force|Out-Null}
     $saved|ConvertTo-Json -Depth 12|Set-Content -LiteralPath $StatePath -Encoding UTF8
     $saved
@@ -77,7 +77,7 @@ function Save-State($State,$Support){
 function Read-State{
     if([string]::IsNullOrWhiteSpace($StatePath)-or -not(Test-Path -LiteralPath $StatePath)){throw "State file missing: $StatePath"}
     $saved=Get-Content -LiteralPath $StatePath -Raw|ConvertFrom-Json
-    if($saved.schemaVersion -ne 1 -or $saved.experiment -ne 'EXP-064' -or $saved.provider -ne 'hp-system-info-hsa-service' -or $saved.machine -ne $env:COMPUTERNAME -or $saved.service.Name -ne $serviceName){throw 'State identity validation failed.'}
+    if($saved.schemaVersion -ne 1 -or $saved.experiment -ne 'EXP-065' -or $saved.provider -ne 'hp-system-info-hsa-service' -or $saved.machine -ne $env:COMPUTERNAME -or $saved.service.Name -ne $serviceName){throw 'State identity validation failed.'}
     $saved
 }
 function Assert-Safe($Support,$State){
