@@ -18,7 +18,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
+    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
     [string]$Action = 'Menu',
 
     [switch]$FullDiagnostics,
@@ -26,6 +26,7 @@ param(
     [switch]$LayerWorkflow,
     [switch]$Analyze,
     [switch]$Watch,
+    [switch]$ThermalProfile,
     [switch]$ShellProfile,
     [switch]$WorkloadProfile,
     [switch]$DependencyProfile,
@@ -48,6 +49,9 @@ param(
 
     [ValidateRange(0, 100000)]
     [int]$WatchMaxSamples = 0,
+
+    [ValidateRange(3, 25)]
+    [int]$ThermalCalibrationIterations = 5,
 
     [ValidateRange(1, 25)]
     [int]$ShellRunCount = 5,
@@ -96,7 +100,7 @@ $ErrorActionPreference = 'Stop'
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
 $script:ProductName = 'Lacksan UX-ROM'
-$script:ProductVersion = '2026.07.30.6'
+$script:ProductVersion = '2026.07.30.7'
 $script:LayerWorkflowSchemaVersion = 1
 $script:SplashShown = $false
 $script:LoadedFrom = if ([string]::IsNullOrWhiteSpace([string]$PSCommandPath)) {
@@ -625,6 +629,305 @@ function Show-MeasurementSummary {
     } else {
         Write-Host "ETW trace: $($Measurement.trace.etlPath)" -ForegroundColor DarkGray
     }
+}
+
+function Get-ThermalProfileSupport {
+    $className = 'Win32_PerfFormattedData_Counters_ProcessorInformation'
+    $requiredProperties = @(
+        'Name',
+        'PercentProcessorTime',
+        'PercentProcessorUtility',
+        'PercentProcessorPerformance',
+        'ProcessorFrequency',
+        'PercentofMaximumFrequency',
+        'PercentPerformanceLimit',
+        'PerformanceLimitFlags'
+    )
+    try {
+        $counterClass = Get-CimClass -Namespace 'root/cimv2' -ClassName $className -ErrorAction Stop
+        $availableProperties = @($counterClass.CimClassProperties | ForEach-Object { $_.Name })
+        $missingProperties = @($requiredProperties | Where-Object { $_ -notin $availableProperties })
+        if ($missingProperties.Count -gt 0) {
+            return [pscustomobject][ordered]@{
+                supported = $false
+                provider = $className
+                reason = "The Processor Information provider is missing: $($missingProperties -join ', ')."
+                missingProperties = $missingProperties
+                thermalZoneSupported = $false
+                thermalZoneStatus = 'NotProbed'
+                thermalZoneErrorType = $null
+            }
+        }
+
+        $probe = Get-CimInstance `
+            -Namespace 'root/cimv2' `
+            -ClassName $className `
+            -Filter "Name='_Total'" `
+            -OperationTimeoutSec 5 `
+            -ErrorAction Stop |
+            Select-Object -First 1
+        if (-not $probe) {
+            return [pscustomobject][ordered]@{
+                supported = $false
+                provider = $className
+                reason = 'The Processor Information provider did not return its _Total instance.'
+                missingProperties = @()
+                thermalZoneSupported = $false
+                thermalZoneStatus = 'NotProbed'
+                thermalZoneErrorType = $null
+            }
+        }
+    } catch {
+        return [pscustomobject][ordered]@{
+            supported = $false
+            provider = $className
+            reason = "The Processor Information provider could not be queried ($($_.Exception.GetType().Name))."
+            missingProperties = @()
+            thermalZoneSupported = $false
+            thermalZoneStatus = 'NotProbed'
+            thermalZoneErrorType = $null
+        }
+    }
+
+    $thermalZoneSupported = $false
+    $thermalZoneStatus = 'Unavailable'
+    $thermalZoneErrorType = $null
+    try {
+        $thermalZoneProbe = @(Get-CimInstance `
+            -Namespace 'root/wmi' `
+            -ClassName 'MSAcpi_ThermalZoneTemperature' `
+            -OperationTimeoutSec 5 `
+            -ErrorAction Stop)
+        $thermalZoneSupported = $thermalZoneProbe.Count -gt 0
+        $thermalZoneStatus = if ($thermalZoneSupported) { 'Read' } else { 'NoInstances' }
+    } catch {
+        $thermalZoneErrorType = $_.Exception.GetType().Name
+    }
+
+    return [pscustomobject][ordered]@{
+        supported = $true
+        provider = $className
+        reason = 'The inbox Processor Information counterset exposes the required performance-limit signals.'
+        missingProperties = @()
+        thermalZoneSupported = $thermalZoneSupported
+        thermalZoneStatus = $thermalZoneStatus
+        thermalZoneErrorType = $thermalZoneErrorType
+    }
+}
+
+function Get-ThermalPerformanceSample {
+    param(
+        [double]$MonotonicOffsetMilliseconds = 0,
+        [switch]$IncludeThermalZone
+    )
+
+    $queryTimer = [Diagnostics.Stopwatch]::StartNew()
+    $processor = Get-CimInstance `
+        -Namespace 'root/cimv2' `
+        -ClassName 'Win32_PerfFormattedData_Counters_ProcessorInformation' `
+        -Filter "Name='_Total'" `
+        -OperationTimeoutSec 5 `
+        -ErrorAction Stop |
+        Select-Object -First 1
+    if (-not $processor) {
+        throw 'The Processor Information provider did not return its _Total instance.'
+    }
+
+    $thermalZones = @()
+    $thermalZoneStatus = 'SkippedUnavailableAtPreflight'
+    $thermalZoneError = $null
+    if ($IncludeThermalZone) {
+        try {
+            $thermalZones = @(Get-CimInstance `
+                -Namespace 'root/wmi' `
+                -ClassName 'MSAcpi_ThermalZoneTemperature' `
+                -OperationTimeoutSec 5 `
+                -ErrorAction Stop |
+                ForEach-Object {
+                    [Math]::Round(([double]$_.CurrentTemperature / 10) - 273.15, 1)
+                })
+            $thermalZoneStatus = if ($thermalZones.Count -gt 0) { 'Read' } else { 'NoInstances' }
+        } catch {
+            $thermalZoneStatus = 'UnavailableDuringCollection'
+            $thermalZoneError = $_.Exception.GetType().Name
+        }
+    }
+    $queryTimer.Stop()
+
+    return [pscustomobject][ordered]@{
+        timestampUtc = [DateTime]::UtcNow.ToString('o')
+        monotonicOffsetMilliseconds = [Math]::Round($MonotonicOffsetMilliseconds, 3)
+        processorTimePercent = [double]$processor.PercentProcessorTime
+        processorUtilityPercent = [double]$processor.PercentProcessorUtility
+        processorPerformancePercent = [double]$processor.PercentProcessorPerformance
+        processorFrequencyMHz = [double]$processor.ProcessorFrequency
+        percentOfMaximumFrequency = [double]$processor.PercentofMaximumFrequency
+        performanceLimitPercent = [double]$processor.PercentPerformanceLimit
+        performanceLimitFlags = [uint32]$processor.PerformanceLimitFlags
+        acpiThermalZoneStatus = $thermalZoneStatus
+        acpiThermalZoneCelsius = @($thermalZones)
+        acpiThermalZoneErrorType = $thermalZoneError
+        queryDurationMilliseconds = [Math]::Round($queryTimer.Elapsed.TotalMilliseconds, 3)
+    }
+}
+
+function Measure-ThermalProfileObserver {
+    param(
+        [ValidateRange(3, 25)][int]$Iterations,
+        [switch]$IncludeThermalZone
+    )
+
+    [void](Get-ThermalPerformanceSample -IncludeThermalZone:$IncludeThermalZone)
+    $durations = @()
+    for ($index = 0; $index -lt $Iterations; $index++) {
+        $sample = Get-ThermalPerformanceSample -IncludeThermalZone:$IncludeThermalZone
+        $durations += [double]$sample.queryDurationMilliseconds
+    }
+    return [pscustomobject][ordered]@{
+        iterations = $Iterations
+        durationMilliseconds = Get-WorkloadDistribution -Values $durations
+        qualification = 'Times the complete local Processor Information query plus the bounded ACPI-zone query attempt after one warmup.'
+    }
+}
+
+function Get-ThermalProfileSummary {
+    param([Parameter(Mandatory = $true)][object[]]$Samples)
+
+    if ($Samples.Count -eq 0) {
+        throw 'The thermal-envelope profile requires at least one completed sample.'
+    }
+    $limited = @($Samples | Where-Object { [double]$_.performanceLimitPercent -lt 100 })
+    $flagged = @($Samples | Where-Object { [uint32]$_.performanceLimitFlags -ne 0 })
+    $temperatures = @($Samples | ForEach-Object {
+        @($_.acpiThermalZoneCelsius) | ForEach-Object { [double]$_ }
+    })
+    $status = if ($limited.Count -gt 0 -or $flagged.Count -gt 0) {
+        'ProcessorPerformanceLimitObserved'
+    } else {
+        'NoProcessorPerformanceLimitObserved'
+    }
+
+    return [pscustomobject][ordered]@{
+        sampleCount = $Samples.Count
+        status = $status
+        processorTimePercent = Get-WorkloadDistribution -Values @($Samples | ForEach-Object { [double]$_.processorTimePercent })
+        processorUtilityPercent = Get-WorkloadDistribution -Values @($Samples | ForEach-Object { [double]$_.processorUtilityPercent })
+        processorPerformancePercent = Get-WorkloadDistribution -Values @($Samples | ForEach-Object { [double]$_.processorPerformancePercent })
+        processorFrequencyMHz = Get-WorkloadDistribution -Values @($Samples | ForEach-Object { [double]$_.processorFrequencyMHz })
+        performanceLimitPercent = Get-WorkloadDistribution -Values @($Samples | ForEach-Object { [double]$_.performanceLimitPercent })
+        limitedSampleCount = $limited.Count
+        nonzeroLimitFlagSampleCount = $flagged.Count
+        observedLimitFlagValues = @($flagged | ForEach-Object { [uint32]$_.performanceLimitFlags } | Sort-Object -Unique)
+        acpiThermalZoneReadSampleCount = @($Samples | Where-Object acpiThermalZoneStatus -eq 'Read').Count
+        acpiThermalZoneCelsius = Get-WorkloadDistribution -Values $temperatures
+        queryDurationMilliseconds = Get-WorkloadDistribution -Values @($Samples | ForEach-Object { [double]$_.queryDurationMilliseconds })
+        interpretation = if ($status -eq 'ProcessorPerformanceLimitObserved') {
+            'Windows reported a processor performance limit during this passive window. The counter alone does not prove that temperature caused the limit.'
+        } else {
+            'Windows reported no processor performance limit during this passive window. This does not prove that the cooling system is healthy under a different workload.'
+        }
+        decision = 'BaselineOnlyNoPerformanceClaim'
+    }
+}
+
+function Invoke-ThermalProfile {
+    param(
+        [string]$Root,
+        [ValidateRange(5, 3600)][int]$Seconds,
+        [ValidateRange(1, 60)][int]$IntervalSeconds,
+        [ValidateRange(3, 25)][int]$CalibrationIterations
+    )
+
+    $support = Get-ThermalProfileSupport
+    if (-not $support.supported) {
+        throw "Thermal-envelope profiling is unsupported: $($support.reason)"
+    }
+    if ($IntervalSeconds -gt $Seconds) {
+        throw 'The thermal-envelope sample interval cannot exceed the requested duration.'
+    }
+    Ensure-DataDirectories -Root $Root
+    $observer = Measure-ThermalProfileObserver `
+        -Iterations $CalibrationIterations `
+        -IncludeThermalZone:$support.thermalZoneSupported
+    $environment = Get-WindowsEnvironment
+    $profileStartUtc = [DateTime]::UtcNow.ToString('o')
+    $runTimer = [Diagnostics.Stopwatch]::StartNew()
+    $sampleCount = [Math]::Max(2, [int][Math]::Floor($Seconds / $IntervalSeconds) + 1)
+    $samples = @()
+    for ($sampleIndex = 0; $sampleIndex -lt $sampleCount; $sampleIndex++) {
+        $samples += Get-ThermalPerformanceSample `
+            -MonotonicOffsetMilliseconds $runTimer.Elapsed.TotalMilliseconds `
+            -IncludeThermalZone:$support.thermalZoneSupported
+        if ($sampleIndex -lt ($sampleCount - 1)) {
+            $nextTargetMilliseconds = ($sampleIndex + 1) * $IntervalSeconds * 1000
+            $remainingMilliseconds = $nextTargetMilliseconds - $runTimer.Elapsed.TotalMilliseconds
+            if ($remainingMilliseconds -gt 0) {
+                Start-Sleep -Milliseconds ([int][Math]::Ceiling($remainingMilliseconds))
+            }
+        }
+    }
+    $runTimer.Stop()
+
+    $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff')
+    $runSuffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $evidencePath = Join-Path (Join-Path $Root 'measurements') "$stamp-$runSuffix-thermal-envelope-profile.json"
+    $profile = [pscustomobject][ordered]@{
+        schemaVersion = $script:SchemaVersion
+        experimentId = $script:ExperimentId
+        layer = 1
+        kind = 'thermal-envelope-profile'
+        capturedUtc = $profileStartUtc
+        completedUtc = [DateTime]::UtcNow.ToString('o')
+        observationOnly = $true
+        support = $support
+        environment = $environment
+        requested = [pscustomobject][ordered]@{
+            durationSeconds = $Seconds
+            intervalSeconds = $IntervalSeconds
+            sampleCount = $sampleCount
+            calibrationIterations = $CalibrationIterations
+            cimOperationTimeoutSeconds = 5
+        }
+        instrumentation = [pscustomobject][ordered]@{
+            processorSource = 'Win32_PerfFormattedData_Counters_ProcessorInformation _Total'
+            thermalZoneSource = 'MSAcpi_ThermalZoneTemperature only when the one-time preflight query succeeds; readings remain unidentified ACPI zones'
+            timer = 'System.Diagnostics.Stopwatch'
+            observerCalibration = $observer
+            actualProfileDurationMilliseconds = [Math]::Round($runTimer.Elapsed.TotalMilliseconds, 3)
+            qualification = 'Passive local counter reads only. No load is generated, no thermal limit reason is inferred, and inaccessible ACPI data is recorded by exception type only.'
+        }
+        collectionScope = 'Records aggregate CPU performance-limit, frequency, utility, and anonymous ACPI-zone values when available. It records no process list, sensor identity, file content, user content, credential, or network destination.'
+        samples = @($samples)
+        summary = Get-ThermalProfileSummary -Samples @($samples)
+        evidencePath = $evidencePath
+    }
+    $profile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
+    try {
+        Write-StructuredEvent -Root $Root -Level Information -Event 'thermal-envelope-profile-complete' -Data @{
+            evidencePath = $evidencePath
+            status = $profile.summary.status
+            sampleCount = $profile.summary.sampleCount
+            limitedSampleCount = $profile.summary.limitedSampleCount
+            observationOnly = $true
+        }
+    } catch {
+        Write-Warning "The thermal-envelope profile was saved, but the optional event journal could not be updated ($($_.Exception.GetType().Name))."
+    }
+
+    Write-Host ''
+    Write-Host 'Layer 1 thermal-envelope profile (observation only)' -ForegroundColor Cyan
+    Write-Host "Processor-limit status: $($profile.summary.status)"
+    Write-Host "Performance limit: minimum $($profile.summary.performanceLimitPercent.minimum)% across $($profile.summary.sampleCount) samples"
+    Write-Host "Processor performance median: $($profile.summary.processorPerformancePercent.median)%"
+    if ($profile.summary.acpiThermalZoneCelsius.count -gt 0) {
+        Write-Host "Unidentified ACPI thermal-zone maximum: $($profile.summary.acpiThermalZoneCelsius.maximum) C"
+    } else {
+        Write-Host 'Unidentified ACPI thermal-zone readings: unavailable'
+    }
+    Write-Host $profile.summary.interpretation -ForegroundColor DarkYellow
+    Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
+    Write-Host 'No workload or Windows setting was changed and no performance-gain claim was made.' -ForegroundColor DarkYellow
+    return $profile
 }
 
 function Get-WprRecordingState {
@@ -2723,8 +3026,8 @@ function Get-PerformanceLayerCatalog {
             number = 1
             name = 'Physical and thermal health'
             description = 'Checks heat, cooling, power source, and throttling before software tuning.'
-            assessment = 'Baseline'
-            assessmentLabel = 'Thermal, power-source, and environment baseline'
+            assessment = 'ThermalProfile'
+            assessmentLabel = 'Passive processor performance-limit and thermal-envelope profile'
             candidates = @()
         },
         [pscustomobject][ordered]@{
@@ -2988,6 +3291,7 @@ function Invoke-LayerAssessmentStep {
         [int]$Seconds,
         [int]$Interval,
         [switch]$SkipTrace,
+        [int]$ThermalCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -3007,6 +3311,14 @@ function Invoke-LayerAssessmentStep {
     $evidencePath = $null
     $reason = $null
     switch ($layer.assessment) {
+        'ThermalProfile' {
+            $profile = Invoke-ThermalProfile `
+                -Root $Root `
+                -Seconds $Seconds `
+                -IntervalSeconds $Interval `
+                -CalibrationIterations $ThermalCalibration
+            $evidencePath = $profile.evidencePath
+        }
         'Baseline' {
             $measurement = Invoke-Measurement -Kind baseline -Seconds $Seconds -Interval $Interval -Root $Root -SkipTrace:$SkipTrace
             $evidencePath = $measurement.evidencePath
@@ -3374,6 +3686,7 @@ function New-LayerRuntime {
         [int]$Seconds,
         [int]$Interval,
         [switch]$SkipTrace,
+        [int]$ThermalCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -3393,6 +3706,7 @@ function New-LayerRuntime {
         Seconds = $Seconds
         Interval = $Interval
         SkipTrace = [bool]$SkipTrace
+        ThermalCalibration = $ThermalCalibration
         ShellRuns = $ShellRuns
         ShellWarmups = $ShellWarmups
         ShellTimeout = $ShellTimeout
@@ -3459,7 +3773,12 @@ function Invoke-FullSystemDiagnostics {
     Ensure-DataDirectories -Root $Root
     Write-Host ''
     Write-Host 'Full system diagnostics' -ForegroundColor Cyan
-    Write-Host 'One read-only pass: system, Explorer, workload, storage-locality, and declared endpoint readiness.'
+    Write-Host 'One read-only pass: thermal envelope, system, Explorer, workload, storage-locality, and declared endpoint readiness.'
+    $thermal = Invoke-ThermalProfile `
+        -Root $Root `
+        -Seconds $Runtime.Seconds `
+        -IntervalSeconds $Runtime.Interval `
+        -CalibrationIterations $Runtime.ThermalCalibration
     $baseline = Invoke-Measurement `
         -Kind baseline `
         -Seconds $Runtime.Seconds `
@@ -3496,6 +3815,7 @@ function Invoke-FullSystemDiagnostics {
         capturedUtc = [DateTime]::UtcNow.ToString('o')
         observationOnly = $true
         evidence = [pscustomobject][ordered]@{
+            thermalEnvelope = $thermal.evidencePath
             systemBaseline = $baseline.evidencePath
             shellReadiness = $shell.evidencePath
             workloadProfile = $workload.evidencePath
@@ -3643,6 +3963,7 @@ function Invoke-LayerWorkflow {
         [int]$Seconds,
         [int]$Interval,
         [switch]$SkipTrace,
+        [int]$ThermalCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -3662,6 +3983,7 @@ function Invoke-LayerWorkflow {
         -Seconds $Seconds `
         -Interval $Interval `
         -SkipTrace:$SkipTrace `
+        -ThermalCalibration $ThermalCalibration `
         -ShellRuns $ShellRuns `
         -ShellWarmups $ShellWarmups `
         -ShellTimeout $ShellTimeout `
@@ -3913,6 +4235,7 @@ function Invoke-ZBookPerfMain {
     elseif ($LayerWorkflow) { $script:Action = 'LayerWorkflow' }
     elseif ($Analyze) { $script:Action = 'Analyze' }
     elseif ($Watch) { $script:Action = 'Watch' }
+    elseif ($ThermalProfile) { $script:Action = 'ThermalProfile' }
     elseif ($ShellProfile) { $script:Action = 'ShellProfile' }
     elseif ($WorkloadProfile) { $script:Action = 'WorkloadProfile' }
     elseif ($DependencyProfile) { $script:Action = 'DependencyProfile' }
@@ -3924,6 +4247,7 @@ function Invoke-ZBookPerfMain {
         -Seconds $DurationSeconds `
         -Interval $SampleIntervalSeconds `
         -SkipTrace:$NoTrace `
+        -ThermalCalibration $ThermalCalibrationIterations `
         -ShellRuns $ShellRunCount `
         -ShellWarmups $ShellWarmupRunCount `
         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -4013,6 +4337,7 @@ function Invoke-ZBookPerfMain {
                     -Seconds $DurationSeconds `
                     -Interval $SampleIntervalSeconds `
                     -SkipTrace:$NoTrace `
+                    -ThermalCalibration $ThermalCalibrationIterations `
                     -ShellRuns $ShellRunCount `
                     -ShellWarmups $ShellWarmupRunCount `
                     -ShellTimeout $ShellTimeoutMilliseconds `
@@ -4034,6 +4359,7 @@ function Invoke-ZBookPerfMain {
                         -Seconds $DurationSeconds `
                         -Interval $SampleIntervalSeconds `
                         -SkipTrace:$NoTrace `
+                        -ThermalCalibration $ThermalCalibrationIterations `
                         -ShellRuns $ShellRunCount `
                         -ShellWarmups $ShellWarmupRunCount `
                         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -4054,6 +4380,13 @@ function Invoke-ZBookPerfMain {
                 [void](Invoke-Measurement -Kind baseline -Seconds $DurationSeconds -Interval $SampleIntervalSeconds -Root $DataRoot -SkipTrace:$NoTrace)
             }
             'Watch' { Invoke-LiveWatch -Interval $SampleIntervalSeconds -MaximumSamples $WatchMaxSamples }
+            'ThermalProfile' {
+                [void](Invoke-ThermalProfile `
+                    -Root $DataRoot `
+                    -Seconds $DurationSeconds `
+                    -IntervalSeconds $SampleIntervalSeconds `
+                    -CalibrationIterations $ThermalCalibrationIterations)
+            }
             'ShellProfile' {
                 [void](Invoke-ShellProfile `
                     -Root $DataRoot `
