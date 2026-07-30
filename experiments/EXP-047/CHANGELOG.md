@@ -1,5 +1,12 @@
 # EXP-047 changelog
 
+## 2026-07-30 — compact gray and red startup mark
+
+### Changed
+
+- Restored the compact outlined Lacksan mark with the smaller UX-ROM signature.
+- Changed the primary mark to gray and reserved red for UX-ROM and the version.
+
 ## 2026-07-30 — one-time UX-ROM startup art
 
 ### Changed
