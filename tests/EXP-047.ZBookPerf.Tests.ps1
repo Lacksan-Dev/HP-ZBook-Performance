@@ -983,7 +983,7 @@ Describe 'EXP-047 ZBookPerf' {
             $catalog[11].assessment | Should -Be 'DependencyProfile'
         }
 
-        It 'shows the Lacksan and UX-ROM startup art only once per loaded script' {
+        It 'shows the compact gray Lacksan mark and red UX-ROM accent only once per loaded script' {
             $script:SplashShown = $false
             Mock Write-Host { }
 
@@ -992,7 +992,10 @@ Describe 'EXP-047 ZBookPerf' {
 
             $script:SplashShown | Should -BeTrue
             Should -Invoke Write-Host -Times 1 -ParameterFilter {
-                $Object -eq 'LACKSAN  //  UX-ROM'
+                $Object -match '\|_____' -and $ForegroundColor -eq 'Gray'
+            }
+            Should -Invoke Write-Host -Times 1 -ParameterFilter {
+                $Object -eq '                    U X - R O M' -and $ForegroundColor -eq 'Red'
             }
             Should -Invoke Write-Host -Times 1 -ParameterFilter {
                 $Object -match 'Loading the twelve performance layers'

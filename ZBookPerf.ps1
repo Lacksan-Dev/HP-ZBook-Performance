@@ -96,7 +96,7 @@ $ErrorActionPreference = 'Stop'
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
 $script:ProductName = 'Lacksan UX-ROM'
-$script:ProductVersion = '2026.07.30.5'
+$script:ProductVersion = '2026.07.30.6'
 $script:LayerWorkflowSchemaVersion = 1
 $script:SplashShown = $false
 $script:LoadedFrom = if ([string]::IsNullOrWhiteSpace([string]$PSCommandPath)) {
@@ -3795,25 +3795,17 @@ function Show-ZBookPerfStatus {
 }
 
 function Show-UxRomHeader {
-    $lacksanLogo = @'
+    $logo = @'
    _        _    ____ _  __ ____    _    _   _
   | |      / \  / ___| |/ // ___|  / \  | \ | |
   | |     / _ \| |   | ' / \___ \ / _ \ |  \| |
   | |___ / ___ \ |___| . \  ___) / ___ \| |\  |
   |_____/_/   \_\____|_|\_\|____/_/   \_\_| \_|
 '@
-    $uxRomLogo = @'
-   _   _ __  __       ____   ___  __  __
-  | | | |\ \/ /      |  _ \ / _ \|  \/  |
-  | | | | \  / _____ | |_) | | | | |\/| |
-  | |_| | /  \|_____| |  _ <| |_| | |  | |
-   \___/ /_/\_\      |_| \_\\___/|_|  |_|
-'@
-    Write-Host $lacksanLogo -ForegroundColor Cyan
-    Write-Host $uxRomLogo -ForegroundColor Green
-    Write-Host 'LACKSAN  //  UX-ROM' -ForegroundColor White
-    Write-Host 'U X - R O M' -ForegroundColor Green
-    Write-Host "Windows performance-layer controller  $script:ProductVersion" -ForegroundColor DarkGray
+    Write-Host $logo -ForegroundColor Gray
+    Write-Host '                    U X - R O M' -ForegroundColor Red
+    Write-Host 'Windows performance-layer controller  ' -ForegroundColor DarkGray -NoNewline
+    Write-Host $script:ProductVersion -ForegroundColor Red
 }
 
 function Show-UxRomSplash {
