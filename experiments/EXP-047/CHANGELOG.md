@@ -1,5 +1,13 @@
 # EXP-047 changelog
 
+## 2026-07-30 — one-time UX-ROM startup art
+
+### Changed
+
+- Added separate Lacksan and UX-ROM ASCII marks to the startup path.
+- Displayed the banner and product version once per loaded script instead of
+  redrawing the full mark whenever the interactive menu returns.
+
 ## 2026-07-30 — Layer 12 dependency readiness profile
 
 ### Added

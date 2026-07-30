@@ -983,6 +983,32 @@ Describe 'EXP-047 ZBookPerf' {
             $catalog[11].assessment | Should -Be 'DependencyProfile'
         }
 
+        It 'shows the Lacksan and UX-ROM startup art only once per loaded script' {
+            $script:SplashShown = $false
+            Mock Write-Host { }
+
+            Show-UxRomSplash
+            Show-UxRomSplash
+
+            $script:SplashShown | Should -BeTrue
+            Should -Invoke Write-Host -Times 1 -ParameterFilter {
+                $Object -eq 'LACKSAN  //  UX-ROM'
+            }
+            Should -Invoke Write-Host -Times 1 -ParameterFilter {
+                $Object -match 'Loading the twelve performance layers'
+            }
+        }
+
+        It 'does not redraw the startup art whenever the menu returns' {
+            Mock Read-Host { return 'Q' }
+            Mock Write-Host { }
+            Mock Show-UxRomHeader { }
+
+            Show-ZBookPerfMenu | Should -Be 'Q'
+
+            Should -Invoke Show-UxRomHeader -Times 0
+        }
+
         It 'shows one full diagnostic, twelve layer choices, and one synergy batch on the main menu' {
             Mock Read-Host { return 'Q' }
             Mock Write-Host { }
