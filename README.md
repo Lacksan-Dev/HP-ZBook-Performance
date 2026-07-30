@@ -93,6 +93,9 @@ Useful non-interactive examples:
 # Profile one existing application workload for 30 seconds without changing it
 .\ZBookPerf.ps1 -Action WorkloadProfile -WorkloadProcessName msedge.exe -DurationSeconds 30
 
+# Redact and compare storage locality plus bounded declared endpoint readiness
+.\ZBookPerf.ps1 -Action DependencyProfile -DependencyPath $PWD -DependencyEndpoint github.com:443
+
 # Show the exact proposed MMCSS change without applying it
 .\ZBookPerf.ps1 -Action Enhance -Candidate MmcssResponsiveness -LabTier2Confirmed -WhatIf
 
@@ -140,6 +143,8 @@ wpr -cancel                           # discard the existing recording
 `ShellProfile` is observation-only. It reads animations, transparency, notification duration, the documented Widgets and Game DVR policy locations, related app-package presence, and WPR/WPA availability. It then opens a private benchmark folder, measures when the new Explorer window reports ready through the documented Shell automation model, and closes only that benchmark window. Full readiness-probe overhead, raw runs, medians, variability, timeouts, power state, and Battery Saver state are retained. This is a baseline capability, not a performance-gain claim.
 
 `WorkloadProfile` is also observation-only. It uses exact executable names, `System.Diagnostics.Process`, and the documented `GetProcessIoCounters` API to measure runtime CPU and I/O deltas by process ID plus start time, which prevents PID reuse from joining different processes. It retains working set, private memory, thread, handle, lifecycle, raw interval, access-error, and observer-cost data without collecting command lines, executable paths, window titles, user content, or network endpoints. It does not start, stop, suspend, reprioritize, or reconfigure the target application.
+
+`DependencyProfile` completes the Layer 12 baseline. It records local, cloud-sync, mapped, or UNC storage locality; fixed-drive readiness and file-system type; free-space conditions; and reparse, offline, pinned, or recall-on-data-access metadata without enumerating a directory or reading a file. Optional `host:port` declarations receive repeated `TcpClient` connection-readiness probes with a hard timeout and no application payload. Raw paths, host names, resolved addresses, and content are excluded; SHA-256 identities and a condition signature make separate runs comparable. Network-path existence is deliberately not tested because an unavailable share can make that check unbounded.
 
 ZBookPerf does **not** disable Defender, Memory Integrity, Windows Update, BitLocker, Secure Boot, Windows Search, SysMain, USB selective suspend, HP Wolf/Sure security, authentication, recovery, networking, or update services. It does not install drivers or firmware.
 

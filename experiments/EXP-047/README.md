@@ -16,14 +16,15 @@ The root `ZBookPerf.ps1` script provides:
 3. Console CPU, memory, disk, DPC/ISR, thermal-zone, and per-process views with ASCII bars and Unicode sparklines.
 4. A Layer 10 shell profile that inventories documented UI and policy surfaces and records repeated Explorer-window readiness runs with measured probe overhead.
 5. A Layer 11 workload runtime profile that attributes bounded CPU, I/O, memory, thread, handle, and lifecycle observations to exact executable names and stable process identities.
-6. One full-system read-only diagnostic entry point for every currently integrated check.
-7. A twelve-layer catalog with a plain-language description and one direct main-menu choice per layer.
-8. A resumable sequential workflow stored in `C:\ProgramData\ZBookPerf\layer-workflow.json`.
-9. One named enhancement candidate per measured layer step.
-10. An optional non-reboot synergy batch with individual state journals and a batch rollback record.
-11. A required fresh baseline-evidence gate before application.
-12. Exact state capture in `C:\ProgramData\ZBookPerf\changes.json`, structured JSONL events, post-change verification, idempotence, reboot-persistence handling, and rollback verification.
-13. A repeated measurement and side-by-side comparison. A single before/after pair is never labeled a proven improvement.
+6. A Layer 12 storage-locality and endpoint-readiness profile that redacts dependency names and emits a comparable condition signature.
+7. One full-system read-only diagnostic entry point for every currently integrated check.
+8. A twelve-layer catalog with a plain-language description and one direct main-menu choice per layer.
+9. A resumable sequential workflow stored in `C:\ProgramData\ZBookPerf\layer-workflow.json`.
+10. One named enhancement candidate per measured layer step.
+11. An optional non-reboot synergy batch with individual state journals and a batch rollback record.
+12. A required fresh baseline-evidence gate before application.
+13. Exact state capture in `C:\ProgramData\ZBookPerf\changes.json`, structured JSONL events, post-change verification, idempotence, reboot-persistence handling, and rollback verification.
+14. A repeated measurement and side-by-side comparison. A single before/after pair is never labeled a proven improvement.
 
 The WPR ETL contains system activity and can be large. Review it before sharing. The JSON environment record deliberately avoids serial numbers, usernames, network addresses, command lines, and customer content.
 
@@ -84,6 +85,12 @@ Run `.\ZBookPerf.ps1 -Action WorkloadProfile -WorkloadProcessName explorer.exe -
 The profiler uses `System.Diagnostics.Process`, the documented `GetProcessIoCounters` API, and a monotonic `System.Diagnostics.Stopwatch` timestamp. Process ID plus start time forms the identity, preventing PID reuse from combining unrelated processes. Consecutive snapshots produce logical-processor and whole-machine CPU percentages, read/write transfer rates, working set, private memory, handle and thread counts, and process starts/exits. Snapshot duration is retained for every interval, and a separate warmup plus repeated calibration reports the median and p95 observer cost. The profiler does not overhead-correct the raw metrics. I/O values remain null instead of becoming a false zero when process-handle access does not permit the documented I/O query.
 
 The JSON excludes command lines, executable paths, window titles, customer content, and network endpoints. A missing target or process lifecycle transition becomes an unmeasured interval instead of a fabricated zero. The action never launches, terminates, suspends, reprioritizes, or reconfigures a process and never claims that one baseline is an optimization.
+
+## Layer 12 dependency readiness profile
+
+Run `.\ZBookPerf.ps1 -Action DependencyProfile -DependencyPath $PWD -DependencyEndpoint github.com:443`, include it through the full-system diagnostic, or choose option 9 in the maintenance menu. Each path is reduced to a SHA-256 identity before evidence is written. The profile classifies local, known OneDrive-root, mapped-network, and UNC locations. For local drives it records documented `DriveInfo` readiness, drive type, file-system type, capacity conditions, and file attributes that identify reparse points, offline data, pinning, or recall-on-data-access. It never enumerates a directory or reads file content. UNC and mapped-network existence checks are skipped because an unreachable share can make a synchronous metadata call unbounded.
+
+Optional endpoints must use explicit `host:port` form. The profiler makes the requested number of `TcpClient.BeginConnect` readiness attempts, bounds every attempt with a hard timeout, completes successful asynchronous connections with `EndConnect`, sends no application payload, and closes the client. Evidence retains only the endpoint identity hash, port, status, duration, and error type; host names and resolved IP addresses are excluded. A deterministic condition signature ignores timing changes while retaining storage and endpoint-status conditions, which allows two performance runs to prove whether their dependency state was comparable. Path-inventory cost is calibrated separately. This remains a baseline tool and does not claim that a ready endpoint or local path is fast enough for a workload.
 
 ## Supported candidates
 
