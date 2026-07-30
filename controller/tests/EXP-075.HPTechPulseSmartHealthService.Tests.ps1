@@ -1,0 +1,15 @@
+$providerPath=Join-Path $PSScriptRoot '..\providers\HPTechPulseSmartHealthService.ps1'
+$manifestPath=Join-Path $PSScriptRoot '..\lacksan.manifest.json'
+$provider=Get-Content -LiteralPath $providerPath -Raw
+$manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
+
+Describe 'EXP-075 HP TechPulse SmartHealth provider contract' {
+    It 'parses without syntax errors' {$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($providerPath,[ref]$tokens,[ref]$errors);$errors.Count|Should -Be 0}
+    It 'uses exact experiment provider executable and directory identities' {$provider|Should -Match "experiment='EXP-075'";$provider|Should -Match "provider='hp-techpulse-smarthealth-service'";$provider|Should -Match 'hptpsmarthealth\.exe';$provider|Should -Match 'HP TechPulse SmartHealth';$provider|Should -Not -Match "experiment='EXP-072'"}
+    It 'implements every lifecycle action' {foreach($action in @('Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback')){$provider|Should -Match ([regex]::Escape("'$action'"))}}
+    It 'captures exact identity environment and rollback evidence' {foreach($token in @('ExecutableHash','ExecutableVersion','SignatureStatus','Signer','DelayedAutoStart','DependentServices','PowerThermal','BIOS','Assert-Identity','Rollback refused')){$provider|Should -Match ([regex]::Escape($token))}}
+    It 'refuses enterprise enrollment dependency and active HP activity' {foreach($token in @('Get-ManagementSignals','Microsoft\\Enrollments','Microsoft\\CCM','HP TechPulse','HP Insights','DependencySafe','Get-HPActivity','Elevation is required','Windows 11','Hewlett-Packard')){$provider|Should -Match ([regex]::Escape($token))}}
+    It 'supports dry run ShouldProcess JSONL idempotence failure handling and exact rollback' {foreach($token in @('SupportsShouldProcess','ShouldProcess','ConvertTo-Json -Compress','AlreadyApplied','MutationCount=0','Test-Applied','VerifyReboot','Restore exact startup and running state','catch{Write-StructuredLog')){$provider|Should -Match ([regex]::Escape($token))}}
+    It 'contains no package file task driver security update recovery or management mutation' {$provider|Should -Not -Match 'Remove-AppxPackage|Uninstall-Package|Remove-Item.+Program Files|Unregister-ScheduledTask|Disable-ScheduledTask|Remove-WindowsDriver|pnputil.+/delete-driver|Set-MpPreference|Disable-WindowsOptionalFeature|Remove-Item.+Enrollments|Remove-Item.+OMADM|Remove-Item.+CCM'}
+    It 'is registered with every protected scope' {($manifest.providers.id)|Should -Contain 'hp-techpulse-smarthealth-service';($manifest.profiles.id)|Should -Contain 'HPTechPulseSmartHealthDemandStart';$entry=$manifest.providers|Where-Object id -eq 'hp-techpulse-smarthealth-service';$entry.mode|Should -Be 'Reversible';foreach($scope in @('WindowsSecurity','WindowsUpdate','Recovery','EnterpriseManagement','DeviceCriticalDrivers','Omnissa','WindowsApp','RemoteDesktop','Tailscale')){$entry.protectedScopes|Should -Contain $scope}}
+}
