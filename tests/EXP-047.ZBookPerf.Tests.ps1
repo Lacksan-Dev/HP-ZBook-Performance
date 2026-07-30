@@ -24,6 +24,16 @@ Describe 'EXP-047 ZBookPerf' {
             ($command.Parameters['EnhancementCandidate'].Aliases -contains 'Candidate') | Should -BeTrue
         }
 
+        It 'exposes the Layer 1 thermal-envelope profile as a public read-only action' {
+            $command = Get-Command $scriptPath
+            ($command.Parameters.Keys -contains 'ThermalProfile') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'ThermalCalibrationIterations') | Should -BeTrue
+            $validateSet = @($command.Parameters['Action'].Attributes | Where-Object {
+                $_ -is [System.Management.Automation.ValidateSetAttribute]
+            })[0]
+            $validateSet.ValidValues | Should -Contain 'ThermalProfile'
+        }
+
         It 'exposes the Layer 10 shell profile as a public read-only action' {
             $command = Get-Command $scriptPath
             ($command.Parameters.Keys -contains 'ShellProfile') | Should -BeTrue
@@ -309,6 +319,7 @@ Describe 'EXP-047 ZBookPerf' {
 
             $catalog.Count | Should -Be 12
             $catalog.number | Should -Be (1..12)
+            $catalog[0].assessment | Should -Be 'ThermalProfile'
             $catalog[2].assessment | Should -Be 'NotIntegrated'
             $catalog[2].assessmentLabel | Should -Match 'No product-integrated'
             $catalog[9].assessment | Should -Be 'ShellProfile'
@@ -546,6 +557,129 @@ Describe 'EXP-047 ZBookPerf' {
 
         It 'rejects an empty journal payload' {
             { ConvertFrom-ChangeLogJson -Json '' } | Should -Throw
+        }
+    }
+
+    Context 'Layer 1 thermal-envelope profile' {
+        It 'separates an observed processor limit from an unsupported thermal-cause claim' {
+            $samples = @(
+                [pscustomobject]@{
+                    processorTimePercent = 45
+                    processorUtilityPercent = 60
+                    processorPerformancePercent = 110
+                    processorFrequencyMHz = 2400
+                    performanceLimitPercent = 100
+                    performanceLimitFlags = [uint32]0
+                    acpiThermalZoneStatus = 'Unavailable'
+                    acpiThermalZoneCelsius = @()
+                    queryDurationMilliseconds = 4
+                },
+                [pscustomobject]@{
+                    processorTimePercent = 90
+                    processorUtilityPercent = 95
+                    processorPerformancePercent = 80
+                    processorFrequencyMHz = 1600
+                    performanceLimitPercent = 80
+                    performanceLimitFlags = [uint32]1
+                    acpiThermalZoneStatus = 'Read'
+                    acpiThermalZoneCelsius = @(72.5)
+                    queryDurationMilliseconds = 5
+                }
+            )
+
+            $summary = Get-ThermalProfileSummary -Samples $samples
+
+            $summary.status | Should -Be 'ProcessorPerformanceLimitObserved'
+            $summary.limitedSampleCount | Should -Be 1
+            $summary.nonzeroLimitFlagSampleCount | Should -Be 1
+            $summary.observedLimitFlagValues | Should -Be @([uint32]1)
+            $summary.performanceLimitPercent.minimum | Should -Be 80
+            $summary.acpiThermalZoneCelsius.maximum | Should -Be 72.5
+            $summary.interpretation | Should -Match 'does not prove'
+            $summary.decision | Should -Be 'BaselineOnlyNoPerformanceClaim'
+        }
+
+        It 'writes bounded structured evidence without mutating the observed system' {
+            Mock Get-ThermalProfileSupport {
+                [pscustomobject]@{
+                    supported = $true
+                    provider = 'Win32_PerfFormattedData_Counters_ProcessorInformation'
+                    reason = 'supported'
+                    missingProperties = @()
+                    thermalZoneSupported = $false
+                    thermalZoneStatus = 'Unavailable'
+                    thermalZoneErrorType = 'CimException'
+                }
+            }
+            Mock Measure-ThermalProfileObserver {
+                [pscustomobject]@{
+                    iterations = 3
+                    durationMilliseconds = [pscustomobject]@{ count = 3; median = 1; p95 = 2; minimum = 1; maximum = 2 }
+                    qualification = 'test'
+                }
+            }
+            Mock Get-WindowsEnvironment { [pscustomobject]@{ windows = [pscustomobject]@{ build = '26200' } } }
+            Mock Get-ThermalPerformanceSample {
+                [pscustomobject]@{
+                    timestampUtc = [DateTime]::UtcNow.ToString('o')
+                    monotonicOffsetMilliseconds = 0
+                    processorTimePercent = 20
+                    processorUtilityPercent = 25
+                    processorPerformancePercent = 100
+                    processorFrequencyMHz = 2000
+                    percentOfMaximumFrequency = 85
+                    performanceLimitPercent = 100
+                    performanceLimitFlags = [uint32]0
+                    acpiThermalZoneStatus = 'Unavailable'
+                    acpiThermalZoneCelsius = @()
+                    acpiThermalZoneErrorType = 'CimException'
+                    queryDurationMilliseconds = 2
+                }
+            }
+            Mock Start-Sleep { }
+            Mock Write-StructuredEvent { }
+            Mock Write-Host { }
+
+            $profile = Invoke-ThermalProfile `
+                -Root $TestDrive `
+                -Seconds 5 `
+                -IntervalSeconds 5 `
+                -CalibrationIterations 3
+
+            $profile.observationOnly | Should -BeTrue
+            $profile.summary.sampleCount | Should -Be 2
+            $profile.summary.status | Should -Be 'NoProcessorPerformanceLimitObserved'
+            Test-Path -LiteralPath $profile.evidencePath | Should -BeTrue
+            (Get-Content -LiteralPath $profile.evidencePath -Raw) | Should -Match 'thermal-envelope-profile'
+            Should -Invoke Get-ThermalPerformanceSample -Times 2
+        }
+
+        It 'contains no state-changing command' {
+            $body = (Get-Command Invoke-ThermalProfile).ScriptBlock.ToString()
+            $body | Should -Not -Match 'Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|Set-Service|Stop-Service|powercfg|Restart-Computer'
+        }
+
+        It 'rejects a sample interval that would exceed the requested window' {
+            Mock Get-ThermalProfileSupport {
+                [pscustomobject]@{ supported = $true; reason = 'supported'; thermalZoneSupported = $false }
+            }
+
+            {
+                Invoke-ThermalProfile -Root $TestDrive -Seconds 5 -IntervalSeconds 6 -CalibrationIterations 3
+            } | Should -Throw '*sample interval cannot exceed*'
+        }
+
+        It 'routes the public action directly to the profiler' {
+            $script:Action = 'ThermalProfile'
+            $script:DataRoot = $TestDrive
+            $script:DurationSeconds = 5
+            $script:SampleIntervalSeconds = 1
+            $script:ThermalCalibrationIterations = 3
+            Mock Invoke-ThermalProfile { }
+
+            Invoke-ZBookPerfMain
+
+            Should -Invoke Invoke-ThermalProfile -Times 1
         }
     }
 
@@ -1056,6 +1190,9 @@ Describe 'EXP-047 ZBookPerf' {
         }
 
         It 'combines the integrated read-only checks into one full diagnostic manifest' {
+            Mock Invoke-ThermalProfile {
+                [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'thermal.json') }
+            }
             Mock Invoke-Measurement {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'baseline.json') }
             }
@@ -1072,6 +1209,7 @@ Describe 'EXP-047 ZBookPerf' {
             Mock Write-Host { }
             $runtime = @{
                 Seconds = 5; Interval = 1; SkipTrace = $true
+                ThermalCalibration = 3
                 ShellRuns = 1; ShellWarmups = 0; ShellTimeout = 1000; ShellCalibration = 5
                 WorkloadNames = @('explorer.exe'); WorkloadInterval = 1000; WorkloadCalibration = 3
                 DependencyPaths = @($TestDrive); DependencyEndpoints = @()
@@ -1085,6 +1223,7 @@ Describe 'EXP-047 ZBookPerf' {
             Test-Path -LiteralPath $result.evidence.systemBaseline | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $TestDrive 'measurements') | Should -BeTrue
             Should -Invoke Invoke-Measurement -Times 1
+            Should -Invoke Invoke-ThermalProfile -Times 1
             Should -Invoke Invoke-ShellProfile -Times 1
             Should -Invoke Invoke-WorkloadProfile -Times 1
             Should -Invoke Invoke-DependencyProfile -Times 1
