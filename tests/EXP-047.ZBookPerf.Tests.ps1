@@ -45,6 +45,18 @@ Describe 'EXP-047 ZBookPerf' {
             $validateSet.ValidValues | Should -Contain 'WorkloadProfile'
         }
 
+        It 'exposes the Layer 12 dependency profile as a public read-only action' {
+            $command = Get-Command $scriptPath
+            ($command.Parameters.Keys -contains 'DependencyProfile') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'DependencyPath') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'DependencyEndpoint') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'DependencyTimeoutMilliseconds') | Should -BeTrue
+            $validateSet = @($command.Parameters['Action'].Attributes | Where-Object {
+                $_ -is [System.Management.Automation.ValidateSetAttribute]
+            })[0]
+            $validateSet.ValidValues | Should -Contain 'DependencyProfile'
+        }
+
         It 'exposes the sequential performance-layer workflow as a public action' {
             $command = Get-Command $scriptPath
             ($command.Parameters.Keys -contains 'LayerWorkflow') | Should -BeTrue
@@ -807,6 +819,160 @@ Describe 'EXP-047 ZBookPerf' {
         }
     }
 
+    Context 'Layer 12 dependency readiness profile' {
+        It 'redacts a local path while preserving storage-locality metadata' {
+            $observation = Get-DependencyPathObservation -Path $TestDrive -InputIndex 2
+
+            $observation.inputIndex | Should -Be 2
+            $observation.identitySha256 | Should -Match '^[0-9a-f]{64}$'
+            $observation.locality | Should -BeIn @('Local', 'CloudSyncRoot')
+            $observation.driveType | Should -Be 'Fixed'
+            $observation.existenceStatus | Should -Be 'Exists'
+            ($observation.PSObject.Properties.Name -contains 'path') | Should -BeFalse
+        }
+
+        It 'classifies a UNC dependency without touching its remote contents' {
+            Mock Test-Path { throw 'UNC existence must not be probed.' }
+            Mock Get-Item { throw 'UNC metadata must not be opened.' }
+
+            $observation = Get-DependencyPathObservation -Path '\\server.example\share\work' -InputIndex 0
+
+            $observation.locality | Should -Be 'Network'
+            $observation.driveType | Should -Be 'Network'
+            $observation.existenceStatus | Should -Be 'NotProbedToAvoidUnboundedNetworkPathAccess'
+            $observation.exists | Should -BeNullOrEmpty
+            Should -Invoke Test-Path -Times 0
+            Should -Invoke Get-Item -Times 0
+        }
+
+        It 'accepts only explicit bounded host and port endpoint declarations' {
+            $endpoint = Resolve-DependencyEndpoint -Endpoint 'github.com:443' -InputIndex 1
+
+            $endpoint.host | Should -Be 'github.com'
+            $endpoint.port | Should -Be 443
+            $endpoint.identitySha256 | Should -Match '^[0-9a-f]{64}$'
+            { Resolve-DependencyEndpoint -Endpoint 'https://github.com' } | Should -Throw '*Use host:port*'
+            { Resolve-DependencyEndpoint -Endpoint 'github.com:70000' } | Should -Throw '*1 through 65535*'
+        }
+
+        It 'summarizes repeated endpoint readiness without exposing a host name' {
+            $probes = @(
+                [pscustomobject]@{ identitySha256 = ('a' * 64); port = 443; status = 'Ready'; durationMilliseconds = 10; probeRun = 1 },
+                [pscustomobject]@{ identitySha256 = ('a' * 64); port = 443; status = 'Timeout'; durationMilliseconds = 100; probeRun = 2 }
+            )
+
+            $summary = Get-DependencyProfileSummary -Paths @() -EndpointProbes $probes
+
+            $summary.endpointCount | Should -Be 1
+            $summary.readiness | Should -Be 'OneOrMoreEndpointProbesNotReady'
+            $summary.endpoints[0].readyCount | Should -Be 1
+            $summary.endpoints[0].timeoutCount | Should -Be 1
+            ($summary | ConvertTo-Json -Depth 10) | Should -Not -Match 'github'
+        }
+
+        It 'produces the same condition signature when only timing changes' {
+            $paths = @(
+                [pscustomobject]@{
+                    identitySha256 = ('b' * 64); locality = 'Local'; driveType = 'Fixed'
+                    driveReady = $true; driveFormat = 'NTFS'; existenceStatus = 'Exists'
+                    knownOneDriveRoot = $false; reparsePoint = $false; offline = $false
+                    recallOnDataAccess = $false
+                }
+            )
+            $first = @(
+                [pscustomobject]@{ identitySha256 = ('c' * 64); port = 443; probeRun = 1; status = 'Ready'; durationMilliseconds = 5 }
+            )
+            $second = @(
+                [pscustomobject]@{ identitySha256 = ('c' * 64); port = 443; probeRun = 1; status = 'Ready'; durationMilliseconds = 500 }
+            )
+
+            (Get-DependencyConditionSignature -Paths $paths -EndpointProbes $first) |
+                Should -Be (Get-DependencyConditionSignature -Paths $paths -EndpointProbes $second)
+        }
+
+        It 'writes a redacted bounded profile and never stores declared names' {
+            Mock Get-WindowsEnvironment { [pscustomobject]@{ mocked = $true } }
+            Mock Invoke-DependencyEndpointProbe {
+                [pscustomobject]@{
+                    inputIndex = $Endpoint.inputIndex
+                    identitySha256 = $Endpoint.identitySha256
+                    port = $Endpoint.port
+                    probeRun = $ProbeRun
+                    status = 'Ready'
+                    durationMilliseconds = 3
+                    timeoutMilliseconds = $TimeoutMilliseconds
+                    errorType = $null
+                }
+            }
+            Mock Write-StructuredEvent { }
+
+            $profile = Invoke-DependencyProfile `
+                -Root $TestDrive `
+                -Paths @($TestDrive) `
+                -Endpoints @('github.com:443') `
+                -ProbeRunCount 3 `
+                -TimeoutMilliseconds 250 `
+                -CalibrationIterations 3
+            $json = Get-Content -LiteralPath $profile.evidencePath -Raw
+
+            $profile.observationOnly | Should -BeTrue
+            $profile.summary.readiness | Should -Be 'AllDeclaredEndpointsReady'
+            $profile.endpointProbes.Count | Should -Be 3
+            $profile.instrumentation.maximumDeclaredEndpointBudgetMilliseconds | Should -Be 750
+            $json | Should -Not -Match [regex]::Escape($TestDrive)
+            $json | Should -Not -Match 'github\.com'
+            Should -Invoke Invoke-DependencyEndpointProbe -Times 3
+        }
+
+        It 'keeps the saved profile usable when the optional event journal is unavailable' {
+            Mock Get-WindowsEnvironment { [pscustomobject]@{ mocked = $true } }
+            Mock Write-StructuredEvent { throw [UnauthorizedAccessException]::new('test') }
+            Mock Write-Warning { }
+
+            $profile = Invoke-DependencyProfile `
+                -Root $TestDrive `
+                -Paths @($TestDrive) `
+                -Endpoints @() `
+                -ProbeRunCount 1 `
+                -TimeoutMilliseconds 250 `
+                -CalibrationIterations 3
+            $secondProfile = Invoke-DependencyProfile `
+                -Root $TestDrive `
+                -Paths @($TestDrive) `
+                -Endpoints @() `
+                -ProbeRunCount 1 `
+                -TimeoutMilliseconds 250 `
+                -CalibrationIterations 3
+
+            Test-Path -LiteralPath $profile.evidencePath | Should -BeTrue
+            Test-Path -LiteralPath $secondProfile.evidencePath | Should -BeTrue
+            $profile.evidencePath | Should -Not -Be $secondProfile.evidencePath
+            Should -Invoke Write-Warning -Times 2 -ParameterFilter {
+                $Message -match 'optional event journal'
+            }
+        }
+
+        It 'routes the public action with dependency-profile bounds' {
+            $script:Action = 'DependencyProfile'
+            $script:DependencyPath = @($TestDrive)
+            $script:DependencyEndpoint = @('github.com:443')
+            $script:DependencyProbeRunCount = 3
+            $script:DependencyTimeoutMilliseconds = 250
+            $script:DependencyCalibrationIterations = 3
+            $script:DataRoot = $TestDrive
+            Mock Invoke-DependencyProfile { }
+
+            Invoke-ZBookPerfMain
+
+            Should -Invoke Invoke-DependencyProfile -Times 1
+        }
+
+        It 'contains no file-content or Windows-setting mutation command' {
+            $body = (Get-Command Invoke-DependencyProfile).ScriptBlock.ToString()
+            $body | Should -Not -Match 'Get-Content|Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|Set-Service|Stop-Service|powercfg|FileStream|ReadAll'
+        }
+    }
+
     Context 'UX-ROM layer-centered interface' {
         It 'uses the UX-ROM product identity and gives every layer a plain-language description' {
             $script:ProductName | Should -Be 'Lacksan UX-ROM'
@@ -814,6 +980,7 @@ Describe 'EXP-047 ZBookPerf' {
 
             @($catalog | Where-Object { [string]::IsNullOrWhiteSpace($_.description) }).Count | Should -Be 0
             $catalog[9].description | Should -Match 'Explorer'
+            $catalog[11].assessment | Should -Be 'DependencyProfile'
         }
 
         It 'shows one full diagnostic, twelve layer choices, and one synergy batch on the main menu' {
@@ -869,23 +1036,29 @@ Describe 'EXP-047 ZBookPerf' {
             Mock Invoke-WorkloadProfile {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'workload.json') }
             }
+            Mock Invoke-DependencyProfile {
+                [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'dependencies.json') }
+            }
             Mock Write-StructuredEvent { }
             Mock Write-Host { }
             $runtime = @{
                 Seconds = 5; Interval = 1; SkipTrace = $true
                 ShellRuns = 1; ShellWarmups = 0; ShellTimeout = 1000; ShellCalibration = 5
                 WorkloadNames = @('explorer.exe'); WorkloadInterval = 1000; WorkloadCalibration = 3
+                DependencyPaths = @($TestDrive); DependencyEndpoints = @()
+                DependencyRuns = 1; DependencyTimeout = 250; DependencyCalibration = 3
             }
 
             $result = Invoke-FullSystemDiagnostics -Root $TestDrive -Runtime $runtime
 
             $result.observationOnly | Should -BeTrue
-            $result.coveredLayers | Should -Be @(1, 2, 5, 6, 10, 11)
+            $result.coveredLayers | Should -Be @(1, 2, 5, 6, 10, 11, 12)
             Test-Path -LiteralPath $result.evidence.systemBaseline | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $TestDrive 'measurements') | Should -BeTrue
             Should -Invoke Invoke-Measurement -Times 1
             Should -Invoke Invoke-ShellProfile -Times 1
             Should -Invoke Invoke-WorkloadProfile -Times 1
+            Should -Invoke Invoke-DependencyProfile -Times 1
         }
 
         It 'routes the public full-diagnostics action to the single diagnostic entry point' {

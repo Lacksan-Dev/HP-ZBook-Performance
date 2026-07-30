@@ -18,7 +18,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ShellProfile', 'WorkloadProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
+    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
     [string]$Action = 'Menu',
 
     [switch]$FullDiagnostics,
@@ -28,6 +28,7 @@ param(
     [switch]$Watch,
     [switch]$ShellProfile,
     [switch]$WorkloadProfile,
+    [switch]$DependencyProfile,
     [switch]$Enhance,
     [switch]$Remeasure,
     [switch]$Revert,
@@ -69,6 +70,19 @@ param(
     [ValidateRange(3, 25)]
     [int]$WorkloadCalibrationIterations = 5,
 
+    [string[]]$DependencyPath = @(),
+
+    [string[]]$DependencyEndpoint = @(),
+
+    [ValidateRange(1, 10)]
+    [int]$DependencyProbeRunCount = 3,
+
+    [ValidateRange(100, 10000)]
+    [int]$DependencyTimeoutMilliseconds = 1500,
+
+    [ValidateRange(3, 25)]
+    [int]$DependencyCalibrationIterations = 5,
+
     [string]$DataRoot = 'C:\ProgramData\ZBookPerf',
 
     [switch]$NoTrace,
@@ -82,7 +96,7 @@ $ErrorActionPreference = 'Stop'
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
 $script:ProductName = 'Lacksan UX-ROM'
-$script:ProductVersion = '2026.07.30.3'
+$script:ProductVersion = '2026.07.30.4'
 $script:LayerWorkflowSchemaVersion = 1
 $script:LoadedFrom = if ([string]::IsNullOrWhiteSpace([string]$PSCommandPath)) {
     'in-memory content'
@@ -1969,6 +1983,434 @@ function Invoke-WorkloadProfile {
     return $profile
 }
 
+function Get-RedactedDependencyHash {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($Value.Trim().ToLowerInvariant())
+        return -join @($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') })
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Test-PathWithinRoot {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Root
+    )
+
+    try {
+        $normalizedPath = [IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+        $normalizedRoot = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+        if ($normalizedPath.Equals($normalizedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+        return $normalizedPath.StartsWith(
+            "$normalizedRoot\",
+            [StringComparison]::OrdinalIgnoreCase
+        )
+    } catch {
+        return $false
+    }
+}
+
+function Get-DependencyPathObservation {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [ValidateRange(0, 1000)][int]$InputIndex = 0
+    )
+
+    $candidate = $Path.Trim()
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        throw 'Dependency paths cannot be empty.'
+    }
+    try {
+        $normalized = [IO.Path]::GetFullPath($candidate)
+    } catch {
+        throw "Invalid dependency path at index $InputIndex. Use a valid local, mapped-drive, or UNC path."
+    }
+
+    $identityHash = Get-RedactedDependencyHash -Value $normalized
+    $isUnc = $normalized.StartsWith('\\', [StringComparison]::Ordinal)
+    $root = [IO.Path]::GetPathRoot($normalized)
+    $driveType = if ($isUnc) { 'Network' } else { 'Unknown' }
+    $driveReady = $null
+    $driveFormat = $null
+    $availableFreeSpaceBytes = $null
+    $totalSizeBytes = $null
+    $exists = $null
+    $existenceStatus = if ($isUnc) {
+        'NotProbedToAvoidUnboundedNetworkPathAccess'
+    } else {
+        'NotChecked'
+    }
+    $attributesValue = $null
+    $attributeErrorType = $null
+    $driveErrorType = $null
+
+    if (-not $isUnc) {
+        try {
+            $drive = New-Object IO.DriveInfo($root)
+            $driveType = $drive.DriveType.ToString()
+            if ($drive.DriveType -eq [IO.DriveType]::Network) {
+                $existenceStatus = 'NotProbedToAvoidUnboundedNetworkPathAccess'
+            } else {
+                $driveReady = [bool]$drive.IsReady
+                if ($driveReady) {
+                    $driveFormat = $drive.DriveFormat
+                    $availableFreeSpaceBytes = [uint64]$drive.AvailableFreeSpace
+                    $totalSizeBytes = [uint64]$drive.TotalSize
+                }
+                $exists = [IO.File]::Exists($normalized) -or [IO.Directory]::Exists($normalized)
+                $existenceStatus = if ($exists) { 'Exists' } else { 'NotFound' }
+                if ($exists) {
+                    try {
+                        $attributesValue = [uint32][IO.File]::GetAttributes($normalized)
+                    } catch {
+                        $attributeErrorType = $_.Exception.GetType().FullName
+                    }
+                }
+            }
+        } catch {
+            $driveErrorType = $_.Exception.GetType().FullName
+            $existenceStatus = 'DriveQueryFailed'
+        }
+    }
+
+    $knownSyncRootMatch = $false
+    foreach ($variableName in @('OneDrive', 'OneDriveCommercial', 'OneDriveConsumer')) {
+        $knownRoot = [Environment]::GetEnvironmentVariable($variableName)
+        if (
+            -not [string]::IsNullOrWhiteSpace($knownRoot) -and
+            (Test-PathWithinRoot -Path $normalized -Root $knownRoot)
+        ) {
+            $knownSyncRootMatch = $true
+            break
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        inputIndex = $InputIndex
+        identitySha256 = $identityHash
+        locality = if ($isUnc -or $driveType -eq 'Network') {
+            'Network'
+        } elseif ($knownSyncRootMatch) {
+            'CloudSyncRoot'
+        } else {
+            'Local'
+        }
+        driveType = $driveType
+        driveReady = $driveReady
+        driveFormat = $driveFormat
+        availableFreeSpaceBytes = $availableFreeSpaceBytes
+        totalSizeBytes = $totalSizeBytes
+        existenceStatus = $existenceStatus
+        exists = $exists
+        knownOneDriveRoot = $knownSyncRootMatch
+        reparsePoint = if ($null -ne $attributesValue) {
+            [bool]($attributesValue -band [uint32][IO.FileAttributes]::ReparsePoint)
+        } else { $null }
+        offline = if ($null -ne $attributesValue) {
+            [bool]($attributesValue -band [uint32][IO.FileAttributes]::Offline)
+        } else { $null }
+        recallOnDataAccess = if ($null -ne $attributesValue) {
+            [bool]($attributesValue -band [uint32]0x00400000)
+        } else { $null }
+        pinned = if ($null -ne $attributesValue) {
+            [bool]($attributesValue -band [uint32]0x00080000)
+        } else { $null }
+        unpinned = if ($null -ne $attributesValue) {
+            [bool]($attributesValue -band [uint32]0x00100000)
+        } else { $null }
+        attributeErrorType = $attributeErrorType
+        driveErrorType = $driveErrorType
+    }
+}
+
+function Resolve-DependencyEndpoint {
+    param(
+        [Parameter(Mandatory = $true)][string]$Endpoint,
+        [ValidateRange(0, 1000)][int]$InputIndex = 0
+    )
+
+    $candidate = $Endpoint.Trim()
+    $match = [regex]::Match(
+        $candidate,
+        '^(?<host>[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?):(?<port>[0-9]{1,5})$'
+    )
+    if (-not $match.Success) {
+        throw "Invalid dependency endpoint at index $InputIndex. Use host:port with a DNS name or IPv4 address."
+    }
+    $port = [int]$match.Groups['port'].Value
+    if ($port -lt 1 -or $port -gt 65535) {
+        throw "Invalid dependency endpoint port at index $InputIndex. Use a port from 1 through 65535."
+    }
+    $hostName = $match.Groups['host'].Value.ToLowerInvariant()
+    return [pscustomobject][ordered]@{
+        inputIndex = $InputIndex
+        host = $hostName
+        port = $port
+        identitySha256 = Get-RedactedDependencyHash -Value "$hostName`:$port"
+    }
+}
+
+function Invoke-DependencyEndpointProbe {
+    param(
+        [Parameter(Mandatory = $true)][object]$Endpoint,
+        [ValidateRange(100, 10000)][int]$TimeoutMilliseconds,
+        [ValidateRange(1, 10)][int]$ProbeRun
+    )
+
+    $client = New-Object Net.Sockets.TcpClient
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $asyncResult = $null
+    $status = 'Failed'
+    $errorType = $null
+    try {
+        $asyncResult = $client.BeginConnect(
+            [string]$Endpoint.host,
+            [int]$Endpoint.port,
+            $null,
+            $null
+        )
+        if (-not $asyncResult.AsyncWaitHandle.WaitOne($TimeoutMilliseconds, $false)) {
+            $status = 'Timeout'
+        } else {
+            $client.EndConnect($asyncResult)
+            $status = if ($client.Connected) { 'Ready' } else { 'Failed' }
+        }
+    } catch {
+        $status = 'Failed'
+        $errorType = $_.Exception.GetType().FullName
+    } finally {
+        $timer.Stop()
+        if ($asyncResult -and $asyncResult.AsyncWaitHandle) {
+            $asyncResult.AsyncWaitHandle.Close()
+        }
+        $client.Close()
+    }
+
+    return [pscustomobject][ordered]@{
+        inputIndex = [int]$Endpoint.inputIndex
+        identitySha256 = [string]$Endpoint.identitySha256
+        port = [int]$Endpoint.port
+        probeRun = $ProbeRun
+        status = $status
+        durationMilliseconds = [Math]::Round($timer.Elapsed.TotalMilliseconds, 3)
+        timeoutMilliseconds = $TimeoutMilliseconds
+        errorType = $errorType
+    }
+}
+
+function Measure-DependencyInventoryOverhead {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Paths,
+        [ValidateRange(3, 25)][int]$Iterations
+    )
+
+    for ($pathIndex = 0; $pathIndex -lt $Paths.Count; $pathIndex++) {
+        [void](Get-DependencyPathObservation -Path $Paths[$pathIndex] -InputIndex $pathIndex)
+    }
+    $samples = @()
+    for ($iteration = 0; $iteration -lt $Iterations; $iteration++) {
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        for ($pathIndex = 0; $pathIndex -lt $Paths.Count; $pathIndex++) {
+            [void](Get-DependencyPathObservation -Path $Paths[$pathIndex] -InputIndex $pathIndex)
+        }
+        $timer.Stop()
+        $samples += [Math]::Round($timer.Elapsed.TotalMilliseconds, 3)
+    }
+    return [pscustomobject][ordered]@{
+        iterations = $Iterations
+        medianMilliseconds = [Math]::Round((Get-Median -Values $samples), 3)
+        p95Milliseconds = [Math]::Round((Get-Percentile -Values $samples -Percentile 95), 3)
+        samplesMilliseconds = @($samples)
+    }
+}
+
+function Get-DependencyProfileSummary {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Paths,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$EndpointProbes
+    )
+
+    $endpointSummaries = @()
+    foreach ($group in @($EndpointProbes | Group-Object -Property identitySha256)) {
+        $rows = @($group.Group)
+        $durations = @($rows | ForEach-Object { [double]$_.durationMilliseconds })
+        $endpointSummaries += [pscustomobject][ordered]@{
+            identitySha256 = $group.Name
+            port = [int]$rows[0].port
+            probeCount = $rows.Count
+            readyCount = @($rows | Where-Object status -eq 'Ready').Count
+            timeoutCount = @($rows | Where-Object status -eq 'Timeout').Count
+            failedCount = @($rows | Where-Object status -eq 'Failed').Count
+            durationMilliseconds = Get-WorkloadDistribution -Values $durations
+        }
+    }
+    $allReady = $EndpointProbes.Count -gt 0 -and
+        @($EndpointProbes | Where-Object status -ne 'Ready').Count -eq 0
+    return [pscustomobject][ordered]@{
+        pathCount = $Paths.Count
+        localPathCount = @($Paths | Where-Object locality -eq 'Local').Count
+        cloudSyncPathCount = @($Paths | Where-Object locality -eq 'CloudSyncRoot').Count
+        networkPathCount = @($Paths | Where-Object locality -eq 'Network').Count
+        recallOnDataAccessCount = @($Paths | Where-Object recallOnDataAccess -eq $true).Count
+        offlineCount = @($Paths | Where-Object offline -eq $true).Count
+        endpointCount = @($endpointSummaries).Count
+        readiness = if ($EndpointProbes.Count -eq 0) {
+            'NoEndpointsDeclared'
+        } elseif ($allReady) {
+            'AllDeclaredEndpointsReady'
+        } else {
+            'OneOrMoreEndpointProbesNotReady'
+        }
+        endpoints = @($endpointSummaries)
+        decision = 'BaselineOnlyNoPerformanceClaim'
+    }
+}
+
+function Get-DependencyConditionSignature {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Paths,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$EndpointProbes
+    )
+
+    $pathConditions = @($Paths | Sort-Object identitySha256 | ForEach-Object {
+        [ordered]@{
+            identitySha256 = $_.identitySha256
+            locality = $_.locality
+            driveType = $_.driveType
+            driveReady = $_.driveReady
+            driveFormat = $_.driveFormat
+            existenceStatus = $_.existenceStatus
+            knownOneDriveRoot = $_.knownOneDriveRoot
+            reparsePoint = $_.reparsePoint
+            offline = $_.offline
+            recallOnDataAccess = $_.recallOnDataAccess
+        }
+    })
+    $endpointConditions = @($EndpointProbes | Sort-Object identitySha256, probeRun | ForEach-Object {
+        [ordered]@{
+            identitySha256 = $_.identitySha256
+            port = $_.port
+            probeRun = $_.probeRun
+            status = $_.status
+        }
+    })
+    $canonical = [ordered]@{
+        schemaVersion = 1
+        paths = $pathConditions
+        endpoints = $endpointConditions
+    } | ConvertTo-Json -Depth 10 -Compress
+    return (Get-RedactedDependencyHash -Value $canonical)
+}
+
+function Invoke-DependencyProfile {
+    param(
+        [string]$Root,
+        [AllowEmptyCollection()][string[]]$Paths = @(),
+        [AllowEmptyCollection()][string[]]$Endpoints = @(),
+        [ValidateRange(1, 10)][int]$ProbeRunCount,
+        [ValidateRange(100, 10000)][int]$TimeoutMilliseconds,
+        [ValidateRange(3, 25)][int]$CalibrationIterations
+    )
+
+    Ensure-DataDirectories -Root $Root
+    $effectivePaths = @($Paths)
+    if ($effectivePaths.Count -eq 0) {
+        $effectivePaths = @($Root)
+    }
+    $resolvedEndpoints = @()
+    for ($endpointIndex = 0; $endpointIndex -lt $Endpoints.Count; $endpointIndex++) {
+        $resolvedEndpoints += Resolve-DependencyEndpoint `
+            -Endpoint $Endpoints[$endpointIndex] `
+            -InputIndex $endpointIndex
+    }
+
+    $observer = Measure-DependencyInventoryOverhead `
+        -Paths $effectivePaths `
+        -Iterations $CalibrationIterations
+    $pathObservations = @()
+    for ($pathIndex = 0; $pathIndex -lt $effectivePaths.Count; $pathIndex++) {
+        $pathObservations += Get-DependencyPathObservation `
+            -Path $effectivePaths[$pathIndex] `
+            -InputIndex $pathIndex
+    }
+    $endpointProbes = @()
+    foreach ($endpoint in $resolvedEndpoints) {
+        for ($probeRun = 1; $probeRun -le $ProbeRunCount; $probeRun++) {
+            $endpointProbes += Invoke-DependencyEndpointProbe `
+                -Endpoint $endpoint `
+                -TimeoutMilliseconds $TimeoutMilliseconds `
+                -ProbeRun $probeRun
+        }
+    }
+
+    $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff')
+    $runSuffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $evidencePath = Join-Path (Join-Path $Root 'measurements') "$stamp-$runSuffix-dependency-profile.json"
+    $profile = [pscustomobject][ordered]@{
+        schemaVersion = $script:SchemaVersion
+        experimentId = $script:ExperimentId
+        layer = 12
+        kind = 'dependency-profile'
+        capturedUtc = [DateTime]::UtcNow.ToString('o')
+        observationOnly = $true
+        environment = Get-WindowsEnvironment
+        requested = [pscustomobject][ordered]@{
+            pathCount = $effectivePaths.Count
+            endpointCount = $resolvedEndpoints.Count
+            probeRunCount = $ProbeRunCount
+            endpointTimeoutMilliseconds = $TimeoutMilliseconds
+        }
+        instrumentation = [pscustomobject][ordered]@{
+            pathInventorySource = 'System.IO.Path, DriveInfo, and File.GetAttributes'
+            networkProbeSource = 'TcpClient.BeginConnect, bounded WaitOne, EndConnect, then close'
+            timer = 'System.Diagnostics.Stopwatch'
+            pathInventoryCalibration = $observer
+            maximumDeclaredEndpointBudgetMilliseconds = (
+                $resolvedEndpoints.Count * $ProbeRunCount * $TimeoutMilliseconds
+            )
+            qualification = 'Path inventory cost is calibrated. Each TCP connection is the readiness interval itself and has a hard timeout; no application payload is sent.'
+        }
+        collectionScope = 'Raw paths, host names, IP addresses, directory listings, file names, file contents, and application payloads are not recorded. Identity values are SHA-256 hashes. UNC and mapped-network paths are classified without existence checks to avoid unbounded remote I/O.'
+        paths = @($pathObservations)
+        endpointProbes = @($endpointProbes)
+        summary = Get-DependencyProfileSummary `
+            -Paths @($pathObservations) `
+            -EndpointProbes @($endpointProbes)
+        conditionSignatureSha256 = Get-DependencyConditionSignature `
+            -Paths @($pathObservations) `
+            -EndpointProbes @($endpointProbes)
+        evidencePath = $evidencePath
+    }
+    $profile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
+    try {
+        Write-StructuredEvent -Root $Root -Level Information -Event 'dependency-profile-complete' -Data @{
+            evidencePath = $evidencePath
+            pathCount = $profile.summary.pathCount
+            endpointCount = $profile.summary.endpointCount
+            readiness = $profile.summary.readiness
+            conditionSignatureSha256 = $profile.conditionSignatureSha256
+            observationOnly = $true
+        }
+    } catch {
+        Write-Warning "The dependency profile was saved, but the optional event journal could not be updated ($($_.Exception.GetType().Name))."
+    }
+
+    Write-Host ''
+    Write-Host 'Layer 12 dependency readiness profile (observation only)' -ForegroundColor Cyan
+    Write-Host "Storage paths: $($profile.summary.pathCount) (local $($profile.summary.localPathCount), cloud-sync $($profile.summary.cloudSyncPathCount), network $($profile.summary.networkPathCount))"
+    Write-Host "Declared endpoints: $($profile.summary.endpointCount); readiness: $($profile.summary.readiness)"
+    Write-Host "Condition signature: $($profile.conditionSignatureSha256)"
+    Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
+    Write-Host 'No file content or Windows setting was changed and no performance-gain claim was made.' -ForegroundColor DarkYellow
+    return $profile
+}
+
 function Get-BaselineForEnhancement {
     param([string]$Root)
 
@@ -2368,8 +2810,8 @@ function Get-PerformanceLayerCatalog {
             number = 12
             name = 'Workload data, storage locality, network dependencies, and reproducibility'
             description = 'Checks whether files, storage, and network dependencies make work feel slow.'
-            assessment = 'NotIntegrated'
-            assessmentLabel = 'No product-integrated end-to-end assessment yet'
+            assessment = 'DependencyProfile'
+            assessmentLabel = 'Redacted storage-locality and bounded endpoint-readiness profile'
             candidates = @()
         }
     )
@@ -2552,6 +2994,11 @@ function Invoke-LayerAssessmentStep {
         [string[]]$WorkloadNames,
         [int]$WorkloadInterval,
         [int]$WorkloadCalibration,
+        [string[]]$DependencyPaths,
+        [string[]]$DependencyEndpoints,
+        [int]$DependencyRuns,
+        [int]$DependencyTimeout,
+        [int]$DependencyCalibration,
         [switch]$DryRun
     )
 
@@ -2579,6 +3026,16 @@ function Invoke-LayerAssessmentStep {
                 -Seconds $Seconds `
                 -IntervalMilliseconds $WorkloadInterval `
                 -CalibrationIterations $WorkloadCalibration
+            $evidencePath = $profile.evidencePath
+        }
+        'DependencyProfile' {
+            $profile = Invoke-DependencyProfile `
+                -Root $Root `
+                -Paths $DependencyPaths `
+                -Endpoints $DependencyEndpoints `
+                -ProbeRunCount $DependencyRuns `
+                -TimeoutMilliseconds $DependencyTimeout `
+                -CalibrationIterations $DependencyCalibration
             $evidencePath = $profile.evidencePath
         }
         default {
@@ -2923,6 +3380,11 @@ function New-LayerRuntime {
         [string[]]$WorkloadNames,
         [int]$WorkloadInterval,
         [int]$WorkloadCalibration,
+        [string[]]$DependencyPaths,
+        [string[]]$DependencyEndpoints,
+        [int]$DependencyRuns,
+        [int]$DependencyTimeout,
+        [int]$DependencyCalibration,
         [switch]$DryRun
     )
 
@@ -2937,6 +3399,11 @@ function New-LayerRuntime {
         WorkloadNames = $WorkloadNames
         WorkloadInterval = $WorkloadInterval
         WorkloadCalibration = $WorkloadCalibration
+        DependencyPaths = @($DependencyPaths)
+        DependencyEndpoints = @($DependencyEndpoints)
+        DependencyRuns = $DependencyRuns
+        DependencyTimeout = $DependencyTimeout
+        DependencyCalibration = $DependencyCalibration
         DryRun = [bool]$DryRun
     }
 }
@@ -2991,7 +3458,7 @@ function Invoke-FullSystemDiagnostics {
     Ensure-DataDirectories -Root $Root
     Write-Host ''
     Write-Host 'Full system diagnostics' -ForegroundColor Cyan
-    Write-Host 'One read-only pass: system baseline, Explorer readiness, and selected workload activity.'
+    Write-Host 'One read-only pass: system, Explorer, workload, storage-locality, and declared endpoint readiness.'
     $baseline = Invoke-Measurement `
         -Kind baseline `
         -Seconds $Runtime.Seconds `
@@ -3010,6 +3477,13 @@ function Invoke-FullSystemDiagnostics {
         -Seconds $Runtime.Seconds `
         -IntervalMilliseconds $Runtime.WorkloadInterval `
         -CalibrationIterations $Runtime.WorkloadCalibration
+    $dependencies = Invoke-DependencyProfile `
+        -Root $Root `
+        -Paths $Runtime.DependencyPaths `
+        -Endpoints $Runtime.DependencyEndpoints `
+        -ProbeRunCount $Runtime.DependencyRuns `
+        -TimeoutMilliseconds $Runtime.DependencyTimeout `
+        -CalibrationIterations $Runtime.DependencyCalibration
 
     $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')
     $manifestPath = Join-Path (Join-Path $Root 'measurements') "$stamp-full-diagnostics.json"
@@ -3024,9 +3498,10 @@ function Invoke-FullSystemDiagnostics {
             systemBaseline = $baseline.evidencePath
             shellReadiness = $shell.evidencePath
             workloadProfile = $workload.evidencePath
+            dependencyProfile = $dependencies.evidencePath
         }
-        coveredLayers = @(1, 2, 5, 6, 10, 11)
-        integrationGaps = @(3, 4, 7, 8, 9, 12)
+        coveredLayers = @(1, 2, 5, 6, 10, 11, 12)
+        integrationGaps = @(3, 4, 7, 8, 9)
         statement = 'No Windows setting was changed. A missing layer integration is not a clean bill of health.'
     }
     $manifest | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
@@ -3174,6 +3649,11 @@ function Invoke-LayerWorkflow {
         [string[]]$WorkloadNames,
         [int]$WorkloadInterval,
         [int]$WorkloadCalibration,
+        [string[]]$DependencyPaths,
+        [string[]]$DependencyEndpoints,
+        [int]$DependencyRuns,
+        [int]$DependencyTimeout,
+        [int]$DependencyCalibration,
         [switch]$DryRun
     )
 
@@ -3188,6 +3668,11 @@ function Invoke-LayerWorkflow {
         -WorkloadNames $WorkloadNames `
         -WorkloadInterval $WorkloadInterval `
         -WorkloadCalibration $WorkloadCalibration `
+        -DependencyPaths $DependencyPaths `
+        -DependencyEndpoints $DependencyEndpoints `
+        -DependencyRuns $DependencyRuns `
+        -DependencyTimeout $DependencyTimeout `
+        -DependencyCalibration $DependencyCalibration `
         -DryRun:$DryRun
     $state = Get-LayerWorkflowState -Root $Root
     Save-LayerWorkflowState -Root $Root -State $state
@@ -3352,7 +3837,8 @@ function Show-ZBookPerfAdvancedMenu {
     Write-Host '6. Status'
     Write-Host '7. Measure Explorer readiness and shell settings'
     Write-Host '8. Measure a selected application workload'
-    Write-Host '9. Show the detailed capability map'
+    Write-Host '9. Measure storage locality and declared network readiness'
+    Write-Host '0. Show the detailed capability map'
     Write-Host 'B. Back'
     return (Read-Host 'Choose a maintenance action')
 }
@@ -3418,6 +3904,7 @@ function Invoke-ZBookPerfMain {
     elseif ($Watch) { $script:Action = 'Watch' }
     elseif ($ShellProfile) { $script:Action = 'ShellProfile' }
     elseif ($WorkloadProfile) { $script:Action = 'WorkloadProfile' }
+    elseif ($DependencyProfile) { $script:Action = 'DependencyProfile' }
     elseif ($Enhance) { $script:Action = 'Enhance' }
     elseif ($Remeasure) { $script:Action = 'Remeasure' }
     elseif ($Revert) { $script:Action = 'Revert' }
@@ -3433,6 +3920,11 @@ function Invoke-ZBookPerfMain {
         -WorkloadNames $WorkloadProcessName `
         -WorkloadInterval $WorkloadSampleIntervalMilliseconds `
         -WorkloadCalibration $WorkloadCalibrationIterations `
+        -DependencyPaths $DependencyPath `
+        -DependencyEndpoints $DependencyEndpoint `
+        -DependencyRuns $DependencyProbeRunCount `
+        -DependencyTimeout $DependencyTimeoutMilliseconds `
+        -DependencyCalibration $DependencyCalibrationIterations `
         -DryRun:$WhatIfPreference
 
     do {
@@ -3473,7 +3965,8 @@ function Invoke-ZBookPerfMain {
                 '6' { $selectedAction = 'Status' }
                 '7' { $selectedAction = 'ShellProfile' }
                 '8' { $selectedAction = 'WorkloadProfile' }
-                '9' { $selectedAction = 'LayerMap' }
+                '9' { $selectedAction = 'DependencyProfile' }
+                '0' { $selectedAction = 'LayerMap' }
                 'b' { continue }
                 'B' { continue }
                 default { Write-Warning 'Unknown advanced choice.'; continue }
@@ -3516,6 +4009,11 @@ function Invoke-ZBookPerfMain {
                     -WorkloadNames $WorkloadProcessName `
                     -WorkloadInterval $WorkloadSampleIntervalMilliseconds `
                     -WorkloadCalibration $WorkloadCalibrationIterations `
+                    -DependencyPaths $DependencyPath `
+                    -DependencyEndpoints $DependencyEndpoint `
+                    -DependencyRuns $DependencyProbeRunCount `
+                    -DependencyTimeout $DependencyTimeoutMilliseconds `
+                    -DependencyCalibration $DependencyCalibrationIterations `
                     -DryRun:$WhatIfPreference
             }
             'ChooseLayer' {
@@ -3532,6 +4030,11 @@ function Invoke-ZBookPerfMain {
                         -WorkloadNames $WorkloadProcessName `
                         -WorkloadInterval $WorkloadSampleIntervalMilliseconds `
                         -WorkloadCalibration $WorkloadCalibrationIterations `
+                        -DependencyPaths $DependencyPath `
+                        -DependencyEndpoints $DependencyEndpoint `
+                        -DependencyRuns $DependencyProbeRunCount `
+                        -DependencyTimeout $DependencyTimeoutMilliseconds `
+                        -DependencyCalibration $DependencyCalibrationIterations `
                         -DryRun:$WhatIfPreference
                 }
             }
@@ -3555,6 +4058,15 @@ function Invoke-ZBookPerfMain {
                     -Seconds $DurationSeconds `
                     -IntervalMilliseconds $WorkloadSampleIntervalMilliseconds `
                     -CalibrationIterations $WorkloadCalibrationIterations)
+            }
+            'DependencyProfile' {
+                [void](Invoke-DependencyProfile `
+                    -Root $DataRoot `
+                    -Paths $DependencyPath `
+                    -Endpoints $DependencyEndpoint `
+                    -ProbeRunCount $DependencyProbeRunCount `
+                    -TimeoutMilliseconds $DependencyTimeoutMilliseconds `
+                    -CalibrationIterations $DependencyCalibrationIterations)
             }
             'Enhance' {
                 $selectedCandidate = $EnhancementCandidate

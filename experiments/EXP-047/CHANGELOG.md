@@ -1,5 +1,24 @@
 # EXP-047 changelog
 
+## 2026-07-30 — Layer 12 dependency readiness profile
+
+### Added
+
+- Added a redacted storage-locality inventory for declared workload paths.
+- Added repeated, timeout-bounded TCP readiness probes for explicitly declared
+  `host:port` dependencies without sending application payloads.
+- Added observer calibration, a condition signature, structured JSON evidence,
+  Layer 12 catalog integration, full-diagnostic coverage, and focused tests.
+- Preserved the completed primary evidence file when an optional JSONL event
+  journal is not writable, while reporting the journal failure clearly.
+
+### Evidence state
+
+Observation-only capability validated on the lab ZBook. No file content,
+process, service, registry value, policy, driver, firmware, or Windows setting
+was changed. The run established a dependency baseline and makes no
+performance-improvement claim.
+
 ## 2026-07-29 — Windows PowerShell launcher correction
 
 ### Fixed
