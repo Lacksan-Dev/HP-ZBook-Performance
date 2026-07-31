@@ -30,6 +30,26 @@ Describe 'EXP-063 HP App Helper HSA service provider' {
         $content|Should -Match 'ManagementSignals'
         $content|Should -Match 'DependencySafe'
         $content|Should -Match 'ServiceCount'
+        $content|Should -Match 'Dependencies require physical review before mutation'
+    }
+    It 'requires a machine-bound versioned state artifact' {
+        foreach($term in @('schemaVersion=1','experiment=''EXP-063''','provider=''hp-app-helper-hsa-service''','machine=$env:COMPUTERNAME','State identity validation failed')){$content|Should -Match [regex]::Escape($term)}
+    }
+    It 'verifies immediate and reboot-persistent application state' {
+        $content|Should -Match "'VerifyReboot'"
+        $content|Should -Match 'LastBootUpTime'
+        $content|Should -Match 'Reboot persistence verification failed'
+        $content|Should -Match "StartMode -eq 'Manual'"
+        $content|Should -Match 'DelayedAutoStart -eq 0'
+    }
+    It 'uses terminating command and verification failures' {
+        $content|Should -Match "ErrorActionPreference='Stop'"
+        $content|Should -Match 'LASTEXITCODE -ne 0'
+        $content|Should -Match "Write-StructuredLog 'failure' 'fail'"
+        $content|Should -Match 'throw'
+    }
+    It 'restores exact startup delayed-start and running state with drift refusal' {
+        foreach($term in @('Assert-CurrentIdentityMatchesSaved','applied configuration drifted','Restore exact startup configuration and running state','Start-Service','Stop-Service','Rollback verification failed')){$content|Should -Match [regex]::Escape($term)}
     }
     It 'registers the profile and all protected scopes' {
         $manifestObject=Get-Content -LiteralPath $manifest -Raw|ConvertFrom-Json
