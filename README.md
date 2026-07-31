@@ -94,6 +94,9 @@ Useful non-interactive examples:
 # Map Layer 4 signed packages, Plug and Play health, and driver-service ownership
 .\ZBookPerf.ps1 -Action DriverProfile -DriverCalibrationIterations 3
 
+# Record three correlated Layer 5 DPC/ISR, scheduling, paging, and disk blocks
+.\ZBookPerf.ps1 -Action KernelProfile -KernelBlockCount 3 -KernelSamplesPerBlock 5
+
 # Profile one existing application workload for 30 seconds without changing it
 .\ZBookPerf.ps1 -Action WorkloadProfile -WorkloadProcessName msedge.exe -DurationSeconds 30
 
@@ -153,6 +156,16 @@ silently truncate an unexpectedly large device set. A package date, provider,
 stopped demand driver, or static health state is context—not proof that a
 driver is slow, obsolete, or safe to replace. No package, service, or device is
 changed.
+
+`KernelProfile` is observation-only. It records repeated correlated blocks of
+aggregate processor utility, DPC and interrupt time, DPC and interrupt rates,
+context switches, processor queue length, memory paging, available memory, and
+disk latency and queue length. It separately calibrates the complete counter
+snapshot, preserves every raw sample and block median, and records whether WPR,
+WPA, and WPA Exporter are available for deeper module and function
+attribution. Aggregate counters screen for pressure; they do not identify a
+responsible driver or prove the cause of a visible delay. The profile never
+starts or stops a trace and changes no kernel or Windows state.
 
 `ShellProfile` is observation-only. It reads animations, transparency, notification duration, the documented Widgets and Game DVR policy locations, related app-package presence, and WPR/WPA availability. It then opens a private benchmark folder, measures when the new Explorer window reports ready through the documented Shell automation model, and closes only that benchmark window. Full readiness-probe overhead, raw runs, medians, variability, timeouts, power state, and Battery Saver state are retained. This is a baseline capability, not a performance-gain claim.
 

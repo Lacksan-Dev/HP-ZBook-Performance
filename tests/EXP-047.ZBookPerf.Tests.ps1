@@ -65,6 +65,18 @@ Describe 'EXP-047 ZBookPerf' {
             $validateSet.ValidValues | Should -Contain 'DriverProfile'
         }
 
+        It 'exposes the Layer 5 kernel-pressure profile as a public read-only action' {
+            $command = Get-Command $scriptPath
+            ($command.Parameters.Keys -contains 'KernelProfile') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'KernelBlockCount') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'KernelSamplesPerBlock') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'KernelCalibrationIterations') | Should -BeTrue
+            $validateSet = @($command.Parameters['Action'].Attributes | Where-Object {
+                $_ -is [System.Management.Automation.ValidateSetAttribute]
+            })[0]
+            $validateSet.ValidValues | Should -Contain 'KernelProfile'
+        }
+
         It 'exposes the Layer 10 shell profile as a public read-only action' {
             $command = Get-Command $scriptPath
             ($command.Parameters.Keys -contains 'ShellProfile') | Should -BeTrue
@@ -355,6 +367,8 @@ Describe 'EXP-047 ZBookPerf' {
             $catalog[2].assessment | Should -Be 'FirmwareProfile'
             $catalog[3].assessment | Should -Be 'DriverProfile'
             $catalog[3].assessmentLabel | Should -Match 'signed-package'
+            $catalog[4].assessment | Should -Be 'KernelProfile'
+            $catalog[4].assessmentLabel | Should -Match 'DPC/ISR'
             $catalog[9].assessment | Should -Be 'ShellProfile'
             $catalog[10].assessment | Should -Be 'WorkloadProfile'
         }
@@ -500,6 +514,27 @@ Describe 'EXP-047 ZBookPerf' {
             Should -Invoke Invoke-DriverProfile -Times 1
             $state.phase | Should -Be 'assessed'
             @($state.history)[-1].evidencePath | Should -Be 'driver-profile.json'
+        }
+
+        It 'routes the Layer 5 assessment to the kernel-pressure profiler' {
+            $root = Join-Path $TestDrive 'kernel-layer'
+            $state = New-LayerWorkflowState
+            $state.currentLayer = 5
+            Mock Invoke-KernelProfile {
+                [pscustomobject]@{ evidencePath = 'kernel-profile.json' }
+            }
+
+            Invoke-LayerAssessmentStep `
+                -Root $root `
+                -State $state `
+                -KernelBlocks 3 `
+                -KernelSamples 5 `
+                -KernelInterval 1 `
+                -KernelCalibration 3
+
+            Should -Invoke Invoke-KernelProfile -Times 1
+            $state.phase | Should -Be 'assessed'
+            @($state.history)[-1].evidencePath | Should -Be 'kernel-profile.json'
         }
 
         It 'routes the Layer 10 assessment to the shell profiler' {
@@ -1196,6 +1231,154 @@ Describe 'EXP-047 ZBookPerf' {
         }
     }
 
+    Context 'Layer 5 kernel-pressure profile' {
+        It 'normalizes one correlated counter sample and converts disk seconds to milliseconds' {
+            $counterSamples = @(Get-KernelProfileCounterCatalog | ForEach-Object {
+                $value = switch ($_.key) {
+                    'dpcTimePercent' { 0.25 }
+                    'interruptTimePercent' { 0.10 }
+                    'dpcsQueuedPerSecond' { 400 }
+                    'interruptsPerSecond' { 800 }
+                    'contextSwitchesPerSecond' { 12000 }
+                    'processorQueueLength' { 1 }
+                    'pageReadsPerSecond' { 2 }
+                    'pagesInputPerSecond' { 3 }
+                    'availableMemoryMb' { 8192 }
+                    'diskLatencyMilliseconds' { 0.005 }
+                    'diskQueueLength' { 0.5 }
+                    default { 30 }
+                }
+                [pscustomobject]@{ Path = "\\testhost$($_.path)"; CookedValue = $value }
+            })
+            $set = [pscustomobject]@{
+                Timestamp = [datetime]'2026-07-31T10:00:00Z'
+                CounterSamples = $counterSamples
+            }
+
+            $sample = ConvertFrom-KernelCounterSampleSet -SampleSet $set
+
+            $sample.dpcTimePercent | Should -Be 0.25
+            $sample.interruptsPerSecond | Should -Be 800
+            $sample.diskLatencyMilliseconds | Should -Be 5
+            $sample.availableMemoryMb | Should -Be 8192
+        }
+
+        It 'summarizes raw values and repeated block medians without a performance claim' {
+            $blocks = @(1..3 | ForEach-Object {
+                $blockNumber = $_
+                $samples = @(1..3 | ForEach-Object {
+                    [pscustomobject]@{
+                        processorUtilityPercent = 20 + $blockNumber
+                        dpcTimePercent = [double]$blockNumber / 10
+                        interruptTimePercent = 0
+                        dpcsQueuedPerSecond = 300 + $blockNumber
+                        interruptsPerSecond = 700 + $blockNumber
+                        contextSwitchesPerSecond = 10000 + $blockNumber
+                        processorQueueLength = 0
+                        pageReadsPerSecond = 1
+                        pagesInputPerSecond = 1
+                        availableMemoryMb = 8000
+                        diskLatencyMilliseconds = 2
+                        diskQueueLength = 0
+                    }
+                })
+                [pscustomobject]@{
+                    blockNumber = $blockNumber
+                    samples = $samples
+                    metrics = Get-KernelMetricDistributions -Samples $samples
+                }
+            })
+
+            $summary = Get-KernelProfileSummary -Blocks $blocks
+
+            $summary.blockCount | Should -Be 3
+            $summary.sampleCount | Should -Be 9
+            $summary.rawSampleDistributions.dpcTimePercent.median | Should -Be 0.2
+            $summary.blockMedianDistributions.dpcTimePercent.median | Should -Be 0.2
+            $summary.decision | Should -Be 'BaselineOnlyNoPerformanceClaim'
+        }
+
+        It 'writes bounded raw blocks, observer qualification, and trace-tool state' {
+            Mock Get-KernelProfileSupport {
+                [pscustomobject]@{ supported = $true; reason = 'supported'; requiredCounters = @('test'); missingCounters = @() }
+            }
+            Mock Measure-KernelCounterObserver {
+                [pscustomobject]@{
+                    iterations = 3
+                    durationMilliseconds = [pscustomobject]@{ count = 3; median = 4; p95 = 5; minimum = 3; maximum = 5 }
+                    qualification = 'test'
+                }
+            }
+            Mock Get-KernelCounterBlock {
+                $samples = @(1..$SamplesPerBlock | ForEach-Object {
+                    [pscustomobject]@{
+                        timestampUtc = [DateTime]::UtcNow.ToString('o')
+                        processorUtilityPercent = 20; dpcTimePercent = 0.1; interruptTimePercent = 0
+                        dpcsQueuedPerSecond = 300; interruptsPerSecond = 700
+                        contextSwitchesPerSecond = 10000; processorQueueLength = 0
+                        pageReadsPerSecond = 1; pagesInputPerSecond = 1; availableMemoryMb = 8000
+                        diskLatencyMilliseconds = 2; diskQueueLength = 0
+                    }
+                })
+                [pscustomobject]@{
+                    blockNumber = $BlockNumber
+                    sampleCount = $samples.Count
+                    sampleIntervalSeconds = $SampleIntervalSeconds
+                    expectedSamplingSpanMilliseconds = 2000
+                    wallDurationMilliseconds = 2010
+                    observerAndSchedulingExcessMilliseconds = 10
+                    samples = $samples
+                    metrics = Get-KernelMetricDistributions -Samples $samples
+                }
+            }
+            Mock Get-KernelProfileEnvironment { [pscustomobject]@{ windows = [pscustomobject]@{ build = '26200' } } }
+            Mock Get-KernelTraceToolState {
+                [pscustomobject]@{
+                    wprAvailable = $true; wprRecordingState = 'idle'; wpaAvailable = $false
+                    wpaExporterAvailable = $false; automatedModuleAttributionReady = $false
+                    traceStarted = $false; qualification = 'test'
+                }
+            }
+            Mock Write-StructuredEvent { }
+            Mock Write-Host { }
+
+            $profile = Invoke-KernelProfile `
+                -Root $TestDrive `
+                -BlockCount 3 `
+                -SamplesPerBlock 3 `
+                -SampleIntervalSeconds 1 `
+                -CalibrationIterations 3
+
+            $profile.observationOnly | Should -BeTrue
+            $profile.summary.blockCount | Should -Be 3
+            $profile.summary.sampleCount | Should -Be 9
+            $profile.instrumentation.traceTools.traceStarted | Should -BeFalse
+            $profile.summary.decision | Should -Be 'BaselineOnlyNoPerformanceClaim'
+            Test-Path -LiteralPath $profile.evidencePath | Should -BeTrue
+            (Get-Content -LiteralPath $profile.evidencePath -Raw) | Should -Match 'kernel-pressure-profile'
+            Should -Invoke Get-KernelCounterBlock -Times 3
+        }
+
+        It 'contains no scheduler, interrupt, driver, service, registry, or power mutation command' {
+            $body = (Get-Command Invoke-KernelProfile).ScriptBlock.ToString()
+            $body | Should -Not -Match 'Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|Set-Service|Stop-Service|Start-Service|pnputil|powercfg|bcdedit|wpr\.exe.*-(start|stop|cancel)|Restart-Computer'
+        }
+
+        It 'routes the public action directly to the profiler' {
+            $script:Action = 'KernelProfile'
+            $script:DataRoot = $TestDrive
+            $script:KernelBlockCount = 3
+            $script:KernelSamplesPerBlock = 3
+            $script:KernelSampleIntervalSeconds = 1
+            $script:KernelCalibrationIterations = 3
+            Mock Invoke-KernelProfile { }
+
+            Invoke-ZBookPerfMain
+
+            Should -Invoke Invoke-KernelProfile -Times 1
+        }
+    }
+
     Context 'Layer 10 shell profile' {
         It 'summarizes measured runs without counting warmups' {
             $runs = @(
@@ -1715,6 +1898,9 @@ Describe 'EXP-047 ZBookPerf' {
             Mock Invoke-DriverProfile {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'drivers.json') }
             }
+            Mock Invoke-KernelProfile {
+                [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'kernel.json') }
+            }
             Mock Invoke-Measurement {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'baseline.json') }
             }
@@ -1733,6 +1919,7 @@ Describe 'EXP-047 ZBookPerf' {
                 Seconds = 5; Interval = 1; SkipTrace = $true
                 ThermalCalibration = 3; HardwareCalibration = 3; FirmwareCalibration = 3
                 DriverCalibration = 3; DriverLimit = 64
+                KernelBlocks = 3; KernelSamples = 3; KernelInterval = 1; KernelCalibration = 3
                 ShellRuns = 1; ShellWarmups = 0; ShellTimeout = 1000; ShellCalibration = 5
                 WorkloadNames = @('explorer.exe'); WorkloadInterval = 1000; WorkloadCalibration = 3
                 DependencyPaths = @($TestDrive); DependencyEndpoints = @()
@@ -1746,6 +1933,7 @@ Describe 'EXP-047 ZBookPerf' {
             $result.evidence.storagePath | Should -Match 'hardware.json'
             $result.evidence.firmwareBoundary | Should -Match 'firmware.json'
             $result.evidence.driverOwnership | Should -Match 'drivers.json'
+            $result.evidence.kernelPressure | Should -Match 'kernel.json'
             Test-Path -LiteralPath $result.evidence.systemBaseline | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $TestDrive 'measurements') | Should -BeTrue
             Should -Invoke Invoke-Measurement -Times 1
@@ -1753,6 +1941,7 @@ Describe 'EXP-047 ZBookPerf' {
             Should -Invoke Invoke-HardwareProfile -Times 1
             Should -Invoke Invoke-FirmwareProfile -Times 1
             Should -Invoke Invoke-DriverProfile -Times 1
+            Should -Invoke Invoke-KernelProfile -Times 1
             Should -Invoke Invoke-ShellProfile -Times 1
             Should -Invoke Invoke-WorkloadProfile -Times 1
             Should -Invoke Invoke-DependencyProfile -Times 1

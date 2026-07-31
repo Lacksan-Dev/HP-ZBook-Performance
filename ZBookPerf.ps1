@@ -18,7 +18,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'FirmwareProfile', 'DriverProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
+    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'FirmwareProfile', 'DriverProfile', 'KernelProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
     [string]$Action = 'Menu',
 
     [switch]$FullDiagnostics,
@@ -30,6 +30,7 @@ param(
     [switch]$HardwareProfile,
     [switch]$FirmwareProfile,
     [switch]$DriverProfile,
+    [switch]$KernelProfile,
     [switch]$ShellProfile,
     [switch]$WorkloadProfile,
     [switch]$DependencyProfile,
@@ -67,6 +68,18 @@ param(
 
     [ValidateRange(64, 2048)]
     [int]$DriverDeviceLimit = 512,
+
+    [ValidateRange(3, 15)]
+    [int]$KernelBlockCount = 3,
+
+    [ValidateRange(3, 60)]
+    [int]$KernelSamplesPerBlock = 5,
+
+    [ValidateRange(1, 10)]
+    [int]$KernelSampleIntervalSeconds = 1,
+
+    [ValidateRange(3, 25)]
+    [int]$KernelCalibrationIterations = 3,
 
     [ValidateRange(1, 25)]
     [int]$ShellRunCount = 5,
@@ -115,7 +128,7 @@ $ErrorActionPreference = 'Stop'
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
 $script:ProductName = 'Lacksan UX-ROM'
-$script:ProductVersion = '2026.07.31.2'
+$script:ProductVersion = '2026.07.31.3'
 $script:LayerWorkflowSchemaVersion = 1
 $script:SplashShown = $false
 $script:LoadedFrom = if ([string]::IsNullOrWhiteSpace([string]$PSCommandPath)) {
@@ -1839,6 +1852,326 @@ function Invoke-DriverProfile {
     Write-Host $profile.summary.interpretation -ForegroundColor DarkYellow
     Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
     Write-Host 'No driver package, service, device, OEM component, or Windows setting was changed.' -ForegroundColor DarkYellow
+    return $profile
+}
+
+function Get-KernelProfileCounterCatalog {
+    return @(
+        [pscustomobject]@{ key = 'processorUtilityPercent'; path = '\Processor Information(_Total)\% Processor Utility'; unit = 'percent' },
+        [pscustomobject]@{ key = 'dpcTimePercent'; path = '\Processor Information(_Total)\% DPC Time'; unit = 'percent' },
+        [pscustomobject]@{ key = 'interruptTimePercent'; path = '\Processor Information(_Total)\% Interrupt Time'; unit = 'percent' },
+        [pscustomobject]@{ key = 'dpcsQueuedPerSecond'; path = '\Processor Information(_Total)\DPCs Queued/sec'; unit = 'per-second' },
+        [pscustomobject]@{ key = 'interruptsPerSecond'; path = '\Processor Information(_Total)\Interrupts/sec'; unit = 'per-second' },
+        [pscustomobject]@{ key = 'contextSwitchesPerSecond'; path = '\System\Context Switches/sec'; unit = 'per-second' },
+        [pscustomobject]@{ key = 'processorQueueLength'; path = '\System\Processor Queue Length'; unit = 'count' },
+        [pscustomobject]@{ key = 'pageReadsPerSecond'; path = '\Memory\Page Reads/sec'; unit = 'per-second' },
+        [pscustomobject]@{ key = 'pagesInputPerSecond'; path = '\Memory\Pages Input/sec'; unit = 'per-second' },
+        [pscustomobject]@{ key = 'availableMemoryMb'; path = '\Memory\Available MBytes'; unit = 'megabytes' },
+        [pscustomobject]@{ key = 'diskLatencyMilliseconds'; path = '\PhysicalDisk(_Total)\Avg. Disk sec/Transfer'; unit = 'milliseconds' },
+        [pscustomobject]@{ key = 'diskQueueLength'; path = '\PhysicalDisk(_Total)\Current Disk Queue Length'; unit = 'count' }
+    )
+}
+
+function Get-KernelProfileSupport {
+    $counterCommand = Get-Command 'Get-Counter' -ErrorAction SilentlyContinue
+    if (-not $counterCommand) {
+        return [pscustomobject][ordered]@{
+            supported = $false
+            reason = 'Get-Counter is unavailable on this Windows host.'
+            requiredCounters = @()
+            missingCounters = @()
+        }
+    }
+
+    $catalog = @(Get-KernelProfileCounterCatalog)
+    $paths = @($catalog.path)
+    try {
+        $probe = Get-Counter -Counter $paths -MaxSamples 1 -ErrorAction Stop
+        $observedPaths = @($probe.CounterSamples | ForEach-Object { [string]$_.Path })
+        $missing = @($catalog | Where-Object {
+            $requiredSuffix = ([string]$_.path).ToLowerInvariant()
+            -not @($observedPaths | Where-Object { ([string]$_).ToLowerInvariant().EndsWith($requiredSuffix) }).Count
+        } | ForEach-Object { [string]$_.path })
+    } catch {
+        return [pscustomobject][ordered]@{
+            supported = $false
+            reason = "The required local performance-counter set could not be read ($($_.Exception.GetType().Name)). Counter names are localized and this build requires every declared path."
+            requiredCounters = $paths
+            missingCounters = $paths
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        supported = ($missing.Count -eq 0)
+        reason = if ($missing.Count -eq 0) {
+            'The complete local DPC/ISR, scheduling, memory-paging, and disk-pressure counter set is readable.'
+        } else {
+            "Required counter paths were not returned: $($missing -join ', ')."
+        }
+        requiredCounters = $paths
+        missingCounters = $missing
+    }
+}
+
+function ConvertFrom-KernelCounterSampleSet {
+    param([Parameter(Mandatory = $true)][object]$SampleSet)
+
+    $catalog = @(Get-KernelProfileCounterCatalog)
+    $values = [ordered]@{}
+    foreach ($item in $catalog) { $values[$item.key] = $null }
+    foreach ($sample in @($SampleSet.CounterSamples)) {
+        $samplePath = ([string]$sample.Path).ToLowerInvariant()
+        foreach ($item in $catalog) {
+            if ($samplePath.EndsWith(([string]$item.path).ToLowerInvariant())) {
+                $value = [double]$sample.CookedValue
+                if ($item.key -eq 'diskLatencyMilliseconds') { $value *= 1000 }
+                $values[$item.key] = [Math]::Round($value, 4)
+                break
+            }
+        }
+    }
+
+    $timestamp = if ($SampleSet.Timestamp -is [datetime]) {
+        ([datetime]$SampleSet.Timestamp).ToUniversalTime().ToString('o')
+    } else {
+        [DateTime]::UtcNow.ToString('o')
+    }
+    return [pscustomobject][ordered]@{
+        timestampUtc = $timestamp
+        processorUtilityPercent = $values.processorUtilityPercent
+        dpcTimePercent = $values.dpcTimePercent
+        interruptTimePercent = $values.interruptTimePercent
+        dpcsQueuedPerSecond = $values.dpcsQueuedPerSecond
+        interruptsPerSecond = $values.interruptsPerSecond
+        contextSwitchesPerSecond = $values.contextSwitchesPerSecond
+        processorQueueLength = $values.processorQueueLength
+        pageReadsPerSecond = $values.pageReadsPerSecond
+        pagesInputPerSecond = $values.pagesInputPerSecond
+        availableMemoryMb = $values.availableMemoryMb
+        diskLatencyMilliseconds = $values.diskLatencyMilliseconds
+        diskQueueLength = $values.diskQueueLength
+    }
+}
+
+function Get-KernelMetricDistributions {
+    param([Parameter(Mandatory = $true)][object[]]$Samples)
+
+    $metrics = [ordered]@{}
+    foreach ($item in Get-KernelProfileCounterCatalog) {
+        $values = @($Samples | ForEach-Object {
+            $value = $_.($item.key)
+            if ($null -ne $value) { [double]$value }
+        })
+        $metrics[$item.key] = Get-WorkloadDistribution -Values $values
+    }
+    return [pscustomobject]$metrics
+}
+
+function Get-KernelCounterBlock {
+    param(
+        [ValidateRange(1, 15)][int]$BlockNumber,
+        [ValidateRange(3, 60)][int]$SamplesPerBlock,
+        [ValidateRange(1, 10)][int]$SampleIntervalSeconds
+    )
+
+    $paths = @((Get-KernelProfileCounterCatalog).path)
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $sampleSets = @(Get-Counter `
+        -Counter $paths `
+        -SampleInterval $SampleIntervalSeconds `
+        -MaxSamples $SamplesPerBlock `
+        -ErrorAction Stop)
+    $timer.Stop()
+    $samples = @($sampleSets | ForEach-Object { ConvertFrom-KernelCounterSampleSet -SampleSet $_ })
+    if ($samples.Count -ne $SamplesPerBlock) {
+        throw "Kernel-pressure block $BlockNumber returned $($samples.Count) samples; $SamplesPerBlock were required."
+    }
+    $expectedSpanMilliseconds = [double](($SamplesPerBlock - 1) * $SampleIntervalSeconds * 1000)
+    return [pscustomobject][ordered]@{
+        blockNumber = $BlockNumber
+        sampleCount = $samples.Count
+        sampleIntervalSeconds = $SampleIntervalSeconds
+        expectedSamplingSpanMilliseconds = $expectedSpanMilliseconds
+        wallDurationMilliseconds = [Math]::Round($timer.Elapsed.TotalMilliseconds, 4)
+        observerAndSchedulingExcessMilliseconds = [Math]::Round(($timer.Elapsed.TotalMilliseconds - $expectedSpanMilliseconds), 4)
+        samples = @($samples)
+        metrics = Get-KernelMetricDistributions -Samples @($samples)
+    }
+}
+
+function Measure-KernelCounterObserver {
+    param([ValidateRange(3, 25)][int]$Iterations)
+
+    $paths = @((Get-KernelProfileCounterCatalog).path)
+    [void](Get-Counter -Counter $paths -MaxSamples 1 -ErrorAction Stop)
+    $durations = @()
+    for ($index = 0; $index -lt $Iterations; $index++) {
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        [void](Get-Counter -Counter $paths -MaxSamples 1 -ErrorAction Stop)
+        $timer.Stop()
+        $durations += $timer.Elapsed.TotalMilliseconds
+    }
+    return [pscustomobject][ordered]@{
+        iterations = $Iterations
+        durationMilliseconds = Get-WorkloadDistribution -Values $durations
+        qualification = 'Times one complete 12-counter local snapshot after one warmup. Block wall time and expected inter-sample span are retained separately; measured values are not overhead-corrected.'
+    }
+}
+
+function Get-KernelTraceToolState {
+    $programFilesX86 = ${env:ProgramFiles(x86)}
+    $wptRoot = if ($programFilesX86) {
+        Join-Path $programFilesX86 'Windows Kits\10\Windows Performance Toolkit'
+    }
+    else {
+        $null
+    }
+    $wprAvailable = [bool](Get-Command 'wpr.exe' -ErrorAction SilentlyContinue)
+    $wpaAvailable = [bool](Get-Command 'wpa.exe' -ErrorAction SilentlyContinue) -or
+        [bool]($wptRoot -and (Test-Path -LiteralPath (Join-Path $wptRoot 'wpa.exe')))
+    $exporterAvailable = [bool](Get-Command 'wpaexporter.exe' -ErrorAction SilentlyContinue) -or
+        [bool]($wptRoot -and (Test-Path -LiteralPath (Join-Path $wptRoot 'wpaexporter.exe')))
+    $wprState = if ($wprAvailable) { Get-WprRecordingState } else { [pscustomobject]@{ state = 'unavailable' } }
+    return [pscustomobject][ordered]@{
+        wprAvailable = $wprAvailable
+        wprRecordingState = [string]$wprState.state
+        wpaAvailable = $wpaAvailable
+        wpaExporterAvailable = $exporterAvailable
+        automatedModuleAttributionReady = ($wprAvailable -and $exporterAvailable)
+        traceStarted = $false
+        qualification = 'This profile does not start, stop, cancel, or export an ETW session. WPR/WPA is the documented next step for module and function attribution during a declared slow interval.'
+    }
+}
+
+function Get-KernelProfileEnvironment {
+    $source = Get-WindowsEnvironment
+    $adapterStates = @($source.networkAdapters | Group-Object Status | ForEach-Object {
+        [pscustomobject][ordered]@{ status = $_.Name; count = @($_.Group).Count }
+    })
+    return [pscustomobject][ordered]@{
+        capturedUtc = $source.capturedUtc
+        windows = $source.windows
+        computer = $source.computer
+        bios = $source.bios
+        processor = $source.processor
+        edgeVersion = $source.edgeVersion
+        power = $source.power
+        thermalZoneCelsius = $source.thermalZoneCelsius
+        networkConditions = [pscustomobject][ordered]@{
+            physicalAdapterCount = @($source.networkAdapters).Count
+            statusCounts = $adapterStates
+            namesAndAddressesCollected = $false
+        }
+        workload = 'Passive local system-pressure window; no application was launched or controlled.'
+        redaction = 'Process lists, storage names, network adapter names, descriptions, addresses, driver names, paths, command lines, and customer content are omitted.'
+    }
+}
+
+function Get-KernelProfileSummary {
+    param([Parameter(Mandatory = $true)][object[]]$Blocks)
+
+    $allSamples = @($Blocks | ForEach-Object { @($_.samples) })
+    $blockMedianDistributions = [ordered]@{}
+    foreach ($item in Get-KernelProfileCounterCatalog) {
+        $blockMedians = @($Blocks | ForEach-Object {
+            $metric = $_.metrics.($item.key)
+            if ($null -ne $metric.median) { [double]$metric.median }
+        })
+        $blockMedianDistributions[$item.key] = Get-WorkloadDistribution -Values $blockMedians
+    }
+    return [pscustomobject][ordered]@{
+        blockCount = $Blocks.Count
+        sampleCount = $allSamples.Count
+        rawSampleDistributions = Get-KernelMetricDistributions -Samples $allSamples
+        blockMedianDistributions = [pscustomobject]$blockMedianDistributions
+        interpretation = 'These correlated counters screen for scheduler, interrupt, paging, and storage pressure. They do not identify a responsible module, prove a latency cause, or replace workflow-scoped WPR/WPA DPC/ISR duration and stack analysis.'
+        decision = 'BaselineOnlyNoPerformanceClaim'
+    }
+}
+
+function Invoke-KernelProfile {
+    param(
+        [string]$Root,
+        [ValidateRange(3, 15)][int]$BlockCount,
+        [ValidateRange(3, 60)][int]$SamplesPerBlock,
+        [ValidateRange(1, 10)][int]$SampleIntervalSeconds,
+        [ValidateRange(3, 25)][int]$CalibrationIterations
+    )
+
+    $support = Get-KernelProfileSupport
+    if (-not $support.supported) {
+        throw "Kernel-pressure profiling is unsupported: $($support.reason)"
+    }
+    Ensure-DataDirectories -Root $Root
+    $observer = Measure-KernelCounterObserver -Iterations $CalibrationIterations
+    $blocks = @()
+    for ($blockNumber = 1; $blockNumber -le $BlockCount; $blockNumber++) {
+        $blocks += Get-KernelCounterBlock `
+            -BlockNumber $blockNumber `
+            -SamplesPerBlock $SamplesPerBlock `
+            -SampleIntervalSeconds $SampleIntervalSeconds
+    }
+    $environment = Get-KernelProfileEnvironment
+    $traceTools = Get-KernelTraceToolState
+    $summary = Get-KernelProfileSummary -Blocks $blocks
+
+    $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff')
+    $runSuffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $evidencePath = Join-Path (Join-Path $Root 'measurements') "$stamp-$runSuffix-kernel-pressure-profile.json"
+    $profile = [pscustomobject][ordered]@{
+        schemaVersion = $script:SchemaVersion
+        experimentId = $script:ExperimentId
+        layer = 5
+        kind = 'kernel-pressure-profile'
+        capturedUtc = @($blocks[0].samples)[0].timestampUtc
+        completedUtc = [DateTime]::UtcNow.ToString('o')
+        observationOnly = $true
+        support = $support
+        environment = $environment
+        requested = [pscustomobject][ordered]@{
+            blockCount = $BlockCount
+            samplesPerBlock = $SamplesPerBlock
+            sampleIntervalSeconds = $SampleIntervalSeconds
+            calibrationIterations = $CalibrationIterations
+            maximumSamplingWindowSeconds = ($BlockCount * (($SamplesPerBlock - 1) * $SampleIntervalSeconds))
+        }
+        instrumentation = [pscustomobject][ordered]@{
+            source = 'Local Windows performance counters through Get-Counter'
+            timer = 'System.Diagnostics.Stopwatch'
+            observerCalibration = $observer
+            traceTools = $traceTools
+            qualification = 'Each block retains its complete raw sample series, wall duration, expected inter-sample span, and combined observer/scheduling excess. Results are not overhead-corrected.'
+        }
+        collectionScope = 'Twelve aggregate counters only. No process, thread, stack, module, device, driver, file, path, network identity, command line, credential, or customer content is collected.'
+        counterCatalog = @(Get-KernelProfileCounterCatalog)
+        blocks = @($blocks)
+        summary = $summary
+        evidencePath = $evidencePath
+    }
+    $profile | ConvertTo-Json -Depth 24 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
+    try {
+        Write-StructuredEvent -Root $Root -Level Information -Event 'kernel-pressure-profile-complete' -Data @{
+            evidencePath = $evidencePath
+            blockCount = $summary.blockCount
+            sampleCount = $summary.sampleCount
+            dpcTimeMedianPercent = $summary.rawSampleDistributions.dpcTimePercent.median
+            interruptTimeMedianPercent = $summary.rawSampleDistributions.interruptTimePercent.median
+            observationOnly = $true
+        }
+    } catch {
+        Write-Warning "The kernel profile was saved, but the optional event journal could not be updated ($($_.Exception.GetType().Name))."
+    }
+
+    Write-Host ''
+    Write-Host 'Layer 5 kernel-pressure profile (observation only)' -ForegroundColor Cyan
+    Write-Host "Blocks / samples: $($summary.blockCount) / $($summary.sampleCount)"
+    Write-Host "DPC / interrupt time median (%): $($summary.rawSampleDistributions.dpcTimePercent.median) / $($summary.rawSampleDistributions.interruptTimePercent.median)"
+    Write-Host "DPC queue / interrupt rate median: $($summary.rawSampleDistributions.dpcsQueuedPerSecond.median) / $($summary.rawSampleDistributions.interruptsPerSecond.median)"
+    Write-Host "Context switches / processor queue median: $($summary.rawSampleDistributions.contextSwitchesPerSecond.median) / $($summary.rawSampleDistributions.processorQueueLength.median)"
+    Write-Host "Disk latency / queue median: $($summary.rawSampleDistributions.diskLatencyMilliseconds.median) ms / $($summary.rawSampleDistributions.diskQueueLength.median)"
+    Write-Host $summary.interpretation -ForegroundColor DarkYellow
+    Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
+    Write-Host 'No scheduler, interrupt, memory, storage, driver, service, registry, power, or Windows setting was changed.' -ForegroundColor DarkYellow
     return $profile
 }
 
@@ -3970,8 +4303,8 @@ function Get-PerformanceLayerCatalog {
             number = 5
             name = 'Kernel, scheduler, memory, storage, interrupts, and DPC/ISR behavior'
             description = 'Tunes documented scheduling and storage behavior that affects response time.'
-            assessment = 'Baseline'
-            assessmentLabel = 'CPU, storage, DPC, and ISR baseline'
+            assessment = 'KernelProfile'
+            assessmentLabel = 'Repeated DPC/ISR, scheduling, paging, and storage-pressure baseline'
             candidates = @('MmcssResponsiveness', 'NtfsLastAccess')
         },
         [pscustomobject][ordered]@{
@@ -4208,6 +4541,10 @@ function Invoke-LayerAssessmentStep {
         [int]$FirmwareCalibration,
         [int]$DriverCalibration,
         [int]$DriverLimit,
+        [int]$KernelBlocks,
+        [int]$KernelSamples,
+        [int]$KernelInterval,
+        [int]$KernelCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -4254,6 +4591,15 @@ function Invoke-LayerAssessmentStep {
                 -Root $Root `
                 -CalibrationIterations $DriverCalibration `
                 -DeviceLimit $DriverLimit
+            $evidencePath = $profile.evidencePath
+        }
+        'KernelProfile' {
+            $profile = Invoke-KernelProfile `
+                -Root $Root `
+                -BlockCount $KernelBlocks `
+                -SamplesPerBlock $KernelSamples `
+                -SampleIntervalSeconds $KernelInterval `
+                -CalibrationIterations $KernelCalibration
             $evidencePath = $profile.evidencePath
         }
         'Baseline' {
@@ -4628,6 +4974,10 @@ function New-LayerRuntime {
         [int]$FirmwareCalibration,
         [int]$DriverCalibration,
         [int]$DriverLimit,
+        [int]$KernelBlocks,
+        [int]$KernelSamples,
+        [int]$KernelInterval,
+        [int]$KernelCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -4652,6 +5002,10 @@ function New-LayerRuntime {
         FirmwareCalibration = $FirmwareCalibration
         DriverCalibration = $DriverCalibration
         DriverLimit = $DriverLimit
+        KernelBlocks = $KernelBlocks
+        KernelSamples = $KernelSamples
+        KernelInterval = $KernelInterval
+        KernelCalibration = $KernelCalibration
         ShellRuns = $ShellRuns
         ShellWarmups = $ShellWarmups
         ShellTimeout = $ShellTimeout
@@ -4736,6 +5090,12 @@ function Invoke-FullSystemDiagnostics {
         -Root $Root `
         -CalibrationIterations $Runtime.DriverCalibration `
         -DeviceLimit $Runtime.DriverLimit
+    $kernel = Invoke-KernelProfile `
+        -Root $Root `
+        -BlockCount $Runtime.KernelBlocks `
+        -SamplesPerBlock $Runtime.KernelSamples `
+        -SampleIntervalSeconds $Runtime.KernelInterval `
+        -CalibrationIterations $Runtime.KernelCalibration
     $baseline = Invoke-Measurement `
         -Kind baseline `
         -Seconds $Runtime.Seconds `
@@ -4776,6 +5136,7 @@ function Invoke-FullSystemDiagnostics {
             storagePath = $hardware.evidencePath
             firmwareBoundary = $firmware.evidencePath
             driverOwnership = $drivers.evidencePath
+            kernelPressure = $kernel.evidencePath
             systemBaseline = $baseline.evidencePath
             shellReadiness = $shell.evidencePath
             workloadProfile = $workload.evidencePath
@@ -4928,6 +5289,10 @@ function Invoke-LayerWorkflow {
         [int]$FirmwareCalibration,
         [int]$DriverCalibration,
         [int]$DriverLimit,
+        [int]$KernelBlocks,
+        [int]$KernelSamples,
+        [int]$KernelInterval,
+        [int]$KernelCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -4952,6 +5317,10 @@ function Invoke-LayerWorkflow {
         -FirmwareCalibration $FirmwareCalibration `
         -DriverCalibration $DriverCalibration `
         -DriverLimit $DriverLimit `
+        -KernelBlocks $KernelBlocks `
+        -KernelSamples $KernelSamples `
+        -KernelInterval $KernelInterval `
+        -KernelCalibration $KernelCalibration `
         -ShellRuns $ShellRuns `
         -ShellWarmups $ShellWarmups `
         -ShellTimeout $ShellTimeout `
@@ -5207,6 +5576,7 @@ function Invoke-ZBookPerfMain {
     elseif ($HardwareProfile) { $script:Action = 'HardwareProfile' }
     elseif ($FirmwareProfile) { $script:Action = 'FirmwareProfile' }
     elseif ($DriverProfile) { $script:Action = 'DriverProfile' }
+    elseif ($KernelProfile) { $script:Action = 'KernelProfile' }
     elseif ($ShellProfile) { $script:Action = 'ShellProfile' }
     elseif ($WorkloadProfile) { $script:Action = 'WorkloadProfile' }
     elseif ($DependencyProfile) { $script:Action = 'DependencyProfile' }
@@ -5223,6 +5593,10 @@ function Invoke-ZBookPerfMain {
         -FirmwareCalibration $FirmwareCalibrationIterations `
         -DriverCalibration $DriverCalibrationIterations `
         -DriverLimit $DriverDeviceLimit `
+        -KernelBlocks $KernelBlockCount `
+        -KernelSamples $KernelSamplesPerBlock `
+        -KernelInterval $KernelSampleIntervalSeconds `
+        -KernelCalibration $KernelCalibrationIterations `
         -ShellRuns $ShellRunCount `
         -ShellWarmups $ShellWarmupRunCount `
         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -5317,6 +5691,10 @@ function Invoke-ZBookPerfMain {
                     -FirmwareCalibration $FirmwareCalibrationIterations `
                     -DriverCalibration $DriverCalibrationIterations `
                     -DriverLimit $DriverDeviceLimit `
+                    -KernelBlocks $KernelBlockCount `
+                    -KernelSamples $KernelSamplesPerBlock `
+                    -KernelInterval $KernelSampleIntervalSeconds `
+                    -KernelCalibration $KernelCalibrationIterations `
                     -ShellRuns $ShellRunCount `
                     -ShellWarmups $ShellWarmupRunCount `
                     -ShellTimeout $ShellTimeoutMilliseconds `
@@ -5343,6 +5721,10 @@ function Invoke-ZBookPerfMain {
                         -FirmwareCalibration $FirmwareCalibrationIterations `
                         -DriverCalibration $DriverCalibrationIterations `
                         -DriverLimit $DriverDeviceLimit `
+                        -KernelBlocks $KernelBlockCount `
+                        -KernelSamples $KernelSamplesPerBlock `
+                        -KernelInterval $KernelSampleIntervalSeconds `
+                        -KernelCalibration $KernelCalibrationIterations `
                         -ShellRuns $ShellRunCount `
                         -ShellWarmups $ShellWarmupRunCount `
                         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -5387,6 +5769,14 @@ function Invoke-ZBookPerfMain {
                     -Root $DataRoot `
                     -CalibrationIterations $DriverCalibrationIterations `
                     -DeviceLimit $DriverDeviceLimit)
+            }
+            'KernelProfile' {
+                [void](Invoke-KernelProfile `
+                    -Root $DataRoot `
+                    -BlockCount $KernelBlockCount `
+                    -SamplesPerBlock $KernelSamplesPerBlock `
+                    -SampleIntervalSeconds $KernelSampleIntervalSeconds `
+                    -CalibrationIterations $KernelCalibrationIterations)
             }
             'ShellProfile' {
                 [void](Invoke-ShellProfile `
