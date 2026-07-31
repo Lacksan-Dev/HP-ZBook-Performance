@@ -54,6 +54,17 @@ Describe 'EXP-047 ZBookPerf' {
             $validateSet.ValidValues | Should -Contain 'FirmwareProfile'
         }
 
+        It 'exposes the Layer 4 driver and OEM ownership profile as a public read-only action' {
+            $command = Get-Command $scriptPath
+            ($command.Parameters.Keys -contains 'DriverProfile') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'DriverCalibrationIterations') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'DriverDeviceLimit') | Should -BeTrue
+            $validateSet = @($command.Parameters['Action'].Attributes | Where-Object {
+                $_ -is [System.Management.Automation.ValidateSetAttribute]
+            })[0]
+            $validateSet.ValidValues | Should -Contain 'DriverProfile'
+        }
+
         It 'exposes the Layer 10 shell profile as a public read-only action' {
             $command = Get-Command $scriptPath
             ($command.Parameters.Keys -contains 'ShellProfile') | Should -BeTrue
@@ -342,8 +353,8 @@ Describe 'EXP-047 ZBookPerf' {
             $catalog[0].assessment | Should -Be 'ThermalProfile'
             $catalog[1].assessment | Should -Be 'HardwareProfile'
             $catalog[2].assessment | Should -Be 'FirmwareProfile'
-            $catalog[3].assessment | Should -Be 'NotIntegrated'
-            $catalog[3].assessmentLabel | Should -Match 'No product-integrated'
+            $catalog[3].assessment | Should -Be 'DriverProfile'
+            $catalog[3].assessmentLabel | Should -Match 'signed-package'
             $catalog[9].assessment | Should -Be 'ShellProfile'
             $catalog[10].assessment | Should -Be 'WorkloadProfile'
         }
@@ -385,7 +396,7 @@ Describe 'EXP-047 ZBookPerf' {
         It 'marks an unavailable assessment explicitly and lets the next safe step advance' {
             $root = Join-Path $TestDrive 'unavailable-assessment'
             $state = New-LayerWorkflowState
-            $state.currentLayer = 4
+            $state.currentLayer = 7
             $runtime = @{
                 Seconds = 5
                 Interval = 1
@@ -406,7 +417,7 @@ Describe 'EXP-047 ZBookPerf' {
             @($state.history)[-1].action | Should -Be 'assessment-unavailable'
 
             Invoke-NextLayerWorkflowStep -Root $root -State $state -Runtime $runtime
-            $state.currentLayer | Should -Be 5
+            $state.currentLayer | Should -Be 8
             $state.phase | Should -Be 'assessment-required'
         }
 
@@ -467,6 +478,28 @@ Describe 'EXP-047 ZBookPerf' {
             Should -Invoke Invoke-FirmwareProfile -Times 1
             $state.phase | Should -Be 'assessed'
             @($state.history)[-1].evidencePath | Should -Be 'firmware-profile.json'
+        }
+
+        It 'routes the Layer 4 assessment to the driver and OEM ownership profiler' {
+            $root = Join-Path $TestDrive 'driver-layer'
+            $state = New-LayerWorkflowState
+            $state.currentLayer = 4
+            Mock Invoke-DriverProfile {
+                [pscustomobject]@{ evidencePath = 'driver-profile.json' }
+            }
+
+            Invoke-LayerAssessmentStep `
+                -Root $root `
+                -State $state `
+                -Seconds 5 `
+                -Interval 1 `
+                -SkipTrace `
+                -DriverCalibration 3 `
+                -DriverLimit 512
+
+            Should -Invoke Invoke-DriverProfile -Times 1
+            $state.phase | Should -Be 'assessed'
+            @($state.history)[-1].evidencePath | Should -Be 'driver-profile.json'
         }
 
         It 'routes the Layer 10 assessment to the shell profiler' {
@@ -1057,6 +1090,112 @@ Describe 'EXP-047 ZBookPerf' {
         }
     }
 
+    Context 'Layer 4 driver and OEM ownership profile' {
+        It 'joins package, PnP health, and service state while redacting device identity' {
+            Mock Get-CimInstance {
+                if ($Query -match 'Win32_PnPSignedDriver') {
+                    return [pscustomobject]@{
+                        DeviceID = 'PCI\VEN_1234&DEV_5678\SERIAL-SECRET'
+                        DeviceClass = 'DISPLAY'
+                        DriverProviderName = 'Contoso Display'
+                        DriverVersion = '1.2.3.4'
+                        DriverDate = [datetime]'2026-01-01T00:00:00Z'
+                        InfName = 'oem42.inf'
+                        IsSigned = $true
+                        Signer = 'Microsoft Windows Hardware Compatibility Publisher'
+                    }
+                }
+                return [pscustomobject]@{
+                    DeviceID = 'PCI\VEN_1234&DEV_5678\SERIAL-SECRET'
+                    ConfigManagerErrorCode = 0
+                    Status = 'OK'
+                    Service = 'testdisplay'
+                    PNPClass = 'Display'
+                }
+            }
+            Mock Get-Service {
+                [pscustomobject]@{ Status = 'Running'; StartType = 'System' }
+            }
+
+            $snapshot = Get-DriverCoreSnapshot -DeviceLimit 64
+
+            @($snapshot.devices).Count | Should -Be 1
+            $snapshot.devices[0].provider | Should -Be 'Contoso Display'
+            $snapshot.devices[0].serviceStatus | Should -Be 'Running'
+            $snapshot.devices[0].deviceKeySha256 | Should -Match '^[0-9a-f]{64}$'
+            $raw = $snapshot | ConvertTo-Json -Depth 12
+            $raw | Should -Not -Match 'VEN_1234|SERIAL-SECRET'
+            Should -Invoke Get-Service -Times 1 -ParameterFilter { $Name -eq 'testdisplay' }
+        }
+
+        It 'fails safely instead of silently truncating an oversized device inventory' {
+            Mock Get-CimInstance {
+                1..65 | ForEach-Object { [pscustomobject]@{ DeviceID = "device-$_" } }
+            } -ParameterFilter { $Query -match 'Win32_PnPSignedDriver' }
+
+            { Get-DriverCoreSnapshot -DeviceLimit 64 } | Should -Throw '*above the configured safe limit*'
+        }
+
+        It 'writes bounded structured evidence without exposing raw hardware identifiers' {
+            $snapshot = [pscustomobject]@{
+                timestampUtc = [DateTime]::UtcNow.ToString('o')
+                durationMilliseconds = 10
+                devices = @([pscustomobject]@{
+                    deviceKeySha256 = ('a' * 64); deviceClass = 'DISPLAY'; pnpClass = 'Display'
+                    infName = 'oem42.inf'; provider = 'Contoso'; version = '1.2.3.4'
+                    dateUtc = '2026-01-01T00:00:00.0000000Z'; isSigned = $true; signer = 'WHCP'
+                    configManagerErrorCode = 0; pnpStatus = 'OK'; serviceName = 'testdisplay'
+                    serviceStatus = 'Running'; serviceStartType = 'System'; serviceLookup = 'Read'
+                })
+                packages = @([pscustomobject]@{ infName = 'oem42.inf'; provider = 'Contoso'; version = '1.2.3.4'; deviceCount = 1 })
+                providerSummary = @([pscustomobject]@{ provider = 'Contoso'; deviceCount = 1 })
+                classSummary = @([pscustomobject]@{ deviceClass = 'DISPLAY'; deviceCount = 1 })
+                redaction = 'test redaction'
+            }
+            Mock Get-DriverProfileSupport {
+                [pscustomobject]@{ supported = $true; providers = @('test'); missingProperties = @(); serviceControllerAvailable = $true; reason = 'supported' }
+            }
+            Mock Measure-DriverProfileObserver {
+                [pscustomobject]@{
+                    iterations = 3
+                    durationMilliseconds = [pscustomobject]@{ count = 3; median = 10; p95 = 12; minimum = 9; maximum = 12 }
+                    finalSnapshot = $snapshot
+                    qualification = 'test'
+                }
+            }
+            Mock Get-DriverProfileEnvironment { [pscustomobject]@{ windows = [pscustomobject]@{ build = '26200' } } }
+            Mock Write-StructuredEvent { }
+            Mock Write-Host { }
+
+            $profile = Invoke-DriverProfile -Root $TestDrive -CalibrationIterations 3 -DeviceLimit 64
+
+            $profile.observationOnly | Should -BeTrue
+            $profile.summary.deviceRecordCount | Should -Be 1
+            $profile.summary.decision | Should -Be 'BaselineOnlyNoPerformanceClaim'
+            Test-Path -LiteralPath $profile.evidencePath | Should -BeTrue
+            $raw = Get-Content -LiteralPath $profile.evidencePath -Raw
+            $raw | Should -Match 'driver-oem-ownership-profile'
+            $raw | Should -Not -Match 'DeviceID|hardwareId|deviceName|SERIAL-SECRET'
+        }
+
+        It 'contains no driver, service, device, or registry mutation command' {
+            $body = (Get-Command Invoke-DriverProfile).ScriptBlock.ToString()
+            $body | Should -Not -Match 'pnputil|Update-Driver|Add-WindowsDriver|Remove-WindowsDriver|Set-Service|Stop-Service|Start-Service|Disable-PnpDevice|Enable-PnpDevice|Set-ItemProperty|Remove-ItemProperty'
+        }
+
+        It 'routes the public action directly to the profiler' {
+            $script:Action = 'DriverProfile'
+            $script:DataRoot = $TestDrive
+            $script:DriverCalibrationIterations = 3
+            $script:DriverDeviceLimit = 64
+            Mock Invoke-DriverProfile { }
+
+            Invoke-ZBookPerfMain
+
+            Should -Invoke Invoke-DriverProfile -Times 1
+        }
+    }
+
     Context 'Layer 10 shell profile' {
         It 'summarizes measured runs without counting warmups' {
             $runs = @(
@@ -1573,6 +1712,9 @@ Describe 'EXP-047 ZBookPerf' {
             Mock Invoke-FirmwareProfile {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'firmware.json') }
             }
+            Mock Invoke-DriverProfile {
+                [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'drivers.json') }
+            }
             Mock Invoke-Measurement {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'baseline.json') }
             }
@@ -1590,6 +1732,7 @@ Describe 'EXP-047 ZBookPerf' {
             $runtime = @{
                 Seconds = 5; Interval = 1; SkipTrace = $true
                 ThermalCalibration = 3; HardwareCalibration = 3; FirmwareCalibration = 3
+                DriverCalibration = 3; DriverLimit = 64
                 ShellRuns = 1; ShellWarmups = 0; ShellTimeout = 1000; ShellCalibration = 5
                 WorkloadNames = @('explorer.exe'); WorkloadInterval = 1000; WorkloadCalibration = 3
                 DependencyPaths = @($TestDrive); DependencyEndpoints = @()
@@ -1599,15 +1742,17 @@ Describe 'EXP-047 ZBookPerf' {
             $result = Invoke-FullSystemDiagnostics -Root $TestDrive -Runtime $runtime
 
             $result.observationOnly | Should -BeTrue
-            $result.coveredLayers | Should -Be @(1, 2, 3, 5, 6, 10, 11, 12)
+            $result.coveredLayers | Should -Be @(1, 2, 3, 4, 5, 6, 10, 11, 12)
             $result.evidence.storagePath | Should -Match 'hardware.json'
             $result.evidence.firmwareBoundary | Should -Match 'firmware.json'
+            $result.evidence.driverOwnership | Should -Match 'drivers.json'
             Test-Path -LiteralPath $result.evidence.systemBaseline | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $TestDrive 'measurements') | Should -BeTrue
             Should -Invoke Invoke-Measurement -Times 1
             Should -Invoke Invoke-ThermalProfile -Times 1
             Should -Invoke Invoke-HardwareProfile -Times 1
             Should -Invoke Invoke-FirmwareProfile -Times 1
+            Should -Invoke Invoke-DriverProfile -Times 1
             Should -Invoke Invoke-ShellProfile -Times 1
             Should -Invoke Invoke-WorkloadProfile -Times 1
             Should -Invoke Invoke-DependencyProfile -Times 1
