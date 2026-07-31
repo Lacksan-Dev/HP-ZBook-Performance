@@ -1,22 +1,48 @@
 # EXP-053: Logitech G Hub Controller Integration
 
-Status: Experimental
+Status: Experimental  
+Stage: Validation  
+Evidence: needs-evidence
 
 ## Purpose
 Integrate one bounded Logitech G Hub current-user tray or background Run registration into the Lacksan Controller transaction model.
 
-## Hypothesis
-Removing one exact G Hub auto-launch registration may reduce sign-in contention while preserving manual launch, device profiles, macros, lighting, Logitech device-critical drivers, updates, and protected remote-access applications.
+## Candidate
+The `LogitechGHubDemandLaunch` profile removes exactly one eligible value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` whose value name identifies Logitech G Hub, whose resolved executable is `lghub.exe` or `lghub_agent.exe` under a Logitech G HUB application directory, and whose command contains an explicit background, minimized, startup, tray, or silent argument.
 
-## Mechanism and controls
-The `LogitechGHubDemandLaunch` profile combines read-only system inventory with the reversible `logitech-ghub-run` provider. Eligibility requires an HP system running Windows 11, one recognized value name, a recognized `lghub.exe` or `lghub_agent.exe` command, and an explicit background, minimized, startup, tray, or silent argument. Updater-only commands, protected identities, broad matches, and multiple candidates are refused.
+The provider refuses updater, repair, uninstall, firmware, pairing, driver, device-service, protected, unsigned, ambiguous, enterprise-managed, zero-candidate, and multiple-candidate states.
 
-The provider captures the exact unexpanded registry command, value kind, computer identity, user SID, and timestamp before application. It provides dry run, verified removal, JSONL logging, idempotent zero-candidate behavior, terminating failure records, immediate and reboot verification, rollback overwrite refusal, exact restoration, and rollback verification.
+## Engineering controls
+The provider supplies:
+
+- HP Windows 11 support detection.
+- Domain, MDM, PolicyManager, and Configuration Manager refusal.
+- Exact registry path, value name, registry type, and unexpanded command capture.
+- Resolved executable path, SHA-256, file version, Authenticode status, publisher subject, machine identity, and user SID capture.
+- Dry run, `-WhatIf`, and `ShouldProcess` behavior.
+- One-value application and immediate verification.
+- Structured JSONL logging and terminating failure records.
+- Idempotent repeated application.
+- Reboot-persistence verification.
+- Captured-state and executable-identity drift refusal.
+- Rollback overwrite refusal.
+- Publisher and executable-hash verification before rollback.
+- Exact restoration of the original registry type and unexpanded command.
+- Rollback equality verification.
 
 ## Preserved components
-G Hub installation, packages, files, services, scheduled tasks, StartupTask registrations, updater service, Logitech HID, receiver, keyboard, mouse, headset, camera, Bluetooth, and device-critical drivers, Windows security, Windows Update, recovery, credentials, accessibility, enterprise management, Omnissa, Windows App, Remote Desktop, and Tailscale.
+The candidate changes one current-user Run value only. Preserve the G Hub installation, packages, files, services, updater service, scheduled tasks, StartupTask registrations, profiles, macros, lighting state, onboard device memory, Logitech HID, receiver, Bluetooth, keyboard, mouse, headset, camera, audio and device-critical drivers, Windows security, Windows Update, recovery, credentials, accessibility, enterprise management, Omnissa, Windows App, Remote Desktop, and Tailscale.
 
-## Validation handoff
-Run on an HP Windows 11 target with one eligible G Hub registration. Record Windows build, HP model, BIOS, G Hub version, Logitech driver versions, power source, thermal state, and instrumentation version. Complete at least five matched baseline and five treatment sign-in trials. Compare medians for sign-in to usable desktop and CPU and disk activity during the first 120 seconds. Confirm protected remote-access readiness, G Hub manual launch, device detection, profile switching, macro and lighting behavior where applicable, update behavior, reboot persistence, and exact rollback. Preserve every failed or inconclusive trial and qualify instrumentation overhead.
+## Pester and zero-mutation integration
+Run the Pester contract suite and require syntax, lifecycle, identity, support, management-refusal, state-capture, logging, idempotence, persistence, mutation-scope, and rollback tests to pass.
 
-Physical execution and median measurements remain `needs-evidence`. No performance result and no Stable assignment.
+On a Windows 11 test system, execute `Check` and `DryRun` with a temporary JSONL log and state path. Confirm no registry value, service, task, package, file, device, driver, security control, update component, recovery setting, management state, or protected application changes. Test absent, unsigned, updater-only, protected-name, invalid-path, zero-candidate, and multiple-candidate refusal cases without mutation.
+
+## Physical validation
+Use one HP Windows 11 target with one eligible G Hub registration. Record Windows build, HP model, BIOS, G Hub version, executable hash and publisher, Logitech driver versions, power source, power mode, thermal state, network state, connected peripherals, and instrumentation version.
+
+Complete at least five matched baseline and five treatment sign-in trials. Retain raw runs and report medians and dispersion for sign-in to usable desktop, first-120-second CPU and disk activity, G Hub process activity and working set, and readiness of Omnissa, Windows App, Remote Desktop, and Tailscale.
+
+Verify manual G Hub launch, device detection, existing profiles, onboard settings, macros, lighting, audio features where present, updater behavior, basic device operation, Device Manager health, immediate removal, reboot persistence, exact rollback, restored sign-in launch behavior, and instrumentation overhead.
+
+Preserve favorable, adverse, failed, and inconclusive evidence. Missing physical execution and measurements remain `needs-evidence`. Never assign Stable automatically.
