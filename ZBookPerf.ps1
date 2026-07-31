@@ -18,7 +18,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'FirmwareProfile', 'DriverProfile', 'KernelProfile', 'PowerProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
+    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'FirmwareProfile', 'DriverProfile', 'KernelProfile', 'PowerProfile', 'SecurityProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
     [string]$Action = 'Menu',
 
     [switch]$FullDiagnostics,
@@ -32,6 +32,7 @@ param(
     [switch]$DriverProfile,
     [switch]$KernelProfile,
     [switch]$PowerProfile,
+    [switch]$SecurityProfile,
     [switch]$ShellProfile,
     [switch]$WorkloadProfile,
     [switch]$DependencyProfile,
@@ -94,6 +95,12 @@ param(
     [ValidateRange(100, 5000)]
     [int]$PowerProfileCallbackTimeoutMilliseconds = 1000,
 
+    [ValidateRange(250, 5000)]
+    [int]$SecurityProfileSampleIntervalMilliseconds = 2000,
+
+    [ValidateRange(3, 25)]
+    [int]$SecurityProfileCalibrationIterations = 5,
+
     [ValidateRange(1, 25)]
     [int]$ShellRunCount = 5,
 
@@ -141,7 +148,7 @@ $ErrorActionPreference = 'Stop'
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
 $script:ProductName = 'Lacksan UX-ROM'
-$script:ProductVersion = '2026.07.31.4'
+$script:ProductVersion = '2026.08.01.1'
 $script:LayerWorkflowSchemaVersion = 1
 $script:SplashShown = $false
 $script:LoadedFrom = if ([string]::IsNullOrWhiteSpace([string]$PSCommandPath)) {
@@ -4050,6 +4057,430 @@ function Invoke-WorkloadProfile {
     return $profile
 }
 
+function Get-SecurityProcessCatalog {
+    return @(
+        [pscustomobject][ordered]@{ processName = 'MsMpEng'; role = 'Microsoft Defender Antivirus engine' },
+        [pscustomobject][ordered]@{ processName = 'NisSrv'; role = 'Microsoft Defender Network Inspection Service' },
+        [pscustomobject][ordered]@{ processName = 'MsSense'; role = 'Microsoft Defender for Endpoint sensor' },
+        [pscustomobject][ordered]@{ processName = 'SenseIR'; role = 'Microsoft Defender for Endpoint response process' }
+    )
+}
+
+function Get-SecurityCounterDefinitions {
+    return @(
+        [pscustomobject][ordered]@{ counter = '% Processor Time'; metric = 'cpuLogicalProcessorPercent' },
+        [pscustomobject][ordered]@{ counter = 'IO Read Bytes/sec'; metric = 'readBytesPerSecond' },
+        [pscustomobject][ordered]@{ counter = 'IO Write Bytes/sec'; metric = 'writeBytesPerSecond' },
+        [pscustomobject][ordered]@{ counter = 'Working Set - Private'; metric = 'workingSetPrivateBytes' }
+    )
+}
+
+function New-SecurityCounterSession {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $category = New-Object Diagnostics.PerformanceCounterCategory 'Process'
+    $catalog = @(Get-SecurityProcessCatalog)
+    $targetNames = @{}
+    foreach ($item in $catalog) {
+        $targetNames[$item.processName.ToLowerInvariant()] = $item.role
+    }
+    $instances = @($category.GetInstanceNames() | Where-Object {
+        $targetNames.ContainsKey((([string]$_) -replace '#\d+$', '').ToLowerInvariant())
+    } | Sort-Object -Unique)
+    if ($instances.Count -eq 0) {
+        throw 'None of the fixed Microsoft security-process targets is currently observable.'
+    }
+
+    $records = New-Object System.Collections.ArrayList
+    try {
+        foreach ($instance in $instances) {
+            $baseName = ($instance -replace '#\d+$', '').ToLowerInvariant()
+            foreach ($definition in Get-SecurityCounterDefinitions) {
+                $counter = New-Object Diagnostics.PerformanceCounter(
+                    'Process',
+                    $definition.counter,
+                    $instance,
+                    $true
+                )
+                [void]$counter.NextValue()
+                [void]$records.Add([pscustomobject][ordered]@{
+                    processName = $baseName
+                    role = $targetNames[$baseName]
+                    instance = $instance
+                    metric = $definition.metric
+                    counter = $counter
+                })
+            }
+        }
+    } catch {
+        foreach ($record in @($records)) { $record.counter.Dispose() }
+        throw
+    }
+    $timer.Stop()
+    return [pscustomobject][ordered]@{
+        initializedUtc = [DateTime]::UtcNow.ToString('o')
+        initializationDurationMilliseconds = [Math]::Round($timer.Elapsed.TotalMilliseconds, 3)
+        targetInstances = @($instances)
+        records = @($records)
+    }
+}
+
+function Close-SecurityCounterSession {
+    param([Parameter(Mandatory = $true)][object]$Session)
+    foreach ($record in @($Session.records)) { $record.counter.Dispose() }
+}
+
+function Get-SecurityCounterSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][object]$Session,
+        [ValidateRange(1, 1024)][int]$LogicalProcessorCount
+    )
+
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $values = @()
+    $errors = @()
+    foreach ($record in @($Session.records)) {
+        try {
+            $values += [pscustomobject][ordered]@{
+                processName = $record.processName
+                role = $record.role
+                instance = $record.instance
+                metric = $record.metric
+                value = [double]$record.counter.NextValue()
+            }
+        } catch {
+            $errors += [pscustomobject][ordered]@{
+                processName = $record.processName
+                metric = $record.metric
+                errorType = $_.Exception.GetType().FullName
+            }
+        }
+    }
+    $timer.Stop()
+
+    $rows = @()
+    foreach ($group in @($values | Group-Object instance)) {
+        $first = @($group.Group)[0]
+        $metrics = [ordered]@{
+            cpuLogicalProcessorPercent = $null
+            cpuMachinePercent = $null
+            readBytesPerSecond = $null
+            writeBytesPerSecond = $null
+            workingSetPrivateBytes = $null
+        }
+        foreach ($value in @($group.Group)) {
+            $rounded = [Math]::Max(0, [double]$value.value)
+            switch ([string]$value.metric) {
+                'cpuLogicalProcessorPercent' {
+                    $metrics.cpuLogicalProcessorPercent = [Math]::Round($rounded, 4)
+                    $metrics.cpuMachinePercent = [Math]::Round(($rounded / $LogicalProcessorCount), 4)
+                }
+                'readBytesPerSecond' { $metrics.readBytesPerSecond = [Math]::Round($rounded, 0) }
+                'writeBytesPerSecond' { $metrics.writeBytesPerSecond = [Math]::Round($rounded, 0) }
+                'workingSetPrivateBytes' { $metrics.workingSetPrivateBytes = [uint64]$rounded }
+            }
+        }
+        $rows += [pscustomobject][ordered]@{
+            processName = $first.processName
+            role = $first.role
+            instance = $first.instance
+            cpuLogicalProcessorPercent = $metrics.cpuLogicalProcessorPercent
+            cpuMachinePercent = $metrics.cpuMachinePercent
+            readBytesPerSecond = $metrics.readBytesPerSecond
+            writeBytesPerSecond = $metrics.writeBytesPerSecond
+            workingSetPrivateBytes = $metrics.workingSetPrivateBytes
+        }
+    }
+
+    $measuredRows = @($rows | Where-Object { $null -ne $_.cpuMachinePercent })
+    return [pscustomobject][ordered]@{
+        capturedUtc = [DateTime]::UtcNow.ToString('o')
+        queryDurationMilliseconds = [Math]::Round($timer.Elapsed.TotalMilliseconds, 3)
+        status = if ($measuredRows.Count -gt 0) { 'Measured' } else { 'NoTargetProcessObserved' }
+        observedProcessCount = $rows.Count
+        cpuLogicalProcessorPercent = if ($measuredRows.Count -gt 0) {
+            [Math]::Round((Get-NumericPropertySum -Rows $measuredRows -PropertyName cpuLogicalProcessorPercent), 4)
+        } else { $null }
+        cpuMachinePercent = if ($measuredRows.Count -gt 0) {
+            [Math]::Round((Get-NumericPropertySum -Rows $measuredRows -PropertyName cpuMachinePercent), 4)
+        } else { $null }
+        readBytesPerSecond = if ($rows.Count -gt 0) {
+            [Math]::Round((Get-NumericPropertySum -Rows $rows -PropertyName readBytesPerSecond), 0)
+        } else { $null }
+        writeBytesPerSecond = if ($rows.Count -gt 0) {
+            [Math]::Round((Get-NumericPropertySum -Rows $rows -PropertyName writeBytesPerSecond), 0)
+        } else { $null }
+        workingSetPrivateBytes = if ($rows.Count -gt 0) {
+            [uint64](Get-NumericPropertySum -Rows $rows -PropertyName workingSetPrivateBytes)
+        } else { $null }
+        processes = @($rows)
+        queryErrors = @($errors)
+    }
+}
+
+function Get-SecurityProfileSupport {
+    $session = $null
+    try {
+        $session = New-SecurityCounterSession
+        return [pscustomobject][ordered]@{
+            supported = $true
+            reason = 'The language-localized Windows Process performance-counter set and at least one fixed Microsoft security-process target are available.'
+            observedInstances = @($session.targetInstances)
+        }
+    } catch {
+        return [pscustomobject][ordered]@{
+            supported = $false
+            reason = "The required Process performance counters are unavailable: $($_.Exception.Message)"
+            observedInstances = @()
+        }
+    } finally {
+        if ($session) { Close-SecurityCounterSession -Session $session }
+    }
+}
+
+function Measure-SecurityProfileObserver {
+    param(
+        [Parameter(Mandatory = $true)][object]$Session,
+        [ValidateRange(1, 1024)][int]$LogicalProcessorCount,
+        [ValidateRange(3, 25)][int]$Iterations
+    )
+
+    $samples = @()
+    for ($index = 0; $index -lt $Iterations; $index++) {
+        $snapshot = Get-SecurityCounterSnapshot -Session $Session -LogicalProcessorCount $LogicalProcessorCount
+        $samples += [double]$snapshot.queryDurationMilliseconds
+    }
+    return [pscustomobject][ordered]@{
+        iterations = $Iterations
+        medianMilliseconds = [Math]::Round((Get-Median -Values $samples), 3)
+        p95Milliseconds = [Math]::Round((Get-Percentile -Values $samples -Percentile 95), 3)
+        samplesMilliseconds = @($samples)
+    }
+}
+
+function Get-SecurityProtectionState {
+    $defender = [pscustomobject][ordered]@{ status = 'Unavailable'; errorType = $null }
+    try {
+        $value = Get-MpComputerStatus -ErrorAction Stop
+        $defender = [pscustomobject][ordered]@{
+            status = 'Available'
+            amServiceEnabled = $value.AMServiceEnabled
+            antivirusEnabled = $value.AntivirusEnabled
+            antispywareEnabled = $value.AntispywareEnabled
+            behaviorMonitorEnabled = $value.BehaviorMonitorEnabled
+            ioavProtectionEnabled = $value.IoavProtectionEnabled
+            nisEnabled = $value.NISEnabled
+            onAccessProtectionEnabled = $value.OnAccessProtectionEnabled
+            realTimeProtectionEnabled = $value.RealTimeProtectionEnabled
+            isTamperProtected = $value.IsTamperProtected
+            runningMode = $value.AMRunningMode
+            productVersion = $value.AMProductVersion
+            engineVersion = $value.AMEngineVersion
+            antivirusSignatureVersion = $value.AntivirusSignatureVersion
+        }
+    } catch {
+        $defender = [pscustomobject][ordered]@{ status = 'Unavailable'; errorType = $_.Exception.GetType().FullName }
+    }
+
+    $firewall = [pscustomobject][ordered]@{ status = 'Unavailable'; profiles = @(); errorType = $null }
+    try {
+        $profiles = @(Get-NetFirewallProfile -PolicyStore ActiveStore -ErrorAction Stop | ForEach-Object {
+            [pscustomobject][ordered]@{
+                name = $_.Name
+                enabled = $_.Enabled
+                defaultInboundAction = $_.DefaultInboundAction.ToString()
+                defaultOutboundAction = $_.DefaultOutboundAction.ToString()
+            }
+        })
+        $firewall = [pscustomobject][ordered]@{ status = 'Available'; profiles = $profiles; errorType = $null }
+    } catch {
+        $firewall = [pscustomobject][ordered]@{ status = 'Unavailable'; profiles = @(); errorType = $_.Exception.GetType().FullName }
+    }
+
+    $deviceGuard = [pscustomobject][ordered]@{ status = 'Unavailable'; errorType = $null }
+    try {
+        $value = Get-CimInstance `
+            -Namespace 'root\Microsoft\Windows\DeviceGuard' `
+            -ClassName Win32_DeviceGuard `
+            -OperationTimeoutSec 5 `
+            -ErrorAction Stop
+        $deviceGuard = [pscustomobject][ordered]@{
+            status = 'Available'
+            virtualizationBasedSecurityStatus = $value.VirtualizationBasedSecurityStatus
+            securityServicesConfigured = @($value.SecurityServicesConfigured)
+            securityServicesRunning = @($value.SecurityServicesRunning)
+            codeIntegrityPolicyEnforcementStatus = $value.CodeIntegrityPolicyEnforcementStatus
+            userModeCodeIntegrityPolicyEnforcementStatus = $value.UsermodeCodeIntegrityPolicyEnforcementStatus
+        }
+    } catch {
+        $deviceGuard = [pscustomobject][ordered]@{ status = 'Unavailable'; errorType = $_.Exception.GetType().FullName }
+    }
+
+    return [pscustomobject][ordered]@{
+        defender = $defender
+        firewall = $firewall
+        deviceGuard = $deviceGuard
+        defenderPerformanceAnalyzer = [pscustomobject][ordered]@{
+            recordingCommandAvailable = [bool](Get-Command New-MpPerformanceRecording -ErrorAction SilentlyContinue)
+            reportCommandAvailable = [bool](Get-Command Get-MpPerformanceReport -ErrorAction SilentlyContinue)
+            invoked = $false
+            reason = 'Inventory only. Microsoft documents that recording requires elevation and may reveal file paths; UX-ROM does not start it during the bounded baseline.'
+        }
+        excludedQueries = @(
+            'Defender exclusions and threat history',
+            'Firewall rules and logging paths',
+            'BitLocker recovery material',
+            'User identities and process command lines'
+        )
+    }
+}
+
+function Get-SecurityProfileSummary {
+    param([Parameter(Mandatory = $true)][object[]]$Samples)
+
+    $measured = @($Samples | Where-Object { $_.status -eq 'Measured' })
+    $metricNames = @(
+        'cpuLogicalProcessorPercent',
+        'cpuMachinePercent',
+        'readBytesPerSecond',
+        'writeBytesPerSecond',
+        'workingSetPrivateBytes',
+        'queryDurationMilliseconds'
+    )
+    $metrics = [ordered]@{}
+    foreach ($metric in $metricNames) {
+        $values = @($measured | ForEach-Object {
+            if ($null -ne $_.$metric) { [double]$_.$metric }
+        })
+        $metrics[$metric] = Get-WorkloadDistribution -Values $values
+    }
+
+    return [pscustomobject][ordered]@{
+        requestedSampleCount = $Samples.Count
+        measuredSampleCount = $measured.Count
+        unmeasuredSampleCount = $Samples.Count - $measured.Count
+        maximumObservedProcessCount = if ($Samples.Count -gt 0) {
+            [int]($Samples | Measure-Object observedProcessCount -Maximum).Maximum
+        } else { 0 }
+        metrics = [pscustomobject]$metrics
+        decision = if ($measured.Count -gt 0) {
+            'BaselineOnlyNoPerformanceClaim'
+        } else {
+            'NoSecurityTargetProcessObserved'
+        }
+    }
+}
+
+function Invoke-SecurityProfile {
+    param(
+        [string]$Root,
+        [ValidateRange(5, 3600)][int]$Seconds,
+        [ValidateRange(250, 5000)][int]$IntervalMilliseconds,
+        [ValidateRange(3, 25)][int]$CalibrationIterations
+    )
+
+    Ensure-DataDirectories -Root $Root
+    $environment = Get-PowerProfileEnvironment
+    $logicalProcessors = [int]$environment.processor.logicalProcessors
+    if ($logicalProcessors -lt 1) {
+        throw 'A positive logical-processor count is required to normalize security-process CPU use.'
+    }
+    $support = Get-SecurityProfileSupport
+    if (-not $support.supported) { throw $support.reason }
+
+    $protection = Get-SecurityProtectionState
+    $samples = New-Object System.Collections.ArrayList
+    $session = New-SecurityCounterSession
+    $runTimer = $null
+    $observer = $null
+    try {
+        Start-Sleep -Milliseconds 1000
+        $observer = Measure-SecurityProfileObserver `
+            -Session $session `
+            -LogicalProcessorCount $logicalProcessors `
+            -Iterations $CalibrationIterations
+        $runTimer = [Diagnostics.Stopwatch]::StartNew()
+        $sampleNumber = 0
+        while ($runTimer.Elapsed.TotalSeconds -lt $Seconds -or $sampleNumber -eq 0) {
+            if ($sampleNumber -gt 0) {
+                $nextDueMilliseconds = [Math]::Min(
+                    ($sampleNumber * $IntervalMilliseconds),
+                    ($Seconds * 1000)
+                )
+                $remaining = $nextDueMilliseconds - $runTimer.Elapsed.TotalMilliseconds
+                if ($remaining -gt 1) { Start-Sleep -Milliseconds ([int][Math]::Floor($remaining)) }
+                if ($runTimer.Elapsed.TotalSeconds -ge $Seconds) { break }
+            }
+            [void]$samples.Add((Get-SecurityCounterSnapshot `
+                -Session $session `
+                -LogicalProcessorCount $logicalProcessors))
+            $sampleNumber++
+        }
+    } finally {
+        if ($runTimer) { $runTimer.Stop() }
+        Close-SecurityCounterSession -Session $session
+    }
+
+    $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')
+    $evidencePath = Join-Path (Join-Path $Root 'measurements') "$stamp-security-profile.json"
+    $observerBudgetMilliseconds = [Math]::Round(($observer.p95Milliseconds * $samples.Count), 3)
+    $profile = [pscustomobject][ordered]@{
+        schemaVersion = $script:SchemaVersion
+        experimentId = $script:ExperimentId
+        layer = 7
+        kind = 'security-protection-activity-profile'
+        capturedUtc = [DateTime]::UtcNow.ToString('o')
+        observationOnly = $true
+        protectionState = $protection
+        targetCatalog = @(Get-SecurityProcessCatalog)
+        requestedDurationSeconds = $Seconds
+        actualDurationSeconds = [Math]::Round($runTimer.Elapsed.TotalSeconds, 3)
+        requestedIntervalMilliseconds = $IntervalMilliseconds
+        environment = $environment
+        instrumentation = [pscustomobject][ordered]@{
+            source = 'Windows Process performance counters filtered to a fixed Microsoft security-process catalog'
+            timer = 'System.Diagnostics.Stopwatch monotonic scheduling'
+            support = $support
+            sessionInitialization = [pscustomobject][ordered]@{
+                durationMilliseconds = $session.initializationDurationMilliseconds
+                targetInstances = @($session.targetInstances)
+                rateCounterWarmupMilliseconds = 1000
+            }
+            calibration = $observer
+            estimatedTotalObserverP95BudgetMilliseconds = $observerBudgetMilliseconds
+            estimatedObserverDutyCyclePercent = if ($runTimer.Elapsed.TotalMilliseconds -gt 0) {
+                [Math]::Round((($observerBudgetMilliseconds / $runTimer.Elapsed.TotalMilliseconds) * 100), 3)
+            } else { $null }
+            qualification = 'The complete filtered counter-query cost is calibrated first. Raw sample and query durations are retained; values are not overhead-corrected.'
+        }
+        collectionScope = 'Fixed security executable names and aggregate CPU, I/O, and private-working-set counters only. No paths, command lines, user content, network endpoints, exclusions, firewall rules, or security settings are collected or changed.'
+        samples = @($samples)
+        summary = Get-SecurityProfileSummary -Samples @($samples)
+        evidencePath = $evidencePath
+    }
+    $profile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
+    Write-StructuredEvent -Root $Root -Level Information -Event 'security-profile-complete' -Data @{
+        evidencePath = $evidencePath
+        measuredSampleCount = $profile.summary.measuredSampleCount
+        defenderStatus = $profile.protectionState.defender.status
+        observationOnly = $true
+    }
+
+    Write-Host ''
+    Write-Host 'Layer 7 security protection activity profile (observation only)' -ForegroundColor Cyan
+    Write-Host "Defender status: $($profile.protectionState.defender.status)"
+    Write-Host "Device Guard status: $($profile.protectionState.deviceGuard.status)"
+    Write-Host "Firewall status: $($profile.protectionState.firewall.status)"
+    Write-Host "Measured samples: $($profile.summary.measuredSampleCount) / $($profile.summary.requestedSampleCount)"
+    if ($profile.summary.measuredSampleCount -gt 0) {
+        Write-Host "Security-process machine CPU median (%): $($profile.summary.metrics.cpuMachinePercent.median)"
+        Write-Host "Security-process private working set median (bytes): $($profile.summary.metrics.workingSetPrivateBytes.median)"
+    }
+    Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
+    Write-Host 'No protection, process, policy, service, firewall profile, or Windows setting was changed.' -ForegroundColor DarkYellow
+    Write-Host 'This is a baseline, not a performance-gain claim.' -ForegroundColor DarkYellow
+    return $profile
+}
+
 function Get-RedactedDependencyHash {
     param([Parameter(Mandatory = $true)][string]$Value)
 
@@ -4837,8 +5268,8 @@ function Get-PerformanceLayerCatalog {
             number = 7
             name = 'Security and isolation overhead without reducing protection'
             description = 'Measures security cost while keeping Windows protection fully enabled.'
-            assessment = 'NotIntegrated'
-            assessmentLabel = 'No product-integrated assessment yet'
+            assessment = 'SecurityProfile'
+            assessmentLabel = 'Effective protection state plus bounded Defender and security-process CPU, I/O, and private-memory baseline'
             candidates = @()
         },
         [pscustomobject][ordered]@{
@@ -5067,6 +5498,8 @@ function Invoke-LayerAssessmentStep {
         [int]$PowerIntervalMilliseconds,
         [int]$PowerCalibration,
         [int]$PowerCallbackTimeout,
+        [int]$SecurityIntervalMilliseconds,
+        [int]$SecurityCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -5131,6 +5564,14 @@ function Invoke-LayerAssessmentStep {
                 -SampleIntervalMilliseconds $PowerIntervalMilliseconds `
                 -CalibrationIterations $PowerCalibration `
                 -CallbackTimeoutMilliseconds $PowerCallbackTimeout
+            $evidencePath = $profile.evidencePath
+        }
+        'SecurityProfile' {
+            $profile = Invoke-SecurityProfile `
+                -Root $Root `
+                -Seconds $Seconds `
+                -IntervalMilliseconds $SecurityIntervalMilliseconds `
+                -CalibrationIterations $SecurityCalibration
             $evidencePath = $profile.evidencePath
         }
         'Baseline' {
@@ -5513,6 +5954,8 @@ function New-LayerRuntime {
         [int]$PowerIntervalMilliseconds,
         [int]$PowerCalibration,
         [int]$PowerCallbackTimeout,
+        [int]$SecurityIntervalMilliseconds,
+        [int]$SecurityCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -5545,6 +5988,8 @@ function New-LayerRuntime {
         PowerIntervalMilliseconds = $PowerIntervalMilliseconds
         PowerCalibration = $PowerCalibration
         PowerCallbackTimeout = $PowerCallbackTimeout
+        SecurityIntervalMilliseconds = $SecurityIntervalMilliseconds
+        SecurityCalibration = $SecurityCalibration
         ShellRuns = $ShellRuns
         ShellWarmups = $ShellWarmups
         ShellTimeout = $ShellTimeout
@@ -5611,7 +6056,7 @@ function Invoke-FullSystemDiagnostics {
     Ensure-DataDirectories -Root $Root
     Write-Host ''
     Write-Host 'Full system diagnostics' -ForegroundColor Cyan
-    Write-Host 'One read-only pass: thermal, hardware, firmware, drivers, kernel pressure, power policy, system, Explorer, workloads, and dependencies.'
+    Write-Host 'One read-only pass: thermal, hardware, firmware, drivers, kernel pressure, power policy, security activity, system, Explorer, workloads, and dependencies.'
     $thermal = Invoke-ThermalProfile `
         -Root $Root `
         -Seconds $Runtime.Seconds `
@@ -5641,6 +6086,11 @@ function Invoke-FullSystemDiagnostics {
         -SampleIntervalMilliseconds $Runtime.PowerIntervalMilliseconds `
         -CalibrationIterations $Runtime.PowerCalibration `
         -CallbackTimeoutMilliseconds $Runtime.PowerCallbackTimeout
+    $security = Invoke-SecurityProfile `
+        -Root $Root `
+        -Seconds $Runtime.Seconds `
+        -IntervalMilliseconds $Runtime.SecurityIntervalMilliseconds `
+        -CalibrationIterations $Runtime.SecurityCalibration
     $baseline = Invoke-Measurement `
         -Kind baseline `
         -Seconds $Runtime.Seconds `
@@ -5683,13 +6133,14 @@ function Invoke-FullSystemDiagnostics {
             driverOwnership = $drivers.evidencePath
             kernelPressure = $kernel.evidencePath
             powerPolicy = $power.evidencePath
+            securityActivity = $security.evidencePath
             systemBaseline = $baseline.evidencePath
             shellReadiness = $shell.evidencePath
             workloadProfile = $workload.evidencePath
             dependencyProfile = $dependencies.evidencePath
         }
-        coveredLayers = @(1, 2, 3, 4, 5, 6, 10, 11, 12)
-        integrationGaps = @(7, 8, 9)
+        coveredLayers = @(1, 2, 3, 4, 5, 6, 7, 10, 11, 12)
+        integrationGaps = @(8, 9)
         statement = 'No Windows setting was changed. A missing layer integration is not a clean bill of health.'
     }
     $manifest | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
@@ -5843,6 +6294,8 @@ function Invoke-LayerWorkflow {
         [int]$PowerIntervalMilliseconds,
         [int]$PowerCalibration,
         [int]$PowerCallbackTimeout,
+        [int]$SecurityIntervalMilliseconds,
+        [int]$SecurityCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -5875,6 +6328,8 @@ function Invoke-LayerWorkflow {
         -PowerIntervalMilliseconds $PowerIntervalMilliseconds `
         -PowerCalibration $PowerCalibration `
         -PowerCallbackTimeout $PowerCallbackTimeout `
+        -SecurityIntervalMilliseconds $SecurityIntervalMilliseconds `
+        -SecurityCalibration $SecurityCalibration `
         -ShellRuns $ShellRuns `
         -ShellWarmups $ShellWarmups `
         -ShellTimeout $ShellTimeout `
@@ -6060,6 +6515,7 @@ function Show-ZBookPerfAdvancedMenu {
     Write-Host '7. Measure Explorer readiness and shell settings'
     Write-Host '8. Measure a selected application workload'
     Write-Host '9. Measure storage locality and declared network readiness'
+    Write-Host '10. Measure enabled security protection and security-process activity'
     Write-Host '0. Show the detailed capability map'
     Write-Host 'B. Back'
     return (Read-Host 'Choose a maintenance action')
@@ -6132,6 +6588,7 @@ function Invoke-ZBookPerfMain {
     elseif ($DriverProfile) { $script:Action = 'DriverProfile' }
     elseif ($KernelProfile) { $script:Action = 'KernelProfile' }
     elseif ($PowerProfile) { $script:Action = 'PowerProfile' }
+    elseif ($SecurityProfile) { $script:Action = 'SecurityProfile' }
     elseif ($ShellProfile) { $script:Action = 'ShellProfile' }
     elseif ($WorkloadProfile) { $script:Action = 'WorkloadProfile' }
     elseif ($DependencyProfile) { $script:Action = 'DependencyProfile' }
@@ -6156,6 +6613,8 @@ function Invoke-ZBookPerfMain {
         -PowerIntervalMilliseconds $PowerProfileSampleIntervalMilliseconds `
         -PowerCalibration $PowerProfileCalibrationIterations `
         -PowerCallbackTimeout $PowerProfileCallbackTimeoutMilliseconds `
+        -SecurityIntervalMilliseconds $SecurityProfileSampleIntervalMilliseconds `
+        -SecurityCalibration $SecurityProfileCalibrationIterations `
         -ShellRuns $ShellRunCount `
         -ShellWarmups $ShellWarmupRunCount `
         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -6209,6 +6668,7 @@ function Invoke-ZBookPerfMain {
                 '7' { $selectedAction = 'ShellProfile' }
                 '8' { $selectedAction = 'WorkloadProfile' }
                 '9' { $selectedAction = 'DependencyProfile' }
+                '10' { $selectedAction = 'SecurityProfile' }
                 '0' { $selectedAction = 'LayerMap' }
                 'b' { continue }
                 'B' { continue }
@@ -6258,6 +6718,8 @@ function Invoke-ZBookPerfMain {
                     -PowerIntervalMilliseconds $PowerProfileSampleIntervalMilliseconds `
                     -PowerCalibration $PowerProfileCalibrationIterations `
                     -PowerCallbackTimeout $PowerProfileCallbackTimeoutMilliseconds `
+                    -SecurityIntervalMilliseconds $SecurityProfileSampleIntervalMilliseconds `
+                    -SecurityCalibration $SecurityProfileCalibrationIterations `
                     -ShellRuns $ShellRunCount `
                     -ShellWarmups $ShellWarmupRunCount `
                     -ShellTimeout $ShellTimeoutMilliseconds `
@@ -6292,6 +6754,8 @@ function Invoke-ZBookPerfMain {
                         -PowerIntervalMilliseconds $PowerProfileSampleIntervalMilliseconds `
                         -PowerCalibration $PowerProfileCalibrationIterations `
                         -PowerCallbackTimeout $PowerProfileCallbackTimeoutMilliseconds `
+                        -SecurityIntervalMilliseconds $SecurityProfileSampleIntervalMilliseconds `
+                        -SecurityCalibration $SecurityProfileCalibrationIterations `
                         -ShellRuns $ShellRunCount `
                         -ShellWarmups $ShellWarmupRunCount `
                         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -6352,6 +6816,13 @@ function Invoke-ZBookPerfMain {
                     -SampleIntervalMilliseconds $PowerProfileSampleIntervalMilliseconds `
                     -CalibrationIterations $PowerProfileCalibrationIterations `
                     -CallbackTimeoutMilliseconds $PowerProfileCallbackTimeoutMilliseconds)
+            }
+            'SecurityProfile' {
+                [void](Invoke-SecurityProfile `
+                    -Root $DataRoot `
+                    -Seconds $DurationSeconds `
+                    -IntervalMilliseconds $SecurityProfileSampleIntervalMilliseconds `
+                    -CalibrationIterations $SecurityProfileCalibrationIterations)
             }
             'ShellProfile' {
                 [void](Invoke-ShellProfile `

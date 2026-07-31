@@ -100,6 +100,9 @@ Useful non-interactive examples:
 # Reconcile Layer 6 scheme, AC/DC preference, effective mode, processor policy, and Intel DTT
 .\ZBookPerf.ps1 -Action PowerProfile -PowerProfileSampleCount 5
 
+# Measure enabled protection and Microsoft security-process activity without weakening it
+.\ZBookPerf.ps1 -Action SecurityProfile -DurationSeconds 30
+
 # Profile one existing application workload for 30 seconds without changing it
 .\ZBookPerf.ps1 -Action WorkloadProfile -WorkloadProcessName msedge.exe -DurationSeconds 30
 
@@ -180,6 +183,19 @@ observer-cost calibration show whether the reported state stayed stable during
 the capture. The result is a policy truth map, not evidence that one mode is
 faster or that Intel Dynamic Tuning should be disabled. No plan, processor
 setting, OEM service, driver, registry value, or Windows setting is changed.
+
+`SecurityProfile` is observation-only. It records selected effective-state
+signals from Microsoft Defender Antivirus, the active Windows Firewall
+profiles, and the documented `Win32_DeviceGuard` provider. It then reuses a
+bounded set of Windows Process performance counters to measure CPU, read/write
+I/O, and private working-set activity for a fixed Microsoft security-process
+catalog. The counter session is warmed up once and query cost is calibrated
+before collection. Paths, command lines, user content, network endpoints,
+Defender exclusions, firewall rules, and recovery material are not collected.
+The Microsoft Defender performance-analyzer commands are inventoried but not
+started because recording requires elevation and can expose file paths. No
+protection or Windows setting is changed, and the result is a baseline rather
+than a performance-gain claim.
 
 `ShellProfile` is observation-only. It reads animations, transparency, notification duration, the documented Widgets and Game DVR policy locations, related app-package presence, and WPR/WPA availability. It then opens a private benchmark folder, measures when the new Explorer window reports ready through the documented Shell automation model, and closes only that benchmark window. Full readiness-probe overhead, raw runs, medians, variability, timeouts, power state, and Battery Saver state are retained. This is a baseline capability, not a performance-gain claim.
 

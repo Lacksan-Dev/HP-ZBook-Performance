@@ -90,6 +90,17 @@ Describe 'EXP-047 ZBookPerf' {
             $validateSet.ValidValues | Should -Contain 'PowerProfile'
         }
 
+        It 'exposes the Layer 7 protection-preserving security activity profile' {
+            $command = Get-Command $scriptPath
+            ($command.Parameters.Keys -contains 'SecurityProfile') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'SecurityProfileSampleIntervalMilliseconds') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'SecurityProfileCalibrationIterations') | Should -BeTrue
+            $validateSet = @($command.Parameters['Action'].Attributes | Where-Object {
+                $_ -is [System.Management.Automation.ValidateSetAttribute]
+            })[0]
+            $validateSet.ValidValues | Should -Contain 'SecurityProfile'
+        }
+
         It 'exposes the Layer 10 shell profile as a public read-only action' {
             $command = Get-Command $scriptPath
             ($command.Parameters.Keys -contains 'ShellProfile') | Should -BeTrue
@@ -384,6 +395,8 @@ Describe 'EXP-047 ZBookPerf' {
             $catalog[4].assessmentLabel | Should -Match 'DPC/ISR'
             $catalog[5].assessment | Should -Be 'PowerProfile'
             $catalog[5].assessmentLabel | Should -Match 'effective mode'
+            $catalog[6].assessment | Should -Be 'SecurityProfile'
+            $catalog[6].assessmentLabel | Should -Match 'protection state'
             $catalog[9].assessment | Should -Be 'ShellProfile'
             $catalog[10].assessment | Should -Be 'WorkloadProfile'
         }
@@ -425,7 +438,7 @@ Describe 'EXP-047 ZBookPerf' {
         It 'marks an unavailable assessment explicitly and lets the next safe step advance' {
             $root = Join-Path $TestDrive 'unavailable-assessment'
             $state = New-LayerWorkflowState
-            $state.currentLayer = 7
+            $state.currentLayer = 9
             $runtime = @{
                 Seconds = 5
                 Interval = 1
@@ -446,7 +459,7 @@ Describe 'EXP-047 ZBookPerf' {
             @($state.history)[-1].action | Should -Be 'assessment-unavailable'
 
             Invoke-NextLayerWorkflowStep -Root $root -State $state -Runtime $runtime
-            $state.currentLayer | Should -Be 8
+            $state.currentLayer | Should -Be 10
             $state.phase | Should -Be 'assessment-required'
         }
 
@@ -571,6 +584,26 @@ Describe 'EXP-047 ZBookPerf' {
             Should -Invoke Invoke-PowerProfile -Times 1
             $state.phase | Should -Be 'assessed'
             @($state.history)[-1].evidencePath | Should -Be 'power-profile.json'
+        }
+
+        It 'routes the Layer 7 assessment to the protection-preserving activity profiler' {
+            $root = Join-Path $TestDrive 'security-layer'
+            $state = New-LayerWorkflowState
+            $state.currentLayer = 7
+            Mock Invoke-SecurityProfile {
+                [pscustomobject]@{ evidencePath = 'security-profile.json' }
+            }
+
+            Invoke-LayerAssessmentStep `
+                -Root $root `
+                -State $state `
+                -Seconds 5 `
+                -SecurityIntervalMilliseconds 1000 `
+                -SecurityCalibration 3
+
+            Should -Invoke Invoke-SecurityProfile -Times 1
+            $state.phase | Should -Be 'assessed'
+            @($state.history)[-1].evidencePath | Should -Be 'security-profile.json'
         }
 
         It 'routes the Layer 10 assessment to the shell profiler' {
@@ -1539,6 +1572,98 @@ Describe 'EXP-047 ZBookPerf' {
         }
     }
 
+    Context 'Layer 7 security protection activity profile' {
+        It 'reads a fixed counter session without exposing process IDs or paths' {
+            $records = @()
+            foreach ($definition in @(
+                @{ metric = 'cpuLogicalProcessorPercent'; value = 80 },
+                @{ metric = 'readBytesPerSecond'; value = 1024 },
+                @{ metric = 'writeBytesPerSecond'; value = 2048 },
+                @{ metric = 'workingSetPrivateBytes'; value = 4096 }
+            )) {
+                $counter = [pscustomobject]@{ sample = [double]$definition.value }
+                $counter | Add-Member -MemberType ScriptMethod -Name NextValue -Value { return $this.sample }
+                $records += [pscustomobject]@{
+                    processName = 'msmpeng'
+                    role = 'Microsoft Defender Antivirus engine'
+                    instance = 'MsMpEng'
+                    metric = $definition.metric
+                    counter = $counter
+                }
+            }
+            $session = [pscustomobject]@{ records = $records }
+
+            $sample = Get-SecurityCounterSnapshot -Session $session -LogicalProcessorCount 8
+
+            $sample.status | Should -Be 'Measured'
+            $sample.cpuLogicalProcessorPercent | Should -Be 80
+            $sample.cpuMachinePercent | Should -Be 10
+            $sample.readBytesPerSecond | Should -Be 1024
+            $sample.writeBytesPerSecond | Should -Be 2048
+            $sample.workingSetPrivateBytes | Should -Be 4096
+            $sample.processes[0].PSObject.Properties.Name | Should -Not -Contain 'processId'
+            $sample.processes[0].PSObject.Properties.Name | Should -Not -Contain 'path'
+        }
+
+        It 'summarizes repeated samples as a baseline rather than a gain' {
+            $samples = @(
+                [pscustomobject]@{ status = 'Measured'; observedProcessCount = 2; cpuLogicalProcessorPercent = 8; cpuMachinePercent = 1; readBytesPerSecond = 0; writeBytesPerSecond = 0; workingSetPrivateBytes = 200; queryDurationMilliseconds = 2 },
+                [pscustomobject]@{ status = 'Measured'; observedProcessCount = 2; cpuLogicalProcessorPercent = 16; cpuMachinePercent = 2; readBytesPerSecond = 10; writeBytesPerSecond = 20; workingSetPrivateBytes = 220; queryDurationMilliseconds = 3 },
+                [pscustomobject]@{ status = 'Measured'; observedProcessCount = 2; cpuLogicalProcessorPercent = 24; cpuMachinePercent = 3; readBytesPerSecond = 20; writeBytesPerSecond = 40; workingSetPrivateBytes = 240; queryDurationMilliseconds = 4 }
+            )
+
+            $summary = Get-SecurityProfileSummary -Samples $samples
+
+            $summary.measuredSampleCount | Should -Be 3
+            $summary.metrics.cpuMachinePercent.median | Should -Be 2
+            $summary.metrics.workingSetPrivateBytes.median | Should -Be 220
+            $summary.decision | Should -Be 'BaselineOnlyNoPerformanceClaim'
+        }
+
+        It 'collects only selected protection state and never asks for exclusions or rules' {
+            Mock Get-MpComputerStatus {
+                [pscustomobject]@{ AMServiceEnabled = $true; AntivirusEnabled = $true; AntispywareEnabled = $true; BehaviorMonitorEnabled = $true; IoavProtectionEnabled = $true; NISEnabled = $true; OnAccessProtectionEnabled = $true; RealTimeProtectionEnabled = $true; IsTamperProtected = $true; AMRunningMode = 'Normal'; AMProductVersion = '4.18'; AMEngineVersion = '1.1'; AntivirusSignatureVersion = '1.2' }
+            }
+            Mock Get-NetFirewallProfile {
+                [pscustomobject]@{ Name = 'Public'; Enabled = $true; DefaultInboundAction = 'Block'; DefaultOutboundAction = 'Allow' }
+            }
+            Mock Get-CimInstance {
+                [pscustomobject]@{ VirtualizationBasedSecurityStatus = 2; SecurityServicesConfigured = @(2); SecurityServicesRunning = @(1, 2); CodeIntegrityPolicyEnforcementStatus = 2; UsermodeCodeIntegrityPolicyEnforcementStatus = 2 }
+            }
+
+            $state = Get-SecurityProtectionState
+
+            $state.defender.realTimeProtectionEnabled | Should -BeTrue
+            $state.defender.isTamperProtected | Should -BeTrue
+            $state.firewall.profiles[0].enabled | Should -BeTrue
+            $state.deviceGuard.virtualizationBasedSecurityStatus | Should -Be 2
+            $state.defender.PSObject.Properties.Name | Should -Not -Contain 'ExclusionPath'
+            $state.firewall.profiles[0].PSObject.Properties.Name | Should -Not -Contain 'Rules'
+        }
+
+        It 'contains no security, firewall, service, policy, registry, or reboot mutation command' {
+            $body = @(
+                (Get-Command Invoke-SecurityProfile).ScriptBlock.ToString(),
+                (Get-Command Get-SecurityProtectionState).ScriptBlock.ToString(),
+                (Get-Command Get-SecurityCounterSnapshot).ScriptBlock.ToString()
+            ) -join "`n"
+            $body | Should -Not -Match 'Set-MpPreference|Add-MpPreference|Remove-MpPreference|Set-NetFirewall|Set-Service|Stop-Service|Start-Service|Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|Restart-Computer|shutdown'
+        }
+
+        It 'routes the public action directly to the profiler' {
+            $script:Action = 'SecurityProfile'
+            $script:DataRoot = $TestDrive
+            $script:DurationSeconds = 5
+            $script:SecurityProfileSampleIntervalMilliseconds = 1000
+            $script:SecurityProfileCalibrationIterations = 3
+            Mock Invoke-SecurityProfile { }
+
+            Invoke-ZBookPerfMain
+
+            Should -Invoke Invoke-SecurityProfile -Times 1
+        }
+    }
+
     Context 'Layer 10 shell profile' {
         It 'summarizes measured runs without counting warmups' {
             $runs = @(
@@ -2064,6 +2189,9 @@ Describe 'EXP-047 ZBookPerf' {
             Mock Invoke-PowerProfile {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'power.json') }
             }
+            Mock Invoke-SecurityProfile {
+                [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'security.json') }
+            }
             Mock Invoke-Measurement {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'baseline.json') }
             }
@@ -2084,6 +2212,7 @@ Describe 'EXP-047 ZBookPerf' {
                 DriverCalibration = 3; DriverLimit = 64
                 KernelBlocks = 3; KernelSamples = 3; KernelInterval = 1; KernelCalibration = 3
                 PowerSamples = 3; PowerIntervalMilliseconds = 100; PowerCalibration = 3; PowerCallbackTimeout = 1000
+                SecurityIntervalMilliseconds = 1000; SecurityCalibration = 3
                 ShellRuns = 1; ShellWarmups = 0; ShellTimeout = 1000; ShellCalibration = 5
                 WorkloadNames = @('explorer.exe'); WorkloadInterval = 1000; WorkloadCalibration = 3
                 DependencyPaths = @($TestDrive); DependencyEndpoints = @()
@@ -2093,12 +2222,13 @@ Describe 'EXP-047 ZBookPerf' {
             $result = Invoke-FullSystemDiagnostics -Root $TestDrive -Runtime $runtime
 
             $result.observationOnly | Should -BeTrue
-            $result.coveredLayers | Should -Be @(1, 2, 3, 4, 5, 6, 10, 11, 12)
+            $result.coveredLayers | Should -Be @(1, 2, 3, 4, 5, 6, 7, 10, 11, 12)
             $result.evidence.storagePath | Should -Match 'hardware.json'
             $result.evidence.firmwareBoundary | Should -Match 'firmware.json'
             $result.evidence.driverOwnership | Should -Match 'drivers.json'
             $result.evidence.kernelPressure | Should -Match 'kernel.json'
             $result.evidence.powerPolicy | Should -Match 'power.json'
+            $result.evidence.securityActivity | Should -Match 'security.json'
             Test-Path -LiteralPath $result.evidence.systemBaseline | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $TestDrive 'measurements') | Should -BeTrue
             Should -Invoke Invoke-Measurement -Times 1
@@ -2108,6 +2238,7 @@ Describe 'EXP-047 ZBookPerf' {
             Should -Invoke Invoke-DriverProfile -Times 1
             Should -Invoke Invoke-KernelProfile -Times 1
             Should -Invoke Invoke-PowerProfile -Times 1
+            Should -Invoke Invoke-SecurityProfile -Times 1
             Should -Invoke Invoke-ShellProfile -Times 1
             Should -Invoke Invoke-WorkloadProfile -Times 1
             Should -Invoke Invoke-DependencyProfile -Times 1
