@@ -18,7 +18,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'FirmwareProfile', 'DriverProfile', 'KernelProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
+    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'FirmwareProfile', 'DriverProfile', 'KernelProfile', 'PowerProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
     [string]$Action = 'Menu',
 
     [switch]$FullDiagnostics,
@@ -31,6 +31,7 @@ param(
     [switch]$FirmwareProfile,
     [switch]$DriverProfile,
     [switch]$KernelProfile,
+    [switch]$PowerProfile,
     [switch]$ShellProfile,
     [switch]$WorkloadProfile,
     [switch]$DependencyProfile,
@@ -81,6 +82,18 @@ param(
     [ValidateRange(3, 25)]
     [int]$KernelCalibrationIterations = 3,
 
+    [ValidateRange(3, 30)]
+    [int]$PowerProfileSampleCount = 5,
+
+    [ValidateRange(100, 5000)]
+    [int]$PowerProfileSampleIntervalMilliseconds = 500,
+
+    [ValidateRange(3, 25)]
+    [int]$PowerProfileCalibrationIterations = 5,
+
+    [ValidateRange(100, 5000)]
+    [int]$PowerProfileCallbackTimeoutMilliseconds = 1000,
+
     [ValidateRange(1, 25)]
     [int]$ShellRunCount = 5,
 
@@ -128,7 +141,7 @@ $ErrorActionPreference = 'Stop'
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
 $script:ProductName = 'Lacksan UX-ROM'
-$script:ProductVersion = '2026.07.31.3'
+$script:ProductVersion = '2026.07.31.4'
 $script:LayerWorkflowSchemaVersion = 1
 $script:SplashShown = $false
 $script:LoadedFrom = if ([string]::IsNullOrWhiteSpace([string]$PSCommandPath)) {
@@ -2172,6 +2185,511 @@ function Invoke-KernelProfile {
     Write-Host $summary.interpretation -ForegroundColor DarkYellow
     Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
     Write-Host 'No scheduler, interrupt, memory, storage, driver, service, registry, power, or Windows setting was changed.' -ForegroundColor DarkYellow
+    return $profile
+}
+
+function Initialize-PowerPolicyNativeMethods {
+    if ('ZBookPerf.PowerPolicyNative' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+namespace ZBookPerf {
+    public sealed class PowerGuidResult {
+        public UInt32 ResultCode { get; set; }
+        public Guid Value { get; set; }
+    }
+
+    public sealed class EffectivePowerModeResult {
+        public UInt32 RegisterResultCode { get; set; }
+        public UInt32 UnregisterResultCode { get; set; }
+        public bool CallbackReceived { get; set; }
+        public int Value { get; set; }
+    }
+
+    public sealed class PowerValueResult {
+        public UInt32 ResultCode { get; set; }
+        public UInt32 RegistryType { get; set; }
+        public UInt32 SizeBytes { get; set; }
+        public UInt32 Value { get; set; }
+    }
+
+    public static class PowerPolicyNative {
+        private delegate void EffectivePowerModeCallback(int mode, IntPtr context);
+
+        [DllImport("powrprof.dll")]
+        private static extern UInt32 PowerGetUserConfiguredACPowerMode(out Guid powerModeGuid);
+
+        [DllImport("powrprof.dll")]
+        private static extern UInt32 PowerGetUserConfiguredDCPowerMode(out Guid powerModeGuid);
+
+        [DllImport("powrprof.dll")]
+        private static extern UInt32 PowerRegisterForEffectivePowerModeNotifications(
+            UInt32 version,
+            EffectivePowerModeCallback callback,
+            IntPtr context,
+            out IntPtr registrationHandle);
+
+        [DllImport("powrprof.dll")]
+        private static extern UInt32 PowerUnregisterFromEffectivePowerModeNotifications(IntPtr registrationHandle);
+
+        [DllImport("powrprof.dll")]
+        private static extern UInt32 PowerGetActiveScheme(IntPtr userRootPowerKey, out IntPtr activePolicyGuid);
+
+        [DllImport("powrprof.dll")]
+        private static extern UInt32 PowerReadACValue(
+            IntPtr rootPowerKey,
+            ref Guid schemeGuid,
+            ref Guid subGroupGuid,
+            ref Guid settingGuid,
+            out UInt32 valueType,
+            byte[] buffer,
+            ref UInt32 bufferSize);
+
+        [DllImport("powrprof.dll")]
+        private static extern UInt32 PowerReadDCValue(
+            IntPtr rootPowerKey,
+            ref Guid schemeGuid,
+            ref Guid subGroupGuid,
+            ref Guid settingGuid,
+            out UInt32 valueType,
+            byte[] buffer,
+            ref UInt32 bufferSize);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr LocalFree(IntPtr memory);
+
+        public static PowerGuidResult QueryUserACMode() {
+            Guid value;
+            UInt32 code = PowerGetUserConfiguredACPowerMode(out value);
+            return new PowerGuidResult { ResultCode = code, Value = value };
+        }
+
+        public static PowerGuidResult QueryUserDCMode() {
+            Guid value;
+            UInt32 code = PowerGetUserConfiguredDCPowerMode(out value);
+            return new PowerGuidResult { ResultCode = code, Value = value };
+        }
+
+        public static PowerGuidResult QueryActiveScheme() {
+            IntPtr pointer = IntPtr.Zero;
+            UInt32 code = PowerGetActiveScheme(IntPtr.Zero, out pointer);
+            Guid value = Guid.Empty;
+            try {
+                if (code == 0 && pointer != IntPtr.Zero) {
+                    value = (Guid)Marshal.PtrToStructure(pointer, typeof(Guid));
+                }
+            } finally {
+                if (pointer != IntPtr.Zero) { LocalFree(pointer); }
+            }
+            return new PowerGuidResult { ResultCode = code, Value = value };
+        }
+
+        public static EffectivePowerModeResult QueryEffectiveMode(int timeoutMilliseconds) {
+            IntPtr handle = IntPtr.Zero;
+            int observed = -1;
+            using (ManualResetEventSlim signal = new ManualResetEventSlim(false)) {
+                EffectivePowerModeCallback callback = delegate(int mode, IntPtr context) {
+                    observed = mode;
+                    signal.Set();
+                };
+                UInt32 registerCode = PowerRegisterForEffectivePowerModeNotifications(1, callback, IntPtr.Zero, out handle);
+                bool received = registerCode == 0 && signal.Wait(timeoutMilliseconds);
+                UInt32 unregisterCode = handle == IntPtr.Zero ? 0 : PowerUnregisterFromEffectivePowerModeNotifications(handle);
+                GC.KeepAlive(callback);
+                return new EffectivePowerModeResult {
+                    RegisterResultCode = registerCode,
+                    UnregisterResultCode = unregisterCode,
+                    CallbackReceived = received,
+                    Value = observed
+                };
+            }
+        }
+
+        public static PowerValueResult QueryPowerValue(Guid scheme, Guid subgroup, Guid setting, bool acPower) {
+            UInt32 valueType = 0;
+            UInt32 size = 0;
+            UInt32 first = acPower
+                ? PowerReadACValue(IntPtr.Zero, ref scheme, ref subgroup, ref setting, out valueType, null, ref size)
+                : PowerReadDCValue(IntPtr.Zero, ref scheme, ref subgroup, ref setting, out valueType, null, ref size);
+            if (first != 0 && first != 234) {
+                return new PowerValueResult { ResultCode = first, RegistryType = valueType, SizeBytes = size };
+            }
+            byte[] buffer = new byte[size];
+            UInt32 second = acPower
+                ? PowerReadACValue(IntPtr.Zero, ref scheme, ref subgroup, ref setting, out valueType, buffer, ref size)
+                : PowerReadDCValue(IntPtr.Zero, ref scheme, ref subgroup, ref setting, out valueType, buffer, ref size);
+            UInt32 value = second == 0 && size >= 4 ? BitConverter.ToUInt32(buffer, 0) : 0;
+            return new PowerValueResult { ResultCode = second, RegistryType = valueType, SizeBytes = size, Value = value };
+        }
+    }
+}
+'@
+}
+
+function ConvertTo-ConfiguredPowerModeName {
+    param([guid]$Guid)
+    switch ($Guid.ToString().ToLowerInvariant()) {
+        '00000000-0000-0000-0000-000000000000' { return 'Balanced' }
+        '961cc777-2547-4f9d-8174-7d86181b8a7a' { return 'BestEfficiency' }
+        'ded574b5-45a0-4f42-8737-46345c09c238' { return 'BestPerformance' }
+        default { return 'Unknown' }
+    }
+}
+
+function ConvertTo-EffectivePowerModeName {
+    param([int]$Value)
+    switch ($Value) {
+        0 { return 'BatterySaverOrEnergySaverHighSavings' }
+        1 { return 'BetterBatteryOrEnergySaverStandard' }
+        2 { return 'Balanced' }
+        3 { return 'HighPerformance' }
+        4 { return 'MaxPerformance' }
+        5 { return 'GameMode' }
+        6 { return 'MixedReality' }
+        default { return 'Unknown' }
+    }
+}
+
+function Get-PowerPolicySettingCatalog {
+    return @(
+        [pscustomobject][ordered]@{ key = 'minimumPerformance'; alias = 'PROCTHROTTLEMIN'; guid = '893dee8e-2bef-41e0-89c6-b55d0929964c'; unit = 'percent'; interpretation = 'Minimum processor performance state requested by policy.' },
+        [pscustomobject][ordered]@{ key = 'maximumPerformance'; alias = 'PROCTHROTTLEMAX'; guid = 'bc5038f7-23e0-4960-96da-33abaf5935ec'; unit = 'percent'; interpretation = 'Maximum processor performance state requested by policy.' },
+        [pscustomobject][ordered]@{ key = 'boostMode'; alias = 'PERFBOOSTMODE'; guid = 'be337238-0d82-4146-a960-4f3749d470c7'; unit = 'enum'; interpretation = 'Processor boost-mode policy; value meaning is documented by Microsoft.' },
+        [pscustomobject][ordered]@{ key = 'energyPerformancePreference'; alias = 'PERFEPP'; guid = '36687f9e-e3a5-4dbf-b1dc-15eb381c6863'; unit = 'policy value'; interpretation = 'Hardware energy-versus-performance preference when supported by the processor.' },
+        [pscustomobject][ordered]@{ key = 'performanceIncreasePolicy'; alias = 'PERFINCPOL'; guid = '465e1f50-b610-473a-ab58-00d1077dc418'; unit = 'enum'; interpretation = 'Policy used when Windows requests a higher processor performance state.' }
+    )
+}
+
+function Get-NativeActivePowerScheme {
+    Initialize-PowerPolicyNativeMethods
+    return [ZBookPerf.PowerPolicyNative]::QueryActiveScheme()
+}
+
+function Get-NativeUserAcPowerMode {
+    Initialize-PowerPolicyNativeMethods
+    return [ZBookPerf.PowerPolicyNative]::QueryUserACMode()
+}
+
+function Get-NativeUserDcPowerMode {
+    Initialize-PowerPolicyNativeMethods
+    return [ZBookPerf.PowerPolicyNative]::QueryUserDCMode()
+}
+
+function Get-NativeEffectivePowerMode {
+    param([int]$TimeoutMilliseconds)
+    Initialize-PowerPolicyNativeMethods
+    return [ZBookPerf.PowerPolicyNative]::QueryEffectiveMode($TimeoutMilliseconds)
+}
+
+function Get-NativePowerPolicyValue {
+    param(
+        [guid]$SchemeGuid,
+        [guid]$SettingGuid,
+        [bool]$AcPower
+    )
+    Initialize-PowerPolicyNativeMethods
+    return [ZBookPerf.PowerPolicyNative]::QueryPowerValue(
+        $SchemeGuid,
+        [guid]$script:ProcessorSubgroup,
+        $SettingGuid,
+        $AcPower
+    )
+}
+
+function Get-PowerModeSnapshot {
+    param([ValidateRange(100, 5000)][int]$CallbackTimeoutMilliseconds)
+
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $active = Get-NativeActivePowerScheme
+    $ac = Get-NativeUserAcPowerMode
+    $dc = Get-NativeUserDcPowerMode
+    $effective = Get-NativeEffectivePowerMode -TimeoutMilliseconds $CallbackTimeoutMilliseconds
+    $system = Get-SystemPowerStatusState
+    $timer.Stop()
+
+    return [pscustomobject][ordered]@{
+        timestampUtc = [DateTime]::UtcNow.ToString('o')
+        queryDurationMilliseconds = [Math]::Round($timer.Elapsed.TotalMilliseconds, 4)
+        activeScheme = [pscustomobject][ordered]@{
+            resultCode = [uint32]$active.ResultCode
+            guid = $active.Value.ToString()
+        }
+        userAcMode = [pscustomobject][ordered]@{
+            resultCode = [uint32]$ac.ResultCode
+            guid = $ac.Value.ToString()
+            name = ConvertTo-ConfiguredPowerModeName -Guid $ac.Value
+        }
+        userDcMode = [pscustomobject][ordered]@{
+            resultCode = [uint32]$dc.ResultCode
+            guid = $dc.Value.ToString()
+            name = ConvertTo-ConfiguredPowerModeName -Guid $dc.Value
+        }
+        effectiveMode = [pscustomobject][ordered]@{
+            registerResultCode = [uint32]$effective.RegisterResultCode
+            unregisterResultCode = [uint32]$effective.UnregisterResultCode
+            callbackReceived = [bool]$effective.CallbackReceived
+            value = [int]$effective.Value
+            name = ConvertTo-EffectivePowerModeName -Value ([int]$effective.Value)
+        }
+        systemPowerStatus = $system
+    }
+}
+
+function Get-PowerProfileSupport {
+    param([ValidateRange(100, 5000)][int]$CallbackTimeoutMilliseconds)
+
+    try {
+        $snapshot = Get-PowerModeSnapshot -CallbackTimeoutMilliseconds $CallbackTimeoutMilliseconds
+        $supported = (
+            $snapshot.activeScheme.resultCode -eq 0 -and
+            $snapshot.userAcMode.resultCode -eq 0 -and
+            $snapshot.userDcMode.resultCode -eq 0 -and
+            $snapshot.effectiveMode.registerResultCode -eq 0 -and
+            $snapshot.effectiveMode.unregisterResultCode -eq 0 -and
+            $snapshot.effectiveMode.callbackReceived -and
+            $snapshot.systemPowerStatus.available
+        )
+        return [pscustomobject][ordered]@{
+            supported = [bool]$supported
+            reason = if ($supported) { 'Required PowrProf and GetSystemPowerStatus interfaces returned a complete snapshot.' } else { 'One or more required power-policy interfaces did not return a complete snapshot.' }
+            probe = $snapshot
+        }
+    } catch {
+        return [pscustomobject][ordered]@{
+            supported = $false
+            reason = "Power-policy interface probe failed ($($_.Exception.GetType().Name))."
+            probe = $null
+        }
+    }
+}
+
+function Get-ProcessorPowerPolicy {
+    param([Parameter(Mandatory = $true)][guid]$ActiveSchemeGuid)
+
+    $settings = @()
+    foreach ($item in Get-PowerPolicySettingCatalog) {
+        $ac = Get-NativePowerPolicyValue -SchemeGuid $ActiveSchemeGuid -SettingGuid ([guid]$item.guid) -AcPower $true
+        $dc = Get-NativePowerPolicyValue -SchemeGuid $ActiveSchemeGuid -SettingGuid ([guid]$item.guid) -AcPower $false
+        $settings += [pscustomobject][ordered]@{
+            key = $item.key
+            alias = $item.alias
+            guid = $item.guid
+            unit = $item.unit
+            interpretation = $item.interpretation
+            ac = [pscustomobject][ordered]@{ resultCode = [uint32]$ac.ResultCode; registryType = [uint32]$ac.RegistryType; sizeBytes = [uint32]$ac.SizeBytes; value = if ($ac.ResultCode -eq 0) { [uint32]$ac.Value } else { $null } }
+            dc = [pscustomobject][ordered]@{ resultCode = [uint32]$dc.ResultCode; registryType = [uint32]$dc.RegistryType; sizeBytes = [uint32]$dc.SizeBytes; value = if ($dc.ResultCode -eq 0) { [uint32]$dc.Value } else { $null } }
+            supported = ($ac.ResultCode -eq 0 -and $dc.ResultCode -eq 0)
+        }
+    }
+    return @($settings)
+}
+
+function Get-PowerPlatformOwnership {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $service = $null
+    $drivers = @()
+    $errors = @()
+    try {
+        $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='esifsvc'" -OperationTimeoutSec 5 -ErrorAction Stop |
+            Select-Object Name, DisplayName, State, StartMode
+    } catch {
+        $errors += "service-query:$($_.Exception.GetType().Name)"
+    }
+    try {
+        $drivers = @(Get-CimInstance -Query "SELECT DeviceName,DriverProviderName,DriverVersion,DriverDate,IsSigned FROM Win32_PnPSignedDriver WHERE DeviceName LIKE 'Intel(R) Dynamic Tuning%'" -OperationTimeoutSec 5 -ErrorAction Stop |
+            Group-Object DeviceName, DriverProviderName, DriverVersion, DriverDate, IsSigned |
+            ForEach-Object {
+                $first = $_.Group[0]
+                [pscustomobject][ordered]@{
+                    role = $first.DeviceName
+                    provider = $first.DriverProviderName
+                    version = $first.DriverVersion
+                    date = $first.DriverDate
+                    signed = [bool]$first.IsSigned
+                    count = $_.Count
+                }
+            })
+    } catch {
+        $errors += "driver-query:$($_.Exception.GetType().Name)"
+    }
+    $timer.Stop()
+    return [pscustomobject][ordered]@{
+        queryDurationMilliseconds = [Math]::Round($timer.Elapsed.TotalMilliseconds, 4)
+        intelDynamicTuningService = $service
+        intelDynamicTuningDriverGroups = @($drivers)
+        errors = @($errors)
+        interpretation = 'Intel Dynamic Tuning is an OEM-configured platform policy layer. Its presence does not prove throttling or a performance fault, and UX-ROM does not disable it.'
+    }
+}
+
+function Measure-PowerProfileObserver {
+    param(
+        [ValidateRange(3, 25)][int]$Iterations,
+        [ValidateRange(100, 5000)][int]$CallbackTimeoutMilliseconds
+    )
+
+    $null = Get-PowerModeSnapshot -CallbackTimeoutMilliseconds $CallbackTimeoutMilliseconds
+    $durations = @()
+    for ($iteration = 1; $iteration -le $Iterations; $iteration++) {
+        $sample = Get-PowerModeSnapshot -CallbackTimeoutMilliseconds $CallbackTimeoutMilliseconds
+        $durations += [double]$sample.queryDurationMilliseconds
+    }
+    return [pscustomobject][ordered]@{
+        iterations = $Iterations
+        durationMilliseconds = Get-WorkloadDistribution -Values $durations
+        qualification = 'This bounds the cost of querying policy state and receiving one immediate effective-mode callback. Profile values are not overhead-corrected.'
+    }
+}
+
+function Get-PowerProfileEnvironment {
+    $computer = Get-CimInstance -ClassName Win32_ComputerSystem -OperationTimeoutSec 5
+    $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem -OperationTimeoutSec 5
+    $bios = Get-CimInstance -ClassName Win32_BIOS -OperationTimeoutSec 5
+    $processor = Get-CimInstance -ClassName Win32_Processor -OperationTimeoutSec 5 | Select-Object -First 1
+    $edgeVersion = $null
+    foreach ($edgePath in @("$env:ProgramFiles (x86)\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe")) {
+        if ($edgePath -and (Test-Path -LiteralPath $edgePath)) {
+            $edgeVersion = (Get-Item -LiteralPath $edgePath).VersionInfo.ProductVersion
+            break
+        }
+    }
+    $thermal = @()
+    try {
+        $thermal = @(Get-CimInstance -Namespace 'root/wmi' -ClassName MSAcpi_ThermalZoneTemperature -OperationTimeoutSec 5 -ErrorAction Stop | ForEach-Object {
+            [Math]::Round(($_.CurrentTemperature / 10) - 273.15, 1)
+        })
+    } catch { $thermal = @() }
+    $network = @()
+    if (Get-Command 'Get-NetAdapter' -ErrorAction SilentlyContinue) {
+        $network = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Group-Object Status | ForEach-Object {
+            [pscustomobject][ordered]@{ status = $_.Name; count = $_.Count }
+        })
+    }
+    return [pscustomobject][ordered]@{
+        capturedUtc = [DateTime]::UtcNow.ToString('o')
+        windows = [pscustomobject][ordered]@{ caption = $operatingSystem.Caption; version = $operatingSystem.Version; build = $operatingSystem.BuildNumber }
+        computer = [pscustomobject][ordered]@{ manufacturer = $computer.Manufacturer; model = $computer.Model; totalPhysicalMemoryBytes = [uint64]$computer.TotalPhysicalMemory }
+        bios = [pscustomobject][ordered]@{ version = @($bios.SMBIOSBIOSVersion) -join '; '; releaseDate = $bios.ReleaseDate }
+        processor = [pscustomobject][ordered]@{ name = $processor.Name; cores = $processor.NumberOfCores; logicalProcessors = $processor.NumberOfLogicalProcessors; maximumClockMHz = $processor.MaxClockSpeed }
+        edgeVersion = $edgeVersion
+        power = Get-SystemPowerStatusState
+        thermalZoneCelsius = @($thermal)
+        physicalNetworkAdapterStatusCounts = @($network)
+        benchmarkConditions = 'Passive foreground collection; no workload launched, no power state changed, and no reboot performed.'
+    }
+}
+
+function Get-PowerProfileSummary {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Samples,
+        [Parameter(Mandatory = $true)][object[]]$ProcessorPolicy,
+        [Parameter(Mandatory = $true)][object]$PlatformOwnership
+    )
+
+    $active = @($Samples | ForEach-Object { $_.activeScheme.guid } | Select-Object -Unique)
+    $ac = @($Samples | ForEach-Object { $_.userAcMode.name } | Select-Object -Unique)
+    $dc = @($Samples | ForEach-Object { $_.userDcMode.name } | Select-Object -Unique)
+    $effective = @($Samples | ForEach-Object { $_.effectiveMode.name } | Select-Object -Unique)
+    $powerSources = @($Samples | ForEach-Object { $_.systemPowerStatus.acLineStatus } | Select-Object -Unique)
+    $batterySaver = @($Samples | ForEach-Object { $_.systemPowerStatus.batterySaverOn } | Select-Object -Unique)
+    return [pscustomobject][ordered]@{
+        sampleCount = $Samples.Count
+        queryDurationMilliseconds = Get-WorkloadDistribution -Values @($Samples | ForEach-Object { [double]$_.queryDurationMilliseconds })
+        uniqueActiveSchemeGuids = $active
+        uniqueUserAcModes = $ac
+        uniqueUserDcModes = $dc
+        uniqueEffectiveModes = $effective
+        uniquePowerSources = $powerSources
+        uniqueBatterySaverStates = $batterySaver
+        consistentAcrossSamples = ($active.Count -eq 1 -and $ac.Count -eq 1 -and $dc.Count -eq 1 -and $effective.Count -eq 1 -and $powerSources.Count -eq 1 -and $batterySaver.Count -eq 1)
+        supportedProcessorSettingCount = @($ProcessorPolicy | Where-Object { $_.supported }).Count
+        intelDynamicTuningServiceState = if ($PlatformOwnership.intelDynamicTuningService) { $PlatformOwnership.intelDynamicTuningService.State } else { 'NotObserved' }
+        interpretation = 'The base scheme, separate AC/DC user preferences, effective runtime mode, processor policy, and OEM platform ownership are different contracts. Agreement is descriptive only; it does not prove latency, thermal headroom, or a performance gain.'
+        decision = 'BaselineOnlyNoPerformanceClaim'
+    }
+}
+
+function Invoke-PowerProfile {
+    param(
+        [string]$Root,
+        [ValidateRange(3, 30)][int]$SampleCount,
+        [ValidateRange(100, 5000)][int]$SampleIntervalMilliseconds,
+        [ValidateRange(3, 25)][int]$CalibrationIterations,
+        [ValidateRange(100, 5000)][int]$CallbackTimeoutMilliseconds
+    )
+
+    $support = Get-PowerProfileSupport -CallbackTimeoutMilliseconds $CallbackTimeoutMilliseconds
+    if (-not $support.supported) { throw "Power-policy profiling is unsupported: $($support.reason)" }
+    Ensure-DataDirectories -Root $Root
+    $observer = Measure-PowerProfileObserver -Iterations $CalibrationIterations -CallbackTimeoutMilliseconds $CallbackTimeoutMilliseconds
+    $samples = @()
+    for ($sampleNumber = 1; $sampleNumber -le $SampleCount; $sampleNumber++) {
+        $samples += Get-PowerModeSnapshot -CallbackTimeoutMilliseconds $CallbackTimeoutMilliseconds
+        if ($sampleNumber -lt $SampleCount) { Start-Sleep -Milliseconds $SampleIntervalMilliseconds }
+    }
+    $activeSchemeGuid = [guid]$samples[0].activeScheme.guid
+    $processorPolicy = @(Get-ProcessorPowerPolicy -ActiveSchemeGuid $activeSchemeGuid)
+    $platformOwnership = Get-PowerPlatformOwnership
+    $environment = Get-PowerProfileEnvironment
+    $summary = Get-PowerProfileSummary -Samples $samples -ProcessorPolicy $processorPolicy -PlatformOwnership $platformOwnership
+
+    $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff')
+    $runSuffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $evidencePath = Join-Path (Join-Path $Root 'measurements') "$stamp-$runSuffix-power-policy-profile.json"
+    $profile = [pscustomobject][ordered]@{
+        schemaVersion = $script:SchemaVersion
+        experimentId = $script:ExperimentId
+        layer = 6
+        kind = 'power-policy-profile'
+        capturedUtc = $samples[0].timestampUtc
+        completedUtc = [DateTime]::UtcNow.ToString('o')
+        observationOnly = $true
+        support = $support
+        environment = $environment
+        requested = [pscustomobject][ordered]@{
+            sampleCount = $SampleCount
+            sampleIntervalMilliseconds = $SampleIntervalMilliseconds
+            calibrationIterations = $CalibrationIterations
+            callbackTimeoutMilliseconds = $CallbackTimeoutMilliseconds
+            maximumScheduledSamplingWindowMilliseconds = (($SampleCount - 1) * $SampleIntervalMilliseconds)
+        }
+        instrumentation = [pscustomobject][ordered]@{
+            source = 'Microsoft PowrProf language-neutral APIs, GetSystemPowerStatus, and bounded local CIM ownership queries'
+            timer = 'System.Diagnostics.Stopwatch'
+            observerCalibration = $observer
+            qualification = 'Every raw snapshot retains its complete query duration. Results are not overhead-corrected.'
+        }
+        collectionScope = 'Power-policy GUIDs and values; model/build/BIOS/processor metadata; aggregate network status; thermal readings; and Intel Dynamic Tuning role/version/service state. No device IDs, paths, network identities, command lines, credentials, or customer content are collected.'
+        processorPolicy = $processorPolicy
+        platformOwnership = $platformOwnership
+        samples = @($samples)
+        summary = $summary
+        evidencePath = $evidencePath
+    }
+    $profile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
+    try {
+        Write-StructuredEvent -Root $Root -Level Information -Event 'power-policy-profile-complete' -Data @{
+            evidencePath = $evidencePath
+            sampleCount = $summary.sampleCount
+            effectiveMode = @($summary.uniqueEffectiveModes) -join ','
+            observationOnly = $true
+        }
+    } catch {
+        Write-Warning "The power-policy profile was saved, but the optional event journal could not be updated ($($_.Exception.GetType().Name))."
+    }
+
+    Write-Host ''
+    Write-Host 'Layer 6 power-policy truth map (observation only)' -ForegroundColor Cyan
+    Write-Host "Active scheme: $(@($summary.uniqueActiveSchemeGuids) -join ', ')"
+    Write-Host "User AC / DC modes: $(@($summary.uniqueUserAcModes) -join ', ') / $(@($summary.uniqueUserDcModes) -join ', ')"
+    Write-Host "Effective runtime mode: $(@($summary.uniqueEffectiveModes) -join ', ')"
+    Write-Host "Processor settings read: $($summary.supportedProcessorSettingCount) / $(@($processorPolicy).Count)"
+    Write-Host "Intel Dynamic Tuning service: $($summary.intelDynamicTuningServiceState)"
+    Write-Host $summary.interpretation -ForegroundColor DarkYellow
+    Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
+    Write-Host 'No power plan, processor setting, OEM service, driver, registry value, or Windows setting was changed.' -ForegroundColor DarkYellow
     return $profile
 }
 
@@ -4311,8 +4829,8 @@ function Get-PerformanceLayerCatalog {
             number = 6
             name = 'Power management and performance policy'
             description = 'Aligns supported processor and power policy with plugged-in performance.'
-            assessment = 'Baseline'
-            assessmentLabel = 'Power source, mode, battery, and processor baseline'
+            assessment = 'PowerProfile'
+            assessmentLabel = 'Base scheme, AC/DC preference, effective mode, hidden processor policy, and Intel Dynamic Tuning ownership'
             candidates = @('PowerAc')
         },
         [pscustomobject][ordered]@{
@@ -4545,6 +5063,10 @@ function Invoke-LayerAssessmentStep {
         [int]$KernelSamples,
         [int]$KernelInterval,
         [int]$KernelCalibration,
+        [int]$PowerSamples,
+        [int]$PowerIntervalMilliseconds,
+        [int]$PowerCalibration,
+        [int]$PowerCallbackTimeout,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -4600,6 +5122,15 @@ function Invoke-LayerAssessmentStep {
                 -SamplesPerBlock $KernelSamples `
                 -SampleIntervalSeconds $KernelInterval `
                 -CalibrationIterations $KernelCalibration
+            $evidencePath = $profile.evidencePath
+        }
+        'PowerProfile' {
+            $profile = Invoke-PowerProfile `
+                -Root $Root `
+                -SampleCount $PowerSamples `
+                -SampleIntervalMilliseconds $PowerIntervalMilliseconds `
+                -CalibrationIterations $PowerCalibration `
+                -CallbackTimeoutMilliseconds $PowerCallbackTimeout
             $evidencePath = $profile.evidencePath
         }
         'Baseline' {
@@ -4978,6 +5509,10 @@ function New-LayerRuntime {
         [int]$KernelSamples,
         [int]$KernelInterval,
         [int]$KernelCalibration,
+        [int]$PowerSamples,
+        [int]$PowerIntervalMilliseconds,
+        [int]$PowerCalibration,
+        [int]$PowerCallbackTimeout,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -5006,6 +5541,10 @@ function New-LayerRuntime {
         KernelSamples = $KernelSamples
         KernelInterval = $KernelInterval
         KernelCalibration = $KernelCalibration
+        PowerSamples = $PowerSamples
+        PowerIntervalMilliseconds = $PowerIntervalMilliseconds
+        PowerCalibration = $PowerCalibration
+        PowerCallbackTimeout = $PowerCallbackTimeout
         ShellRuns = $ShellRuns
         ShellWarmups = $ShellWarmups
         ShellTimeout = $ShellTimeout
@@ -5072,7 +5611,7 @@ function Invoke-FullSystemDiagnostics {
     Ensure-DataDirectories -Root $Root
     Write-Host ''
     Write-Host 'Full system diagnostics' -ForegroundColor Cyan
-    Write-Host 'One read-only pass: thermal envelope, system, Explorer, workload, storage-locality, and declared endpoint readiness.'
+    Write-Host 'One read-only pass: thermal, hardware, firmware, drivers, kernel pressure, power policy, system, Explorer, workloads, and dependencies.'
     $thermal = Invoke-ThermalProfile `
         -Root $Root `
         -Seconds $Runtime.Seconds `
@@ -5096,6 +5635,12 @@ function Invoke-FullSystemDiagnostics {
         -SamplesPerBlock $Runtime.KernelSamples `
         -SampleIntervalSeconds $Runtime.KernelInterval `
         -CalibrationIterations $Runtime.KernelCalibration
+    $power = Invoke-PowerProfile `
+        -Root $Root `
+        -SampleCount $Runtime.PowerSamples `
+        -SampleIntervalMilliseconds $Runtime.PowerIntervalMilliseconds `
+        -CalibrationIterations $Runtime.PowerCalibration `
+        -CallbackTimeoutMilliseconds $Runtime.PowerCallbackTimeout
     $baseline = Invoke-Measurement `
         -Kind baseline `
         -Seconds $Runtime.Seconds `
@@ -5137,6 +5682,7 @@ function Invoke-FullSystemDiagnostics {
             firmwareBoundary = $firmware.evidencePath
             driverOwnership = $drivers.evidencePath
             kernelPressure = $kernel.evidencePath
+            powerPolicy = $power.evidencePath
             systemBaseline = $baseline.evidencePath
             shellReadiness = $shell.evidencePath
             workloadProfile = $workload.evidencePath
@@ -5293,6 +5839,10 @@ function Invoke-LayerWorkflow {
         [int]$KernelSamples,
         [int]$KernelInterval,
         [int]$KernelCalibration,
+        [int]$PowerSamples,
+        [int]$PowerIntervalMilliseconds,
+        [int]$PowerCalibration,
+        [int]$PowerCallbackTimeout,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -5321,6 +5871,10 @@ function Invoke-LayerWorkflow {
         -KernelSamples $KernelSamples `
         -KernelInterval $KernelInterval `
         -KernelCalibration $KernelCalibration `
+        -PowerSamples $PowerSamples `
+        -PowerIntervalMilliseconds $PowerIntervalMilliseconds `
+        -PowerCalibration $PowerCalibration `
+        -PowerCallbackTimeout $PowerCallbackTimeout `
         -ShellRuns $ShellRuns `
         -ShellWarmups $ShellWarmups `
         -ShellTimeout $ShellTimeout `
@@ -5577,6 +6131,7 @@ function Invoke-ZBookPerfMain {
     elseif ($FirmwareProfile) { $script:Action = 'FirmwareProfile' }
     elseif ($DriverProfile) { $script:Action = 'DriverProfile' }
     elseif ($KernelProfile) { $script:Action = 'KernelProfile' }
+    elseif ($PowerProfile) { $script:Action = 'PowerProfile' }
     elseif ($ShellProfile) { $script:Action = 'ShellProfile' }
     elseif ($WorkloadProfile) { $script:Action = 'WorkloadProfile' }
     elseif ($DependencyProfile) { $script:Action = 'DependencyProfile' }
@@ -5597,6 +6152,10 @@ function Invoke-ZBookPerfMain {
         -KernelSamples $KernelSamplesPerBlock `
         -KernelInterval $KernelSampleIntervalSeconds `
         -KernelCalibration $KernelCalibrationIterations `
+        -PowerSamples $PowerProfileSampleCount `
+        -PowerIntervalMilliseconds $PowerProfileSampleIntervalMilliseconds `
+        -PowerCalibration $PowerProfileCalibrationIterations `
+        -PowerCallbackTimeout $PowerProfileCallbackTimeoutMilliseconds `
         -ShellRuns $ShellRunCount `
         -ShellWarmups $ShellWarmupRunCount `
         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -5695,6 +6254,10 @@ function Invoke-ZBookPerfMain {
                     -KernelSamples $KernelSamplesPerBlock `
                     -KernelInterval $KernelSampleIntervalSeconds `
                     -KernelCalibration $KernelCalibrationIterations `
+                    -PowerSamples $PowerProfileSampleCount `
+                    -PowerIntervalMilliseconds $PowerProfileSampleIntervalMilliseconds `
+                    -PowerCalibration $PowerProfileCalibrationIterations `
+                    -PowerCallbackTimeout $PowerProfileCallbackTimeoutMilliseconds `
                     -ShellRuns $ShellRunCount `
                     -ShellWarmups $ShellWarmupRunCount `
                     -ShellTimeout $ShellTimeoutMilliseconds `
@@ -5725,6 +6288,10 @@ function Invoke-ZBookPerfMain {
                         -KernelSamples $KernelSamplesPerBlock `
                         -KernelInterval $KernelSampleIntervalSeconds `
                         -KernelCalibration $KernelCalibrationIterations `
+                        -PowerSamples $PowerProfileSampleCount `
+                        -PowerIntervalMilliseconds $PowerProfileSampleIntervalMilliseconds `
+                        -PowerCalibration $PowerProfileCalibrationIterations `
+                        -PowerCallbackTimeout $PowerProfileCallbackTimeoutMilliseconds `
                         -ShellRuns $ShellRunCount `
                         -ShellWarmups $ShellWarmupRunCount `
                         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -5777,6 +6344,14 @@ function Invoke-ZBookPerfMain {
                     -SamplesPerBlock $KernelSamplesPerBlock `
                     -SampleIntervalSeconds $KernelSampleIntervalSeconds `
                     -CalibrationIterations $KernelCalibrationIterations)
+            }
+            'PowerProfile' {
+                [void](Invoke-PowerProfile `
+                    -Root $DataRoot `
+                    -SampleCount $PowerProfileSampleCount `
+                    -SampleIntervalMilliseconds $PowerProfileSampleIntervalMilliseconds `
+                    -CalibrationIterations $PowerProfileCalibrationIterations `
+                    -CallbackTimeoutMilliseconds $PowerProfileCallbackTimeoutMilliseconds)
             }
             'ShellProfile' {
                 [void](Invoke-ShellProfile `

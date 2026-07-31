@@ -77,6 +77,19 @@ Describe 'EXP-047 ZBookPerf' {
             $validateSet.ValidValues | Should -Contain 'KernelProfile'
         }
 
+        It 'exposes the Layer 6 power-policy truth map as a public read-only action' {
+            $command = Get-Command $scriptPath
+            ($command.Parameters.Keys -contains 'PowerProfile') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'PowerProfileSampleCount') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'PowerProfileSampleIntervalMilliseconds') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'PowerProfileCalibrationIterations') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'PowerProfileCallbackTimeoutMilliseconds') | Should -BeTrue
+            $validateSet = @($command.Parameters['Action'].Attributes | Where-Object {
+                $_ -is [System.Management.Automation.ValidateSetAttribute]
+            })[0]
+            $validateSet.ValidValues | Should -Contain 'PowerProfile'
+        }
+
         It 'exposes the Layer 10 shell profile as a public read-only action' {
             $command = Get-Command $scriptPath
             ($command.Parameters.Keys -contains 'ShellProfile') | Should -BeTrue
@@ -369,6 +382,8 @@ Describe 'EXP-047 ZBookPerf' {
             $catalog[3].assessmentLabel | Should -Match 'signed-package'
             $catalog[4].assessment | Should -Be 'KernelProfile'
             $catalog[4].assessmentLabel | Should -Match 'DPC/ISR'
+            $catalog[5].assessment | Should -Be 'PowerProfile'
+            $catalog[5].assessmentLabel | Should -Match 'effective mode'
             $catalog[9].assessment | Should -Be 'ShellProfile'
             $catalog[10].assessment | Should -Be 'WorkloadProfile'
         }
@@ -535,6 +550,27 @@ Describe 'EXP-047 ZBookPerf' {
             Should -Invoke Invoke-KernelProfile -Times 1
             $state.phase | Should -Be 'assessed'
             @($state.history)[-1].evidencePath | Should -Be 'kernel-profile.json'
+        }
+
+        It 'routes the Layer 6 assessment to the power-policy truth map' {
+            $root = Join-Path $TestDrive 'power-layer'
+            $state = New-LayerWorkflowState
+            $state.currentLayer = 6
+            Mock Invoke-PowerProfile {
+                [pscustomobject]@{ evidencePath = 'power-profile.json' }
+            }
+
+            Invoke-LayerAssessmentStep `
+                -Root $root `
+                -State $state `
+                -PowerSamples 3 `
+                -PowerIntervalMilliseconds 100 `
+                -PowerCalibration 3 `
+                -PowerCallbackTimeout 1000
+
+            Should -Invoke Invoke-PowerProfile -Times 1
+            $state.phase | Should -Be 'assessed'
+            @($state.history)[-1].evidencePath | Should -Be 'power-profile.json'
         }
 
         It 'routes the Layer 10 assessment to the shell profiler' {
@@ -1379,6 +1415,130 @@ Describe 'EXP-047 ZBookPerf' {
         }
     }
 
+    Context 'Layer 6 power-policy truth map' {
+        It 'maps documented user preferences and effective runtime modes without conflating them' {
+            (ConvertTo-ConfiguredPowerModeName -Guid ([guid]'00000000-0000-0000-0000-000000000000')) | Should -Be 'Balanced'
+            (ConvertTo-ConfiguredPowerModeName -Guid ([guid]'961cc777-2547-4f9d-8174-7d86181b8a7a')) | Should -Be 'BestEfficiency'
+            (ConvertTo-ConfiguredPowerModeName -Guid ([guid]'ded574b5-45a0-4f42-8737-46345c09c238')) | Should -Be 'BestPerformance'
+            (ConvertTo-EffectivePowerModeName -Value 4) | Should -Be 'MaxPerformance'
+            (ConvertTo-EffectivePowerModeName -Value 99) | Should -Be 'Unknown'
+        }
+
+        It 'reads AC and DC values for all five documented processor-policy settings' {
+            Mock Get-NativePowerPolicyValue {
+                [pscustomobject]@{
+                    ResultCode = [uint32]0
+                    RegistryType = [uint32]4
+                    SizeBytes = [uint32]4
+                    Value = [uint32]$(if ($AcPower) { 33 } else { 50 })
+                }
+            }
+
+            $settings = @(Get-ProcessorPowerPolicy -ActiveSchemeGuid ([guid]'381b4222-f694-41f0-9685-ff5bb260df2e'))
+
+            $settings.Count | Should -Be 5
+            @($settings | Where-Object { $_.supported }).Count | Should -Be 5
+            $settings[0].ac.value | Should -Be 33
+            $settings[0].dc.value | Should -Be 50
+            Should -Invoke Get-NativePowerPolicyValue -Times 10
+        }
+
+        It 'summarizes repeated policy snapshots as a baseline rather than a gain claim' {
+            $samples = @(1..3 | ForEach-Object {
+                [pscustomobject]@{
+                    queryDurationMilliseconds = 2 + $_
+                    activeScheme = [pscustomobject]@{ guid = '381b4222-f694-41f0-9685-ff5bb260df2e' }
+                    userAcMode = [pscustomobject]@{ name = 'BestPerformance' }
+                    userDcMode = [pscustomobject]@{ name = 'BestEfficiency' }
+                    effectiveMode = [pscustomobject]@{ name = 'MaxPerformance' }
+                    systemPowerStatus = [pscustomobject]@{ acLineStatus = 'Online'; batterySaverOn = $false }
+                }
+            })
+            $policy = @(Get-PowerPolicySettingCatalog | ForEach-Object { [pscustomobject]@{ supported = $true } })
+            $ownership = [pscustomobject]@{ intelDynamicTuningService = [pscustomobject]@{ State = 'Running' } }
+
+            $summary = Get-PowerProfileSummary -Samples $samples -ProcessorPolicy $policy -PlatformOwnership $ownership
+
+            $summary.sampleCount | Should -Be 3
+            $summary.consistentAcrossSamples | Should -BeTrue
+            $summary.supportedProcessorSettingCount | Should -Be 5
+            $summary.queryDurationMilliseconds.median | Should -Be 4
+            $summary.decision | Should -Be 'BaselineOnlyNoPerformanceClaim'
+        }
+
+        It 'writes bounded raw snapshots, policy values, ownership, and observer qualification' {
+            $snapshot = [pscustomobject]@{
+                timestampUtc = '2026-07-31T13:00:00.0000000Z'
+                queryDurationMilliseconds = 2
+                activeScheme = [pscustomobject]@{ resultCode = 0; guid = '381b4222-f694-41f0-9685-ff5bb260df2e' }
+                userAcMode = [pscustomobject]@{ resultCode = 0; guid = 'ded574b5-45a0-4f42-8737-46345c09c238'; name = 'BestPerformance' }
+                userDcMode = [pscustomobject]@{ resultCode = 0; guid = '961cc777-2547-4f9d-8174-7d86181b8a7a'; name = 'BestEfficiency' }
+                effectiveMode = [pscustomobject]@{ registerResultCode = 0; unregisterResultCode = 0; callbackReceived = $true; value = 4; name = 'MaxPerformance' }
+                systemPowerStatus = [pscustomobject]@{ available = $true; acLineStatus = 'Online'; batterySaverOn = $false }
+            }
+            $policy = @(Get-PowerPolicySettingCatalog | ForEach-Object {
+                [pscustomobject]@{
+                    key = $_.key; alias = $_.alias; guid = $_.guid; unit = $_.unit
+                    interpretation = $_.interpretation; supported = $true
+                    ac = [pscustomobject]@{ resultCode = 0; registryType = 4; sizeBytes = 4; value = 33 }
+                    dc = [pscustomobject]@{ resultCode = 0; registryType = 4; sizeBytes = 4; value = 50 }
+                }
+            })
+            Mock Get-PowerProfileSupport { [pscustomobject]@{ supported = $true; reason = 'supported'; probe = $snapshot } }
+            Mock Measure-PowerProfileObserver {
+                [pscustomobject]@{ iterations = 3; durationMilliseconds = [pscustomobject]@{ count = 3; median = 2; p95 = 3; minimum = 1; maximum = 3 }; qualification = 'test' }
+            }
+            Mock Get-PowerModeSnapshot { return $snapshot }
+            Mock Get-ProcessorPowerPolicy { return $policy }
+            Mock Get-PowerPlatformOwnership {
+                [pscustomobject]@{
+                    queryDurationMilliseconds = 5
+                    intelDynamicTuningService = [pscustomobject]@{ Name = 'esifsvc'; State = 'Running'; StartMode = 'Auto' }
+                    intelDynamicTuningDriverGroups = @([pscustomobject]@{ role = 'Intel(R) Dynamic Tuning Manager'; provider = 'Intel'; version = '1.0'; signed = $true; count = 1 })
+                    errors = @(); interpretation = 'test'
+                }
+            }
+            Mock Get-PowerProfileEnvironment { [pscustomobject]@{ windows = [pscustomobject]@{ build = '26200' } } }
+            Mock Start-Sleep { }
+            Mock Write-StructuredEvent { }
+            Mock Write-Host { }
+
+            $profile = Invoke-PowerProfile `
+                -Root $TestDrive `
+                -SampleCount 3 `
+                -SampleIntervalMilliseconds 100 `
+                -CalibrationIterations 3 `
+                -CallbackTimeoutMilliseconds 1000
+
+            $profile.observationOnly | Should -BeTrue
+            $profile.samples.Count | Should -Be 3
+            $profile.processorPolicy.Count | Should -Be 5
+            $profile.summary.decision | Should -Be 'BaselineOnlyNoPerformanceClaim'
+            Test-Path -LiteralPath $profile.evidencePath | Should -BeTrue
+            (Get-Content -LiteralPath $profile.evidencePath -Raw) | Should -Match 'power-policy-profile'
+            Should -Invoke Get-PowerModeSnapshot -Times 3
+        }
+
+        It 'contains no power, OEM service, driver, registry, or reboot mutation command' {
+            $body = (Get-Command Invoke-PowerProfile).ScriptBlock.ToString()
+            $body | Should -Not -Match 'powercfg|Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|Set-Service|Stop-Service|Start-Service|pnputil|Restart-Computer|shutdown'
+        }
+
+        It 'routes the public action directly to the profiler' {
+            $script:Action = 'PowerProfile'
+            $script:DataRoot = $TestDrive
+            $script:PowerProfileSampleCount = 3
+            $script:PowerProfileSampleIntervalMilliseconds = 100
+            $script:PowerProfileCalibrationIterations = 3
+            $script:PowerProfileCallbackTimeoutMilliseconds = 1000
+            Mock Invoke-PowerProfile { }
+
+            Invoke-ZBookPerfMain
+
+            Should -Invoke Invoke-PowerProfile -Times 1
+        }
+    }
+
     Context 'Layer 10 shell profile' {
         It 'summarizes measured runs without counting warmups' {
             $runs = @(
@@ -1901,6 +2061,9 @@ Describe 'EXP-047 ZBookPerf' {
             Mock Invoke-KernelProfile {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'kernel.json') }
             }
+            Mock Invoke-PowerProfile {
+                [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'power.json') }
+            }
             Mock Invoke-Measurement {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'baseline.json') }
             }
@@ -1920,6 +2083,7 @@ Describe 'EXP-047 ZBookPerf' {
                 ThermalCalibration = 3; HardwareCalibration = 3; FirmwareCalibration = 3
                 DriverCalibration = 3; DriverLimit = 64
                 KernelBlocks = 3; KernelSamples = 3; KernelInterval = 1; KernelCalibration = 3
+                PowerSamples = 3; PowerIntervalMilliseconds = 100; PowerCalibration = 3; PowerCallbackTimeout = 1000
                 ShellRuns = 1; ShellWarmups = 0; ShellTimeout = 1000; ShellCalibration = 5
                 WorkloadNames = @('explorer.exe'); WorkloadInterval = 1000; WorkloadCalibration = 3
                 DependencyPaths = @($TestDrive); DependencyEndpoints = @()
@@ -1934,6 +2098,7 @@ Describe 'EXP-047 ZBookPerf' {
             $result.evidence.firmwareBoundary | Should -Match 'firmware.json'
             $result.evidence.driverOwnership | Should -Match 'drivers.json'
             $result.evidence.kernelPressure | Should -Match 'kernel.json'
+            $result.evidence.powerPolicy | Should -Match 'power.json'
             Test-Path -LiteralPath $result.evidence.systemBaseline | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $TestDrive 'measurements') | Should -BeTrue
             Should -Invoke Invoke-Measurement -Times 1
@@ -1942,6 +2107,7 @@ Describe 'EXP-047 ZBookPerf' {
             Should -Invoke Invoke-FirmwareProfile -Times 1
             Should -Invoke Invoke-DriverProfile -Times 1
             Should -Invoke Invoke-KernelProfile -Times 1
+            Should -Invoke Invoke-PowerProfile -Times 1
             Should -Invoke Invoke-ShellProfile -Times 1
             Should -Invoke Invoke-WorkloadProfile -Times 1
             Should -Invoke Invoke-DependencyProfile -Times 1

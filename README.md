@@ -97,6 +97,9 @@ Useful non-interactive examples:
 # Record three correlated Layer 5 DPC/ISR, scheduling, paging, and disk blocks
 .\ZBookPerf.ps1 -Action KernelProfile -KernelBlockCount 3 -KernelSamplesPerBlock 5
 
+# Reconcile Layer 6 scheme, AC/DC preference, effective mode, processor policy, and Intel DTT
+.\ZBookPerf.ps1 -Action PowerProfile -PowerProfileSampleCount 5
+
 # Profile one existing application workload for 30 seconds without changing it
 .\ZBookPerf.ps1 -Action WorkloadProfile -WorkloadProcessName msedge.exe -DurationSeconds 30
 
@@ -166,6 +169,17 @@ WPA, and WPA Exporter are available for deeper module and function
 attribution. Aggregate counters screen for pressure; they do not identify a
 responsible driver or prove the cause of a visible delay. The profile never
 starts or stops a trace and changes no kernel or Windows state.
+
+`PowerProfile` is observation-only. It uses Microsoft's language-neutral
+PowrProf interfaces to keep the active base scheme, separate AC and DC user
+preferences, and the effective runtime mode distinct. It also reads five
+documented processor-policy values from the active scheme, including controls
+that the Settings UI may hide, then records bounded Intel Dynamic Tuning
+service and signed-driver ownership. Repeated snapshots and a separate
+observer-cost calibration show whether the reported state stayed stable during
+the capture. The result is a policy truth map, not evidence that one mode is
+faster or that Intel Dynamic Tuning should be disabled. No plan, processor
+setting, OEM service, driver, registry value, or Windows setting is changed.
 
 `ShellProfile` is observation-only. It reads animations, transparency, notification duration, the documented Widgets and Game DVR policy locations, related app-package presence, and WPR/WPA availability. It then opens a private benchmark folder, measures when the new Explorer window reports ready through the documented Shell automation model, and closes only that benchmark window. Full readiness-probe overhead, raw runs, medians, variability, timeouts, power state, and Battery Saver state are retained. This is a baseline capability, not a performance-gain claim.
 
