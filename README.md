@@ -91,6 +91,9 @@ Useful non-interactive examples:
 # Inventory Layer 10 controls and capture five Explorer readiness runs
 .\ZBookPerf.ps1 -Action ShellProfile -ShellRunCount 5
 
+# Map Layer 4 signed packages, Plug and Play health, and driver-service ownership
+.\ZBookPerf.ps1 -Action DriverProfile -DriverCalibrationIterations 3
+
 # Profile one existing application workload for 30 seconds without changing it
 .\ZBookPerf.ps1 -Action WorkloadProfile -WorkloadProcessName msedge.exe -DurationSeconds 30
 
@@ -140,6 +143,16 @@ wpr -stop C:\Temp\existing-trace.etl  # save the existing recording
 wpr -cancel                           # discard the existing recording
 .\ZBookPerf.ps1 -Action Analyze -NoTrace
 ```
+
+`DriverProfile` is observation-only. It joins the documented signed-driver
+package inventory to Plug and Play health and exact driver-service state. Raw
+device and hardware identifiers are replaced with capture-local salted hashes;
+device names, locations, paths, serials, and command lines are excluded. The
+tool also measures the full inventory cost after a warmup and refuses to
+silently truncate an unexpectedly large device set. A package date, provider,
+stopped demand driver, or static health state is context—not proof that a
+driver is slow, obsolete, or safe to replace. No package, service, or device is
+changed.
 
 `ShellProfile` is observation-only. It reads animations, transparency, notification duration, the documented Widgets and Game DVR policy locations, related app-package presence, and WPR/WPA availability. It then opens a private benchmark folder, measures when the new Explorer window reports ready through the documented Shell automation model, and closes only that benchmark window. Full readiness-probe overhead, raw runs, medians, variability, timeouts, power state, and Battery Saver state are retained. This is a baseline capability, not a performance-gain claim.
 

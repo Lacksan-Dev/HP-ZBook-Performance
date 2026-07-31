@@ -18,7 +18,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'FirmwareProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
+    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'FirmwareProfile', 'DriverProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
     [string]$Action = 'Menu',
 
     [switch]$FullDiagnostics,
@@ -29,6 +29,7 @@ param(
     [switch]$ThermalProfile,
     [switch]$HardwareProfile,
     [switch]$FirmwareProfile,
+    [switch]$DriverProfile,
     [switch]$ShellProfile,
     [switch]$WorkloadProfile,
     [switch]$DependencyProfile,
@@ -60,6 +61,12 @@ param(
 
     [ValidateRange(3, 25)]
     [int]$FirmwareCalibrationIterations = 5,
+
+    [ValidateRange(3, 25)]
+    [int]$DriverCalibrationIterations = 3,
+
+    [ValidateRange(64, 2048)]
+    [int]$DriverDeviceLimit = 512,
 
     [ValidateRange(1, 25)]
     [int]$ShellRunCount = 5,
@@ -108,7 +115,7 @@ $ErrorActionPreference = 'Stop'
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
 $script:ProductName = 'Lacksan UX-ROM'
-$script:ProductVersion = '2026.07.31.1'
+$script:ProductVersion = '2026.07.31.2'
 $script:LayerWorkflowSchemaVersion = 1
 $script:SplashShown = $false
 $script:LoadedFrom = if ([string]::IsNullOrWhiteSpace([string]$PSCommandPath)) {
@@ -1552,6 +1559,286 @@ function Invoke-FirmwareProfile {
     Write-Host $profile.summary.interpretation -ForegroundColor DarkYellow
     Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
     Write-Host 'No BIOS setting, firmware variable, Secure Boot state, or Windows setting was changed.' -ForegroundColor DarkYellow
+    return $profile
+}
+
+function Get-DriverProfileSupport {
+    $requirements = [ordered]@{
+        Win32_PnPSignedDriver = @(
+            'DeviceID', 'DeviceClass', 'DriverProviderName', 'DriverVersion',
+            'DriverDate', 'InfName', 'IsSigned', 'Signer'
+        )
+        Win32_PnPEntity = @('DeviceID', 'ConfigManagerErrorCode', 'Status', 'Service', 'PNPClass')
+    }
+    $missing = New-Object System.Collections.ArrayList
+    foreach ($className in $requirements.Keys) {
+        try {
+            $class = Get-CimClass -Namespace 'root/cimv2' -ClassName $className -ErrorAction Stop
+            $available = @($class.CimClassProperties | ForEach-Object { [string]$_.Name })
+            foreach ($property in $requirements[$className]) {
+                if ($property -notin $available) {
+                    [void]$missing.Add("$className.$property")
+                }
+            }
+        } catch {
+            [void]$missing.Add("$className.<provider-unavailable>")
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        supported = ($missing.Count -eq 0)
+        providers = @($requirements.Keys)
+        missingProperties = @($missing)
+        serviceControllerAvailable = [bool](Get-Command 'Get-Service' -ErrorAction SilentlyContinue)
+        reason = if ($missing.Count -eq 0) {
+            'The inbox Plug and Play signed-driver and device providers expose the required read-only package, ownership, and health fields.'
+        } else {
+            "Required read-only provider fields are unavailable: $(@($missing) -join ', ')."
+        }
+    }
+}
+
+function Get-DriverServiceStates {
+    param([string[]]$Names)
+
+    $states = @{}
+    foreach ($name in @($Names | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)) {
+        try {
+            $service = Get-Service -Name $name -ErrorAction Stop
+            $states[$name] = [pscustomobject][ordered]@{
+                status = [string]$service.Status
+                startType = [string]$service.StartType
+                lookup = 'Read'
+            }
+        } catch {
+            $states[$name] = [pscustomobject][ordered]@{
+                status = $null
+                startType = $null
+                lookup = 'Unavailable'
+            }
+        }
+    }
+    return $states
+}
+
+function Get-DriverCoreSnapshot {
+    param([ValidateRange(64, 2048)][int]$DeviceLimit)
+
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $signedDrivers = @(Get-CimInstance `
+        -Namespace 'root/cimv2' `
+        -Query 'SELECT DeviceID, DeviceClass, DriverProviderName, DriverVersion, DriverDate, InfName, IsSigned, Signer FROM Win32_PnPSignedDriver' `
+        -OperationTimeoutSec 20 `
+        -ErrorAction Stop)
+    if ($signedDrivers.Count -gt $DeviceLimit) {
+        throw "The signed-driver provider returned $($signedDrivers.Count) records, above the configured safe limit of $DeviceLimit. Raise -DriverDeviceLimit within its supported bound and retry."
+    }
+    $entities = @(Get-CimInstance `
+        -Namespace 'root/cimv2' `
+        -Query 'SELECT DeviceID, ConfigManagerErrorCode, Status, Service, PNPClass FROM Win32_PnPEntity' `
+        -OperationTimeoutSec 20 `
+        -ErrorAction Stop)
+
+    $entityById = @{}
+    foreach ($entity in $entities) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$entity.DeviceID)) {
+            $entityById[[string]$entity.DeviceID] = $entity
+        }
+    }
+    $serviceNames = @($entities | ForEach-Object { [string]$_.Service } | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    } | Sort-Object -Unique)
+    $serviceStates = Get-DriverServiceStates -Names $serviceNames
+    $captureSalt = [guid]::NewGuid().ToString('N')
+    $devices = New-Object System.Collections.ArrayList
+
+    foreach ($driver in $signedDrivers) {
+        $rawDeviceId = [string]$driver.DeviceID
+        $entity = if ($entityById.ContainsKey($rawDeviceId)) { $entityById[$rawDeviceId] } else { $null }
+        $serviceName = if ($entity) { [string]$entity.Service } else { $null }
+        $serviceState = if ($serviceName -and $serviceStates.ContainsKey($serviceName)) {
+            $serviceStates[$serviceName]
+        } else {
+            [pscustomobject]@{ status = $null; startType = $null; lookup = 'NotDeclared' }
+        }
+        $driverDateUtc = if ($driver.DriverDate -is [datetime]) {
+            ([datetime]$driver.DriverDate).ToUniversalTime().ToString('o')
+        } else {
+            [string]$driver.DriverDate
+        }
+        [void]$devices.Add([pscustomobject][ordered]@{
+            deviceKeySha256 = Get-RedactedDependencyHash -Value "$captureSalt|$rawDeviceId"
+            deviceClass = [string]$driver.DeviceClass
+            pnpClass = if ($entity) { [string]$entity.PNPClass } else { $null }
+            infName = [string]$driver.InfName
+            provider = [string]$driver.DriverProviderName
+            version = [string]$driver.DriverVersion
+            dateUtc = $driverDateUtc
+            isSigned = [bool]$driver.IsSigned
+            signer = [string]$driver.Signer
+            configManagerErrorCode = if ($entity) { [int]$entity.ConfigManagerErrorCode } else { $null }
+            pnpStatus = if ($entity) { [string]$entity.Status } else { 'EntityNotMatched' }
+            serviceName = $serviceName
+            serviceStatus = $serviceState.status
+            serviceStartType = $serviceState.startType
+            serviceLookup = $serviceState.lookup
+        })
+    }
+    $timer.Stop()
+
+    $packages = @($devices | Group-Object -Property {
+        '{0}|{1}|{2}|{3}|{4}' -f $_.infName, $_.provider, $_.version, $_.dateUtc, $_.deviceClass
+    } | ForEach-Object {
+        $first = @($_.Group)[0]
+        [pscustomobject][ordered]@{
+            infName = $first.infName
+            provider = $first.provider
+            version = $first.version
+            dateUtc = $first.dateUtc
+            deviceClass = $first.deviceClass
+            isSigned = (@($_.Group | Where-Object isSigned).Count -eq @($_.Group).Count)
+            signer = $first.signer
+            deviceCount = @($_.Group).Count
+            problemDeviceCount = @($_.Group | Where-Object { $_.configManagerErrorCode -ne $null -and $_.configManagerErrorCode -ne 0 }).Count
+            declaredServices = @($_.Group.serviceName | Where-Object { $_ } | Sort-Object -Unique)
+        }
+    } | Sort-Object provider, deviceClass, infName, version)
+
+    return [pscustomobject][ordered]@{
+        timestampUtc = [DateTime]::UtcNow.ToString('o')
+        durationMilliseconds = [Math]::Round($timer.Elapsed.TotalMilliseconds, 3)
+        devices = @($devices)
+        packages = @($packages)
+        providerSummary = @($devices | Group-Object provider | ForEach-Object {
+            [pscustomobject][ordered]@{ provider = $_.Name; deviceCount = @($_.Group).Count }
+        } | Sort-Object -Property @{ Expression = 'deviceCount'; Descending = $true }, provider)
+        classSummary = @($devices | Group-Object deviceClass | ForEach-Object {
+            [pscustomobject][ordered]@{ deviceClass = $_.Name; deviceCount = @($_.Group).Count }
+        } | Sort-Object -Property @{ Expression = 'deviceCount'; Descending = $true }, deviceClass)
+        redaction = 'Device and hardware identifiers are replaced with capture-local salted SHA-256 keys. Device names, descriptions, locations, paths, serials, command lines, and customer content are not collected. The salt is discarded, so device keys cannot be correlated across captures.'
+    }
+}
+
+function Measure-DriverProfileObserver {
+    param(
+        [ValidateRange(3, 25)][int]$Iterations,
+        [ValidateRange(64, 2048)][int]$DeviceLimit
+    )
+
+    [void](Get-DriverCoreSnapshot -DeviceLimit $DeviceLimit)
+    $durations = @()
+    $snapshot = $null
+    for ($index = 0; $index -lt $Iterations; $index++) {
+        $snapshot = Get-DriverCoreSnapshot -DeviceLimit $DeviceLimit
+        $durations += [double]$snapshot.durationMilliseconds
+    }
+    return [pscustomobject][ordered]@{
+        iterations = $Iterations
+        durationMilliseconds = Get-WorkloadDistribution -Values $durations
+        finalSnapshot = $snapshot
+        qualification = 'Times the bounded signed-driver and Plug and Play CIM queries, exact driver-service lookups, redaction, and aggregation after one warmup. It does not measure driver execution cost.'
+    }
+}
+
+function Get-DriverProfileEnvironment {
+    $source = Get-WindowsEnvironment
+    return [pscustomobject][ordered]@{
+        capturedUtc = $source.capturedUtc
+        windows = $source.windows
+        computer = $source.computer
+        bios = $source.bios
+        processor = $source.processor
+        edgeVersion = $source.edgeVersion
+        power = $source.power
+        thermalZoneCelsius = $source.thermalZoneCelsius
+        redaction = 'Storage device names, network adapter names and descriptions, and the general environment driver-name list are omitted here. Package ownership is represented only by the bounded redacted profile.'
+    }
+}
+
+function Invoke-DriverProfile {
+    param(
+        [string]$Root,
+        [ValidateRange(3, 25)][int]$CalibrationIterations,
+        [ValidateRange(64, 2048)][int]$DeviceLimit
+    )
+
+    $support = Get-DriverProfileSupport
+    if (-not $support.supported) {
+        throw "Driver/OEM ownership profiling is unsupported: $($support.reason)"
+    }
+    Ensure-DataDirectories -Root $Root
+    $observer = Measure-DriverProfileObserver -Iterations $CalibrationIterations -DeviceLimit $DeviceLimit
+    $snapshot = $observer.finalSnapshot
+    $environment = Get-DriverProfileEnvironment
+    $devices = @($snapshot.devices)
+
+    $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff')
+    $runSuffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $evidencePath = Join-Path (Join-Path $Root 'measurements') "$stamp-$runSuffix-driver-oem-ownership-profile.json"
+    $profile = [pscustomobject][ordered]@{
+        schemaVersion = $script:SchemaVersion
+        experimentId = $script:ExperimentId
+        layer = 4
+        kind = 'driver-oem-ownership-profile'
+        capturedUtc = $snapshot.timestampUtc
+        completedUtc = [DateTime]::UtcNow.ToString('o')
+        observationOnly = $true
+        support = $support
+        environment = $environment
+        requested = [pscustomobject][ordered]@{
+            calibrationIterations = $CalibrationIterations
+            deviceLimit = $DeviceLimit
+            cimOperationTimeoutSeconds = 20
+        }
+        instrumentation = [pscustomobject][ordered]@{
+            sources = 'Win32_PnPSignedDriver, Win32_PnPEntity, and exact Get-Service driver-service lookups'
+            timer = 'System.Diagnostics.Stopwatch'
+            observerCalibration = [pscustomobject][ordered]@{
+                iterations = $observer.iterations
+                durationMilliseconds = $observer.durationMilliseconds
+                qualification = $observer.qualification
+            }
+            qualification = 'This inventory reports static package ownership, PnP health, and service-controller state. It does not measure DPC/ISR latency, package age suitability, update availability, or driver execution overhead.'
+        }
+        collectionScope = $snapshot.redaction
+        devices = @($devices)
+        packages = @($snapshot.packages)
+        providerSummary = @($snapshot.providerSummary)
+        classSummary = @($snapshot.classSummary)
+        summary = [pscustomobject][ordered]@{
+            deviceRecordCount = $devices.Count
+            packageCount = @($snapshot.packages).Count
+            providerCount = @($snapshot.providerSummary).Count
+            problemDeviceCount = @($devices | Where-Object { $_.configManagerErrorCode -ne $null -and $_.configManagerErrorCode -ne 0 }).Count
+            unsignedDeviceRecordCount = @($devices | Where-Object { -not $_.isSigned }).Count
+            serviceReadCount = @($devices | Where-Object { $_.serviceLookup -eq 'Read' }).Count
+            serviceUnavailableCount = @($devices | Where-Object { $_.serviceLookup -eq 'Unavailable' }).Count
+            interpretation = 'This map identifies which signed packages and driver services own detected Plug and Play devices. A provider, date, stopped demand driver, or static status alone does not prove overhead, incompatibility, or an update need.'
+            decision = 'BaselineOnlyNoPerformanceClaim'
+        }
+        evidencePath = $evidencePath
+    }
+    $profile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
+    try {
+        Write-StructuredEvent -Root $Root -Level Information -Event 'driver-oem-ownership-profile-complete' -Data @{
+            evidencePath = $evidencePath
+            deviceRecordCount = $profile.summary.deviceRecordCount
+            packageCount = $profile.summary.packageCount
+            problemDeviceCount = $profile.summary.problemDeviceCount
+            observationOnly = $true
+        }
+    } catch {
+        Write-Warning "The driver profile was saved, but the optional event journal could not be updated ($($_.Exception.GetType().Name))."
+    }
+
+    Write-Host ''
+    Write-Host 'Layer 4 driver and OEM ownership profile (observation only)' -ForegroundColor Cyan
+    Write-Host "Devices / packages / providers: $($profile.summary.deviceRecordCount) / $($profile.summary.packageCount) / $($profile.summary.providerCount)"
+    Write-Host "PnP problem records / unsigned records: $($profile.summary.problemDeviceCount) / $($profile.summary.unsignedDeviceRecordCount)"
+    Write-Host "Driver-service reads / unavailable: $($profile.summary.serviceReadCount) / $($profile.summary.serviceUnavailableCount)"
+    Write-Host $profile.summary.interpretation -ForegroundColor DarkYellow
+    Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
+    Write-Host 'No driver package, service, device, OEM component, or Windows setting was changed.' -ForegroundColor DarkYellow
     return $profile
 }
 
@@ -3675,8 +3962,8 @@ function Get-PerformanceLayerCatalog {
             number = 4
             name = 'Platform drivers and OEM components'
             description = 'Reviews graphics, storage, network, dock, and HP driver coordination.'
-            assessment = 'NotIntegrated'
-            assessmentLabel = 'No product-integrated assessment yet'
+            assessment = 'DriverProfile'
+            assessmentLabel = 'Redacted signed-package, Plug and Play health, and driver-service ownership profile'
             candidates = @()
         },
         [pscustomobject][ordered]@{
@@ -3919,6 +4206,8 @@ function Invoke-LayerAssessmentStep {
         [int]$ThermalCalibration,
         [int]$HardwareCalibration,
         [int]$FirmwareCalibration,
+        [int]$DriverCalibration,
+        [int]$DriverLimit,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -3958,6 +4247,13 @@ function Invoke-LayerAssessmentStep {
             $profile = Invoke-FirmwareProfile `
                 -Root $Root `
                 -CalibrationIterations $FirmwareCalibration
+            $evidencePath = $profile.evidencePath
+        }
+        'DriverProfile' {
+            $profile = Invoke-DriverProfile `
+                -Root $Root `
+                -CalibrationIterations $DriverCalibration `
+                -DeviceLimit $DriverLimit
             $evidencePath = $profile.evidencePath
         }
         'Baseline' {
@@ -4330,6 +4626,8 @@ function New-LayerRuntime {
         [int]$ThermalCalibration,
         [int]$HardwareCalibration,
         [int]$FirmwareCalibration,
+        [int]$DriverCalibration,
+        [int]$DriverLimit,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -4352,6 +4650,8 @@ function New-LayerRuntime {
         ThermalCalibration = $ThermalCalibration
         HardwareCalibration = $HardwareCalibration
         FirmwareCalibration = $FirmwareCalibration
+        DriverCalibration = $DriverCalibration
+        DriverLimit = $DriverLimit
         ShellRuns = $ShellRuns
         ShellWarmups = $ShellWarmups
         ShellTimeout = $ShellTimeout
@@ -4432,6 +4732,10 @@ function Invoke-FullSystemDiagnostics {
     $firmware = Invoke-FirmwareProfile `
         -Root $Root `
         -CalibrationIterations $Runtime.FirmwareCalibration
+    $drivers = Invoke-DriverProfile `
+        -Root $Root `
+        -CalibrationIterations $Runtime.DriverCalibration `
+        -DeviceLimit $Runtime.DriverLimit
     $baseline = Invoke-Measurement `
         -Kind baseline `
         -Seconds $Runtime.Seconds `
@@ -4471,13 +4775,14 @@ function Invoke-FullSystemDiagnostics {
             thermalEnvelope = $thermal.evidencePath
             storagePath = $hardware.evidencePath
             firmwareBoundary = $firmware.evidencePath
+            driverOwnership = $drivers.evidencePath
             systemBaseline = $baseline.evidencePath
             shellReadiness = $shell.evidencePath
             workloadProfile = $workload.evidencePath
             dependencyProfile = $dependencies.evidencePath
         }
-        coveredLayers = @(1, 2, 3, 5, 6, 10, 11, 12)
-        integrationGaps = @(4, 7, 8, 9)
+        coveredLayers = @(1, 2, 3, 4, 5, 6, 10, 11, 12)
+        integrationGaps = @(7, 8, 9)
         statement = 'No Windows setting was changed. A missing layer integration is not a clean bill of health.'
     }
     $manifest | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
@@ -4621,6 +4926,8 @@ function Invoke-LayerWorkflow {
         [int]$ThermalCalibration,
         [int]$HardwareCalibration,
         [int]$FirmwareCalibration,
+        [int]$DriverCalibration,
+        [int]$DriverLimit,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -4643,6 +4950,8 @@ function Invoke-LayerWorkflow {
         -ThermalCalibration $ThermalCalibration `
         -HardwareCalibration $HardwareCalibration `
         -FirmwareCalibration $FirmwareCalibration `
+        -DriverCalibration $DriverCalibration `
+        -DriverLimit $DriverLimit `
         -ShellRuns $ShellRuns `
         -ShellWarmups $ShellWarmups `
         -ShellTimeout $ShellTimeout `
@@ -4897,6 +5206,7 @@ function Invoke-ZBookPerfMain {
     elseif ($ThermalProfile) { $script:Action = 'ThermalProfile' }
     elseif ($HardwareProfile) { $script:Action = 'HardwareProfile' }
     elseif ($FirmwareProfile) { $script:Action = 'FirmwareProfile' }
+    elseif ($DriverProfile) { $script:Action = 'DriverProfile' }
     elseif ($ShellProfile) { $script:Action = 'ShellProfile' }
     elseif ($WorkloadProfile) { $script:Action = 'WorkloadProfile' }
     elseif ($DependencyProfile) { $script:Action = 'DependencyProfile' }
@@ -4911,6 +5221,8 @@ function Invoke-ZBookPerfMain {
         -ThermalCalibration $ThermalCalibrationIterations `
         -HardwareCalibration $HardwareCalibrationIterations `
         -FirmwareCalibration $FirmwareCalibrationIterations `
+        -DriverCalibration $DriverCalibrationIterations `
+        -DriverLimit $DriverDeviceLimit `
         -ShellRuns $ShellRunCount `
         -ShellWarmups $ShellWarmupRunCount `
         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -5003,6 +5315,8 @@ function Invoke-ZBookPerfMain {
                     -ThermalCalibration $ThermalCalibrationIterations `
                     -HardwareCalibration $HardwareCalibrationIterations `
                     -FirmwareCalibration $FirmwareCalibrationIterations `
+                    -DriverCalibration $DriverCalibrationIterations `
+                    -DriverLimit $DriverDeviceLimit `
                     -ShellRuns $ShellRunCount `
                     -ShellWarmups $ShellWarmupRunCount `
                     -ShellTimeout $ShellTimeoutMilliseconds `
@@ -5027,6 +5341,8 @@ function Invoke-ZBookPerfMain {
                         -ThermalCalibration $ThermalCalibrationIterations `
                         -HardwareCalibration $HardwareCalibrationIterations `
                         -FirmwareCalibration $FirmwareCalibrationIterations `
+                        -DriverCalibration $DriverCalibrationIterations `
+                        -DriverLimit $DriverDeviceLimit `
                         -ShellRuns $ShellRunCount `
                         -ShellWarmups $ShellWarmupRunCount `
                         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -5065,6 +5381,12 @@ function Invoke-ZBookPerfMain {
                 [void](Invoke-FirmwareProfile `
                     -Root $DataRoot `
                     -CalibrationIterations $FirmwareCalibrationIterations)
+            }
+            'DriverProfile' {
+                [void](Invoke-DriverProfile `
+                    -Root $DataRoot `
+                    -CalibrationIterations $DriverCalibrationIterations `
+                    -DeviceLimit $DriverDeviceLimit)
             }
             'ShellProfile' {
                 [void](Invoke-ShellProfile `
