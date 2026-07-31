@@ -34,6 +34,16 @@ Describe 'EXP-047 ZBookPerf' {
             $validateSet.ValidValues | Should -Contain 'ThermalProfile'
         }
 
+        It 'exposes the Layer 2 storage-path profile as a public read-only action' {
+            $command = Get-Command $scriptPath
+            ($command.Parameters.Keys -contains 'HardwareProfile') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'HardwareCalibrationIterations') | Should -BeTrue
+            $validateSet = @($command.Parameters['Action'].Attributes | Where-Object {
+                $_ -is [System.Management.Automation.ValidateSetAttribute]
+            })[0]
+            $validateSet.ValidValues | Should -Contain 'HardwareProfile'
+        }
+
         It 'exposes the Layer 10 shell profile as a public read-only action' {
             $command = Get-Command $scriptPath
             ($command.Parameters.Keys -contains 'ShellProfile') | Should -BeTrue
@@ -320,6 +330,7 @@ Describe 'EXP-047 ZBookPerf' {
             $catalog.Count | Should -Be 12
             $catalog.number | Should -Be (1..12)
             $catalog[0].assessment | Should -Be 'ThermalProfile'
+            $catalog[1].assessment | Should -Be 'HardwareProfile'
             $catalog[2].assessment | Should -Be 'NotIntegrated'
             $catalog[2].assessmentLabel | Should -Match 'No product-integrated'
             $catalog[9].assessment | Should -Be 'ShellProfile'
@@ -386,6 +397,35 @@ Describe 'EXP-047 ZBookPerf' {
             Invoke-NextLayerWorkflowStep -Root $root -State $state -Runtime $runtime
             $state.currentLayer | Should -Be 4
             $state.phase | Should -Be 'assessment-required'
+        }
+
+        It 'routes the Layer 2 assessment to the storage-path profiler' {
+            $root = Join-Path $TestDrive 'hardware-layer'
+            $state = New-LayerWorkflowState
+            $state.currentLayer = 2
+            Mock Invoke-HardwareProfile {
+                [pscustomobject]@{ evidencePath = 'hardware-profile.json' }
+            }
+
+            Invoke-LayerAssessmentStep `
+                -Root $root `
+                -State $state `
+                -Seconds 5 `
+                -Interval 1 `
+                -SkipTrace `
+                -ThermalCalibration 3 `
+                -HardwareCalibration 3 `
+                -ShellRuns 3 `
+                -ShellWarmups 0 `
+                -ShellTimeout 1000 `
+                -ShellCalibration 5 `
+                -WorkloadNames @('explorer.exe') `
+                -WorkloadInterval 500 `
+                -WorkloadCalibration 3
+
+            Should -Invoke Invoke-HardwareProfile -Times 1
+            $state.phase | Should -Be 'assessed'
+            @($state.history)[-1].evidencePath | Should -Be 'hardware-profile.json'
         }
 
         It 'routes the Layer 10 assessment to the shell profiler' {
@@ -680,6 +720,169 @@ Describe 'EXP-047 ZBookPerf' {
             Invoke-ZBookPerfMain
 
             Should -Invoke Invoke-ThermalProfile -Times 1
+        }
+    }
+
+    Context 'Layer 2 hardware storage-path profile' {
+        It 'summarizes each physical-disk instance and preserves transport as context rather than a gain claim' {
+            $inventory = [pscustomobject]@{
+                physicalDisks = @(
+                    [pscustomobject]@{ busType = 'SATA' }
+                )
+            }
+            $samples = @(
+                [pscustomobject]@{
+                    queryDurationMilliseconds = 3
+                    disks = @(
+                        [pscustomobject]@{
+                            instance = '0 C:'
+                            transferLatencyMilliseconds = 2
+                            readLatencyMilliseconds = 3
+                            writeLatencyMilliseconds = 1
+                            currentQueueLength = 0
+                            averageQueueLength = 0.1
+                            bytesPerSecond = 1000
+                            transfersPerSecond = 10
+                            diskTimePercent = 4
+                            idleTimePercent = 96
+                        }
+                    )
+                },
+                [pscustomobject]@{
+                    queryDurationMilliseconds = 5
+                    disks = @(
+                        [pscustomobject]@{
+                            instance = '0 C:'
+                            transferLatencyMilliseconds = 4
+                            readLatencyMilliseconds = 5
+                            writeLatencyMilliseconds = 3
+                            currentQueueLength = 1
+                            averageQueueLength = 0.3
+                            bytesPerSecond = 3000
+                            transfersPerSecond = 30
+                            diskTimePercent = 8
+                            idleTimePercent = 92
+                        }
+                    )
+                }
+            )
+
+            $summary = Get-HardwareProfileSummary -Samples $samples -Inventory $inventory
+
+            $summary.sampleCount | Should -Be 2
+            $summary.observedDiskCount | Should -Be 1
+            $summary.observedBusTypes | Should -Be @('SATA')
+            $summary.disks[0].transferLatencyMilliseconds.median | Should -Be 3
+            $summary.disks[0].currentQueueLength.p95 | Should -Be 1
+            $summary.interpretation | Should -Match 'does not prove'
+            $summary.decision | Should -Be 'BaselineOnlyNoPerformanceClaim'
+        }
+
+        It 'writes bounded redacted structured evidence without generating storage I/O' {
+            Mock Get-HardwareProfileSupport {
+                [pscustomobject]@{
+                    supported = $true
+                    provider = 'Win32_PerfFormattedData_PerfDisk_PhysicalDisk'
+                    reason = 'supported'
+                    missingProperties = @()
+                    physicalDiskInventoryAvailable = $true
+                }
+            }
+            Mock Get-HardwareStorageInventory {
+                [pscustomobject]@{
+                    physicalDiskStatus = 'Read'
+                    physicalDiskErrorType = $null
+                    physicalDisks = @([pscustomobject]@{
+                        deviceId = '0'
+                        friendlyName = 'Test SSD'
+                        manufacturer = 'Test'
+                        model = 'Test SSD'
+                        firmwareVersion = '1'
+                        mediaType = 'SSD'
+                        busType = 'SATA'
+                        sizeBytes = [uint64]256000000000
+                        healthStatus = 'Healthy'
+                        operationalStatus = @('OK')
+                    })
+                    controllerDriverStatus = 'Read'
+                    controllerDriverErrorType = $null
+                    controllerDrivers = @()
+                    redaction = 'test'
+                }
+            }
+            Mock Measure-HardwareProfileObserver {
+                [pscustomobject]@{
+                    iterations = 3
+                    durationMilliseconds = [pscustomobject]@{ count = 3; median = 1; p95 = 2; minimum = 1; maximum = 2 }
+                    qualification = 'test'
+                }
+            }
+            Mock Get-WindowsEnvironment { [pscustomobject]@{ windows = [pscustomobject]@{ build = '26200' } } }
+            Mock Get-HardwareStorageSample {
+                [pscustomobject]@{
+                    timestampUtc = [DateTime]::UtcNow.ToString('o')
+                    monotonicOffsetMilliseconds = 0
+                    queryDurationMilliseconds = 2
+                    disks = @([pscustomobject]@{
+                        instance = '0 C:'
+                        transferLatencyMilliseconds = 1
+                        readLatencyMilliseconds = 1
+                        writeLatencyMilliseconds = 1
+                        currentQueueLength = 0
+                        averageQueueLength = 0
+                        bytesPerSecond = 0
+                        transfersPerSecond = 0
+                        diskTimePercent = 0
+                        idleTimePercent = 100
+                    })
+                }
+            }
+            Mock Start-Sleep { }
+            Mock Write-StructuredEvent { }
+            Mock Write-Host { }
+
+            $profile = Invoke-HardwareProfile `
+                -Root $TestDrive `
+                -Seconds 5 `
+                -IntervalSeconds 5 `
+                -CalibrationIterations 3
+
+            $profile.observationOnly | Should -BeTrue
+            $profile.summary.sampleCount | Should -Be 2
+            $profile.summary.observedBusTypes | Should -Be @('SATA')
+            Test-Path -LiteralPath $profile.evidencePath | Should -BeTrue
+            $raw = Get-Content -LiteralPath $profile.evidencePath -Raw
+            $raw | Should -Match 'hardware-storage-path-profile'
+            $raw | Should -Not -Match 'serialNumber|uniqueId|pnpDeviceId'
+            Should -Invoke Get-HardwareStorageSample -Times 2
+        }
+
+        It 'contains no workload generator or state-changing command' {
+            $body = (Get-Command Invoke-HardwareProfile).ScriptBlock.ToString()
+            $body | Should -Not -Match 'DiskSpd|winsat|fsutil|Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|Set-Service|Stop-Service|powercfg|Restart-Computer'
+        }
+
+        It 'rejects a sample interval that would exceed the requested window' {
+            Mock Get-HardwareProfileSupport {
+                [pscustomobject]@{ supported = $true; reason = 'supported' }
+            }
+
+            {
+                Invoke-HardwareProfile -Root $TestDrive -Seconds 5 -IntervalSeconds 6 -CalibrationIterations 3
+            } | Should -Throw '*sample interval cannot exceed*'
+        }
+
+        It 'routes the public action directly to the profiler' {
+            $script:Action = 'HardwareProfile'
+            $script:DataRoot = $TestDrive
+            $script:DurationSeconds = 5
+            $script:SampleIntervalSeconds = 1
+            $script:HardwareCalibrationIterations = 3
+            Mock Invoke-HardwareProfile { }
+
+            Invoke-ZBookPerfMain
+
+            Should -Invoke Invoke-HardwareProfile -Times 1
         }
     }
 
@@ -1193,6 +1396,9 @@ Describe 'EXP-047 ZBookPerf' {
             Mock Invoke-ThermalProfile {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'thermal.json') }
             }
+            Mock Invoke-HardwareProfile {
+                [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'hardware.json') }
+            }
             Mock Invoke-Measurement {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'baseline.json') }
             }
@@ -1209,7 +1415,7 @@ Describe 'EXP-047 ZBookPerf' {
             Mock Write-Host { }
             $runtime = @{
                 Seconds = 5; Interval = 1; SkipTrace = $true
-                ThermalCalibration = 3
+                ThermalCalibration = 3; HardwareCalibration = 3
                 ShellRuns = 1; ShellWarmups = 0; ShellTimeout = 1000; ShellCalibration = 5
                 WorkloadNames = @('explorer.exe'); WorkloadInterval = 1000; WorkloadCalibration = 3
                 DependencyPaths = @($TestDrive); DependencyEndpoints = @()
@@ -1220,10 +1426,12 @@ Describe 'EXP-047 ZBookPerf' {
 
             $result.observationOnly | Should -BeTrue
             $result.coveredLayers | Should -Be @(1, 2, 5, 6, 10, 11, 12)
+            $result.evidence.storagePath | Should -Match 'hardware.json'
             Test-Path -LiteralPath $result.evidence.systemBaseline | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $TestDrive 'measurements') | Should -BeTrue
             Should -Invoke Invoke-Measurement -Times 1
             Should -Invoke Invoke-ThermalProfile -Times 1
+            Should -Invoke Invoke-HardwareProfile -Times 1
             Should -Invoke Invoke-ShellProfile -Times 1
             Should -Invoke Invoke-WorkloadProfile -Times 1
             Should -Invoke Invoke-DependencyProfile -Times 1

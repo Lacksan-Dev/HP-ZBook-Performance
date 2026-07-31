@@ -18,7 +18,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
+    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
     [string]$Action = 'Menu',
 
     [switch]$FullDiagnostics,
@@ -27,6 +27,7 @@ param(
     [switch]$Analyze,
     [switch]$Watch,
     [switch]$ThermalProfile,
+    [switch]$HardwareProfile,
     [switch]$ShellProfile,
     [switch]$WorkloadProfile,
     [switch]$DependencyProfile,
@@ -52,6 +53,9 @@ param(
 
     [ValidateRange(3, 25)]
     [int]$ThermalCalibrationIterations = 5,
+
+    [ValidateRange(3, 25)]
+    [int]$HardwareCalibrationIterations = 5,
 
     [ValidateRange(1, 25)]
     [int]$ShellRunCount = 5,
@@ -100,7 +104,7 @@ $ErrorActionPreference = 'Stop'
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
 $script:ProductName = 'Lacksan UX-ROM'
-$script:ProductVersion = '2026.07.30.7'
+$script:ProductVersion = '2026.07.30.8'
 $script:LayerWorkflowSchemaVersion = 1
 $script:SplashShown = $false
 $script:LoadedFrom = if ([string]::IsNullOrWhiteSpace([string]$PSCommandPath)) {
@@ -927,6 +931,313 @@ function Invoke-ThermalProfile {
     Write-Host $profile.summary.interpretation -ForegroundColor DarkYellow
     Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
     Write-Host 'No workload or Windows setting was changed and no performance-gain claim was made.' -ForegroundColor DarkYellow
+    return $profile
+}
+
+function Get-HardwareProfileSupport {
+    $className = 'Win32_PerfFormattedData_PerfDisk_PhysicalDisk'
+    $requiredProperties = @(
+        'Name',
+        'AvgDisksecPerTransfer',
+        'AvgDisksecPerRead',
+        'AvgDisksecPerWrite',
+        'CurrentDiskQueueLength',
+        'AvgDiskQueueLength',
+        'DiskBytesPersec',
+        'DiskTransfersPersec',
+        'PercentDiskTime',
+        'PercentIdleTime'
+    )
+    try {
+        $counterClass = Get-CimClass -Namespace 'root/cimv2' -ClassName $className -ErrorAction Stop
+        $availableProperties = @($counterClass.CimClassProperties | ForEach-Object { $_.Name })
+        $missingProperties = @($requiredProperties | Where-Object { $_ -notin $availableProperties })
+        if ($missingProperties.Count -gt 0) {
+            return [pscustomobject][ordered]@{
+                supported = $false
+                provider = $className
+                reason = "The PhysicalDisk provider is missing: $($missingProperties -join ', ')."
+                missingProperties = $missingProperties
+                physicalDiskInventoryAvailable = [bool](Get-Command 'Get-PhysicalDisk' -ErrorAction SilentlyContinue)
+            }
+        }
+
+        $probe = @(Get-CimInstance `
+            -Namespace 'root/cimv2' `
+            -ClassName $className `
+            -OperationTimeoutSec 5 `
+            -ErrorAction Stop |
+            Where-Object { $_.Name -ne '_Total' })
+        if ($probe.Count -eq 0) {
+            return [pscustomobject][ordered]@{
+                supported = $false
+                provider = $className
+                reason = 'The PhysicalDisk provider returned no per-disk instances.'
+                missingProperties = @()
+                physicalDiskInventoryAvailable = [bool](Get-Command 'Get-PhysicalDisk' -ErrorAction SilentlyContinue)
+            }
+        }
+    } catch {
+        return [pscustomobject][ordered]@{
+            supported = $false
+            provider = $className
+            reason = "The PhysicalDisk provider could not be queried ($($_.Exception.GetType().Name))."
+            missingProperties = @()
+            physicalDiskInventoryAvailable = [bool](Get-Command 'Get-PhysicalDisk' -ErrorAction SilentlyContinue)
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        supported = $true
+        provider = $className
+        reason = 'The inbox formatted PhysicalDisk provider exposes per-disk latency, queue, throughput, and activity signals.'
+        missingProperties = @()
+        physicalDiskInventoryAvailable = [bool](Get-Command 'Get-PhysicalDisk' -ErrorAction SilentlyContinue)
+    }
+}
+
+function Get-HardwareStorageInventory {
+    $inventoryStatus = 'Unavailable'
+    $inventoryErrorType = $null
+    $physicalDisks = @()
+    if (Get-Command 'Get-PhysicalDisk' -ErrorAction SilentlyContinue) {
+        try {
+            $physicalDisks = @(Get-PhysicalDisk -ErrorAction Stop | ForEach-Object {
+                [pscustomobject][ordered]@{
+                    deviceId = [string]$_.DeviceId
+                    friendlyName = [string]$_.FriendlyName
+                    manufacturer = [string]$_.Manufacturer
+                    model = [string]$_.Model
+                    firmwareVersion = [string]$_.FirmwareVersion
+                    mediaType = [string]$_.MediaType
+                    busType = [string]$_.BusType
+                    sizeBytes = [uint64]$_.Size
+                    healthStatus = [string]$_.HealthStatus
+                    operationalStatus = @($_.OperationalStatus | ForEach-Object { [string]$_ })
+                }
+            })
+            $inventoryStatus = if ($physicalDisks.Count -gt 0) { 'Read' } else { 'NoInstances' }
+        } catch {
+            $inventoryErrorType = $_.Exception.GetType().Name
+        }
+    }
+
+    $controllerStatus = 'Unavailable'
+    $controllerErrorType = $null
+    $controllers = @()
+    try {
+        $controllers = @(Get-CimInstance `
+            -Namespace 'root/cimv2' `
+            -ClassName 'Win32_PnPSignedDriver' `
+            -OperationTimeoutSec 5 `
+            -ErrorAction Stop |
+            Where-Object { $_.DeviceClass -in @('SCSIADAPTER', 'HDC') } |
+            Select-Object DeviceClass, DeviceName, DriverProviderName, DriverVersion, DriverDate)
+        $controllerStatus = if ($controllers.Count -gt 0) { 'Read' } else { 'NoInstances' }
+    } catch {
+        $controllerErrorType = $_.Exception.GetType().Name
+    }
+
+    return [pscustomobject][ordered]@{
+        physicalDiskStatus = $inventoryStatus
+        physicalDiskErrorType = $inventoryErrorType
+        physicalDisks = @($physicalDisks)
+        controllerDriverStatus = $controllerStatus
+        controllerDriverErrorType = $controllerErrorType
+        controllerDrivers = @($controllers)
+        redaction = 'Physical-disk serial numbers, unique IDs, PNP IDs, volume labels, paths, files, and user content are not collected.'
+    }
+}
+
+function Get-HardwareStorageSample {
+    param([double]$MonotonicOffsetMilliseconds = 0)
+
+    $queryTimer = [Diagnostics.Stopwatch]::StartNew()
+    $instances = @(Get-CimInstance `
+        -Namespace 'root/cimv2' `
+        -ClassName 'Win32_PerfFormattedData_PerfDisk_PhysicalDisk' `
+        -OperationTimeoutSec 5 `
+        -ErrorAction Stop |
+        Where-Object { $_.Name -ne '_Total' })
+    if ($instances.Count -eq 0) {
+        throw 'The PhysicalDisk provider returned no per-disk instances.'
+    }
+    $disks = @($instances | ForEach-Object {
+        [pscustomobject][ordered]@{
+            instance = [string]$_.Name
+            transferLatencyMilliseconds = [Math]::Round(([double]$_.AvgDisksecPerTransfer * 1000), 4)
+            readLatencyMilliseconds = [Math]::Round(([double]$_.AvgDisksecPerRead * 1000), 4)
+            writeLatencyMilliseconds = [Math]::Round(([double]$_.AvgDisksecPerWrite * 1000), 4)
+            currentQueueLength = [Math]::Round([double]$_.CurrentDiskQueueLength, 4)
+            averageQueueLength = [Math]::Round([double]$_.AvgDiskQueueLength, 4)
+            bytesPerSecond = [Math]::Round([double]$_.DiskBytesPersec, 0)
+            transfersPerSecond = [Math]::Round([double]$_.DiskTransfersPersec, 4)
+            diskTimePercent = [Math]::Round([double]$_.PercentDiskTime, 4)
+            idleTimePercent = [Math]::Round([double]$_.PercentIdleTime, 4)
+        }
+    })
+    $queryTimer.Stop()
+
+    return [pscustomobject][ordered]@{
+        timestampUtc = [DateTime]::UtcNow.ToString('o')
+        monotonicOffsetMilliseconds = [Math]::Round($MonotonicOffsetMilliseconds, 3)
+        queryDurationMilliseconds = [Math]::Round($queryTimer.Elapsed.TotalMilliseconds, 3)
+        disks = @($disks)
+    }
+}
+
+function Measure-HardwareProfileObserver {
+    param([ValidateRange(3, 25)][int]$Iterations)
+
+    [void](Get-HardwareStorageSample)
+    $durations = @()
+    for ($index = 0; $index -lt $Iterations; $index++) {
+        $sample = Get-HardwareStorageSample
+        $durations += [double]$sample.queryDurationMilliseconds
+    }
+    return [pscustomobject][ordered]@{
+        iterations = $Iterations
+        durationMilliseconds = Get-WorkloadDistribution -Values $durations
+        qualification = 'Times the complete local per-disk formatted-counter query after one warmup. It generates no storage workload.'
+    }
+}
+
+function Get-HardwareProfileSummary {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Samples,
+        [Parameter(Mandatory = $true)][object]$Inventory
+    )
+
+    if ($Samples.Count -eq 0) {
+        throw 'The hardware storage-path profile requires at least one completed sample.'
+    }
+    $rows = @($Samples | ForEach-Object { @($_.disks) })
+    $diskSummaries = @($rows | Group-Object instance | ForEach-Object {
+        $group = @($_.Group)
+        [pscustomobject][ordered]@{
+            instance = $_.Name
+            sampleCount = $group.Count
+            transferLatencyMilliseconds = Get-WorkloadDistribution -Values @($group | ForEach-Object { [double]$_.transferLatencyMilliseconds })
+            readLatencyMilliseconds = Get-WorkloadDistribution -Values @($group | ForEach-Object { [double]$_.readLatencyMilliseconds })
+            writeLatencyMilliseconds = Get-WorkloadDistribution -Values @($group | ForEach-Object { [double]$_.writeLatencyMilliseconds })
+            currentQueueLength = Get-WorkloadDistribution -Values @($group | ForEach-Object { [double]$_.currentQueueLength })
+            averageQueueLength = Get-WorkloadDistribution -Values @($group | ForEach-Object { [double]$_.averageQueueLength })
+            bytesPerSecond = Get-WorkloadDistribution -Values @($group | ForEach-Object { [double]$_.bytesPerSecond })
+            transfersPerSecond = Get-WorkloadDistribution -Values @($group | ForEach-Object { [double]$_.transfersPerSecond })
+            diskTimePercent = Get-WorkloadDistribution -Values @($group | ForEach-Object { [double]$_.diskTimePercent })
+            idleTimePercent = Get-WorkloadDistribution -Values @($group | ForEach-Object { [double]$_.idleTimePercent })
+        }
+    })
+    $busTypes = @($Inventory.physicalDisks | ForEach-Object { [string]$_.busType } | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    } | Sort-Object -Unique)
+
+    return [pscustomobject][ordered]@{
+        sampleCount = $Samples.Count
+        observedDiskCount = @($diskSummaries).Count
+        observedBusTypes = $busTypes
+        disks = $diskSummaries
+        queryDurationMilliseconds = Get-WorkloadDistribution -Values @($Samples | ForEach-Object { [double]$_.queryDurationMilliseconds })
+        interpretation = 'This passive window records the installed storage transport and observed latency, queue, throughput, and activity distributions. Transport type alone does not prove a bottleneck, and an idle window is not a storage benchmark.'
+        decision = 'BaselineOnlyNoPerformanceClaim'
+    }
+}
+
+function Invoke-HardwareProfile {
+    param(
+        [string]$Root,
+        [ValidateRange(5, 3600)][int]$Seconds,
+        [ValidateRange(1, 60)][int]$IntervalSeconds,
+        [ValidateRange(3, 25)][int]$CalibrationIterations
+    )
+
+    $support = Get-HardwareProfileSupport
+    if (-not $support.supported) {
+        throw "Hardware storage-path profiling is unsupported: $($support.reason)"
+    }
+    if ($IntervalSeconds -gt $Seconds) {
+        throw 'The hardware profile sample interval cannot exceed the requested duration.'
+    }
+    Ensure-DataDirectories -Root $Root
+    $inventory = Get-HardwareStorageInventory
+    $observer = Measure-HardwareProfileObserver -Iterations $CalibrationIterations
+    $environment = Get-WindowsEnvironment
+    $profileStartUtc = [DateTime]::UtcNow.ToString('o')
+    $runTimer = [Diagnostics.Stopwatch]::StartNew()
+    $sampleCount = [Math]::Max(2, [int][Math]::Floor($Seconds / $IntervalSeconds) + 1)
+    $samples = @()
+    for ($sampleIndex = 0; $sampleIndex -lt $sampleCount; $sampleIndex++) {
+        $samples += Get-HardwareStorageSample -MonotonicOffsetMilliseconds $runTimer.Elapsed.TotalMilliseconds
+        if ($sampleIndex -lt ($sampleCount - 1)) {
+            $nextTargetMilliseconds = ($sampleIndex + 1) * $IntervalSeconds * 1000
+            $remainingMilliseconds = $nextTargetMilliseconds - $runTimer.Elapsed.TotalMilliseconds
+            if ($remainingMilliseconds -gt 0) {
+                Start-Sleep -Milliseconds ([int][Math]::Ceiling($remainingMilliseconds))
+            }
+        }
+    }
+    $runTimer.Stop()
+
+    $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff')
+    $runSuffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $evidencePath = Join-Path (Join-Path $Root 'measurements') "$stamp-$runSuffix-hardware-storage-path-profile.json"
+    $profile = [pscustomobject][ordered]@{
+        schemaVersion = $script:SchemaVersion
+        experimentId = $script:ExperimentId
+        layer = 2
+        kind = 'hardware-storage-path-profile'
+        capturedUtc = $profileStartUtc
+        completedUtc = [DateTime]::UtcNow.ToString('o')
+        observationOnly = $true
+        support = $support
+        environment = $environment
+        inventory = $inventory
+        requested = [pscustomobject][ordered]@{
+            durationSeconds = $Seconds
+            intervalSeconds = $IntervalSeconds
+            sampleCount = $sampleCount
+            calibrationIterations = $CalibrationIterations
+            cimOperationTimeoutSeconds = 5
+        }
+        instrumentation = [pscustomobject][ordered]@{
+            counterSource = 'Win32_PerfFormattedData_PerfDisk_PhysicalDisk per-disk instances'
+            inventorySource = 'Get-PhysicalDisk when the inbox Storage module is available; storage controller drivers from Win32_PnPSignedDriver'
+            timer = 'System.Diagnostics.Stopwatch'
+            observerCalibration = $observer
+            actualProfileDurationMilliseconds = [Math]::Round($runTimer.Elapsed.TotalMilliseconds, 3)
+            qualification = 'Passive local inventory and formatted-counter reads only. No file is opened, no synthetic I/O is generated, and no Windows setting is changed.'
+        }
+        collectionScope = 'Records storage model, firmware, media and bus class, health, storage-controller driver metadata, and aggregate per-disk performance counters. It excludes serial numbers, unique IDs, PNP IDs, volume labels, paths, files, user content, credentials, and network destinations.'
+        samples = @($samples)
+        summary = Get-HardwareProfileSummary -Samples @($samples) -Inventory $inventory
+        evidencePath = $evidencePath
+    }
+    $profile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
+    try {
+        Write-StructuredEvent -Root $Root -Level Information -Event 'hardware-storage-path-profile-complete' -Data @{
+            evidencePath = $evidencePath
+            sampleCount = $profile.summary.sampleCount
+            observedDiskCount = $profile.summary.observedDiskCount
+            observedBusTypes = @($profile.summary.observedBusTypes)
+            observationOnly = $true
+        }
+    } catch {
+        Write-Warning "The hardware profile was saved, but the optional event journal could not be updated ($($_.Exception.GetType().Name))."
+    }
+
+    Write-Host ''
+    Write-Host 'Layer 2 storage-path bottleneck profile (observation only)' -ForegroundColor Cyan
+    Write-Host "Installed storage bus types: $(if ($profile.summary.observedBusTypes.Count) { $profile.summary.observedBusTypes -join ', ' } else { 'unavailable' })"
+    foreach ($disk in $profile.summary.disks) {
+        Write-Host ("{0} - median transfer latency {1} ms, queue {2}, throughput {3} B/s" -f `
+            $disk.instance, `
+            $disk.transferLatencyMilliseconds.median, `
+            $disk.currentQueueLength.median, `
+            $disk.bytesPerSecond.median)
+    }
+    Write-Host $profile.summary.interpretation -ForegroundColor DarkYellow
+    Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
+    Write-Host 'No storage workload or Windows setting was changed and no performance-gain claim was made.' -ForegroundColor DarkYellow
     return $profile
 }
 
@@ -3034,8 +3345,8 @@ function Get-PerformanceLayerCatalog {
             number = 2
             name = 'Hardware resources and bottlenecks'
             description = 'Finds pressure on the CPU, memory, storage, and hardware queues.'
-            assessment = 'Baseline'
-            assessmentLabel = 'CPU, memory, storage, process, and thermal baseline'
+            assessment = 'HardwareProfile'
+            assessmentLabel = 'Installed storage-path inventory with passive per-disk latency and queue baseline'
             candidates = @()
         },
         [pscustomobject][ordered]@{
@@ -3292,6 +3603,7 @@ function Invoke-LayerAssessmentStep {
         [int]$Interval,
         [switch]$SkipTrace,
         [int]$ThermalCalibration,
+        [int]$HardwareCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -3317,6 +3629,14 @@ function Invoke-LayerAssessmentStep {
                 -Seconds $Seconds `
                 -IntervalSeconds $Interval `
                 -CalibrationIterations $ThermalCalibration
+            $evidencePath = $profile.evidencePath
+        }
+        'HardwareProfile' {
+            $profile = Invoke-HardwareProfile `
+                -Root $Root `
+                -Seconds $Seconds `
+                -IntervalSeconds $Interval `
+                -CalibrationIterations $HardwareCalibration
             $evidencePath = $profile.evidencePath
         }
         'Baseline' {
@@ -3687,6 +4007,7 @@ function New-LayerRuntime {
         [int]$Interval,
         [switch]$SkipTrace,
         [int]$ThermalCalibration,
+        [int]$HardwareCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -3707,6 +4028,7 @@ function New-LayerRuntime {
         Interval = $Interval
         SkipTrace = [bool]$SkipTrace
         ThermalCalibration = $ThermalCalibration
+        HardwareCalibration = $HardwareCalibration
         ShellRuns = $ShellRuns
         ShellWarmups = $ShellWarmups
         ShellTimeout = $ShellTimeout
@@ -3779,6 +4101,11 @@ function Invoke-FullSystemDiagnostics {
         -Seconds $Runtime.Seconds `
         -IntervalSeconds $Runtime.Interval `
         -CalibrationIterations $Runtime.ThermalCalibration
+    $hardware = Invoke-HardwareProfile `
+        -Root $Root `
+        -Seconds $Runtime.Seconds `
+        -IntervalSeconds $Runtime.Interval `
+        -CalibrationIterations $Runtime.HardwareCalibration
     $baseline = Invoke-Measurement `
         -Kind baseline `
         -Seconds $Runtime.Seconds `
@@ -3816,6 +4143,7 @@ function Invoke-FullSystemDiagnostics {
         observationOnly = $true
         evidence = [pscustomobject][ordered]@{
             thermalEnvelope = $thermal.evidencePath
+            storagePath = $hardware.evidencePath
             systemBaseline = $baseline.evidencePath
             shellReadiness = $shell.evidencePath
             workloadProfile = $workload.evidencePath
@@ -3964,6 +4292,7 @@ function Invoke-LayerWorkflow {
         [int]$Interval,
         [switch]$SkipTrace,
         [int]$ThermalCalibration,
+        [int]$HardwareCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -3984,6 +4313,7 @@ function Invoke-LayerWorkflow {
         -Interval $Interval `
         -SkipTrace:$SkipTrace `
         -ThermalCalibration $ThermalCalibration `
+        -HardwareCalibration $HardwareCalibration `
         -ShellRuns $ShellRuns `
         -ShellWarmups $ShellWarmups `
         -ShellTimeout $ShellTimeout `
@@ -4236,6 +4566,7 @@ function Invoke-ZBookPerfMain {
     elseif ($Analyze) { $script:Action = 'Analyze' }
     elseif ($Watch) { $script:Action = 'Watch' }
     elseif ($ThermalProfile) { $script:Action = 'ThermalProfile' }
+    elseif ($HardwareProfile) { $script:Action = 'HardwareProfile' }
     elseif ($ShellProfile) { $script:Action = 'ShellProfile' }
     elseif ($WorkloadProfile) { $script:Action = 'WorkloadProfile' }
     elseif ($DependencyProfile) { $script:Action = 'DependencyProfile' }
@@ -4248,6 +4579,7 @@ function Invoke-ZBookPerfMain {
         -Interval $SampleIntervalSeconds `
         -SkipTrace:$NoTrace `
         -ThermalCalibration $ThermalCalibrationIterations `
+        -HardwareCalibration $HardwareCalibrationIterations `
         -ShellRuns $ShellRunCount `
         -ShellWarmups $ShellWarmupRunCount `
         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -4338,6 +4670,7 @@ function Invoke-ZBookPerfMain {
                     -Interval $SampleIntervalSeconds `
                     -SkipTrace:$NoTrace `
                     -ThermalCalibration $ThermalCalibrationIterations `
+                    -HardwareCalibration $HardwareCalibrationIterations `
                     -ShellRuns $ShellRunCount `
                     -ShellWarmups $ShellWarmupRunCount `
                     -ShellTimeout $ShellTimeoutMilliseconds `
@@ -4360,6 +4693,7 @@ function Invoke-ZBookPerfMain {
                         -Interval $SampleIntervalSeconds `
                         -SkipTrace:$NoTrace `
                         -ThermalCalibration $ThermalCalibrationIterations `
+                        -HardwareCalibration $HardwareCalibrationIterations `
                         -ShellRuns $ShellRunCount `
                         -ShellWarmups $ShellWarmupRunCount `
                         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -4386,6 +4720,13 @@ function Invoke-ZBookPerfMain {
                     -Seconds $DurationSeconds `
                     -IntervalSeconds $SampleIntervalSeconds `
                     -CalibrationIterations $ThermalCalibrationIterations)
+            }
+            'HardwareProfile' {
+                [void](Invoke-HardwareProfile `
+                    -Root $DataRoot `
+                    -Seconds $DurationSeconds `
+                    -IntervalSeconds $SampleIntervalSeconds `
+                    -CalibrationIterations $HardwareCalibrationIterations)
             }
             'ShellProfile' {
                 [void](Invoke-ShellProfile `
