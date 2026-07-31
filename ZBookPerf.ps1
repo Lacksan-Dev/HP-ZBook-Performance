@@ -18,7 +18,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
+    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'FirmwareProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status')]
     [string]$Action = 'Menu',
 
     [switch]$FullDiagnostics,
@@ -28,6 +28,7 @@ param(
     [switch]$Watch,
     [switch]$ThermalProfile,
     [switch]$HardwareProfile,
+    [switch]$FirmwareProfile,
     [switch]$ShellProfile,
     [switch]$WorkloadProfile,
     [switch]$DependencyProfile,
@@ -56,6 +57,9 @@ param(
 
     [ValidateRange(3, 25)]
     [int]$HardwareCalibrationIterations = 5,
+
+    [ValidateRange(3, 25)]
+    [int]$FirmwareCalibrationIterations = 5,
 
     [ValidateRange(1, 25)]
     [int]$ShellRunCount = 5,
@@ -104,7 +108,7 @@ $ErrorActionPreference = 'Stop'
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
 $script:ProductName = 'Lacksan UX-ROM'
-$script:ProductVersion = '2026.07.30.8'
+$script:ProductVersion = '2026.07.31.1'
 $script:LayerWorkflowSchemaVersion = 1
 $script:SplashShown = $false
 $script:LoadedFrom = if ([string]::IsNullOrWhiteSpace([string]$PSCommandPath)) {
@@ -1238,6 +1242,316 @@ function Invoke-HardwareProfile {
     Write-Host $profile.summary.interpretation -ForegroundColor DarkYellow
     Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
     Write-Host 'No storage workload or Windows setting was changed and no performance-gain claim was made.' -ForegroundColor DarkYellow
+    return $profile
+}
+
+function Get-NativeFirmwareType {
+    if (-not ('Lacksan.UxRom.FirmwareNative' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace Lacksan.UxRom
+{
+    public static class FirmwareNative
+    {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool GetFirmwareType(out UInt32 firmwareType);
+    }
+}
+'@
+    }
+
+    [uint32]$firmwareType = 0
+    if (-not [Lacksan.UxRom.FirmwareNative]::GetFirmwareType([ref]$firmwareType)) {
+        $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw "GetFirmwareType failed with Win32 error $errorCode."
+    }
+    $name = switch ($firmwareType) {
+        1 { 'Bios' }
+        2 { 'Uefi' }
+        3 { 'MaxNotImplemented' }
+        default { 'Unknown' }
+    }
+    return [pscustomobject][ordered]@{
+        rawValue = $firmwareType
+        name = $name
+        source = 'Kernel32 GetFirmwareType'
+    }
+}
+
+function Get-FirmwareProfileSupport {
+    $className = 'Win32_BIOS'
+    $requiredProperties = @(
+        'Manufacturer',
+        'SMBIOSBIOSVersion',
+        'ReleaseDate',
+        'SMBIOSPresent',
+        'SMBIOSMajorVersion',
+        'SMBIOSMinorVersion',
+        'EmbeddedControllerMajorVersion',
+        'EmbeddedControllerMinorVersion',
+        'Status'
+    )
+    try {
+        $firmwareType = Get-NativeFirmwareType
+    } catch {
+        return [pscustomobject][ordered]@{
+            supported = $false
+            provider = $className
+            reason = "The documented GetFirmwareType API could not be queried ($($_.Exception.GetType().Name))."
+            missingProperties = @()
+            firmwareType = $null
+        }
+    }
+
+    try {
+        $biosClass = Get-CimClass -Namespace 'root/cimv2' -ClassName $className -ErrorAction Stop
+        $availableProperties = @($biosClass.CimClassProperties | ForEach-Object { $_.Name })
+        $missingProperties = @($requiredProperties | Where-Object { $_ -notin $availableProperties })
+        if ($missingProperties.Count -gt 0) {
+            return [pscustomobject][ordered]@{
+                supported = $false
+                provider = $className
+                reason = "The BIOS provider is missing: $($missingProperties -join ', ')."
+                missingProperties = $missingProperties
+                firmwareType = $firmwareType
+            }
+        }
+    } catch {
+        return [pscustomobject][ordered]@{
+            supported = $false
+            provider = $className
+            reason = "The BIOS provider could not be inspected ($($_.Exception.GetType().Name))."
+            missingProperties = @()
+            firmwareType = $firmwareType
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        supported = $true
+        provider = $className
+        reason = 'The documented firmware-type API and inbox BIOS provider expose the required read-only boundary signals.'
+        missingProperties = @()
+        firmwareType = $firmwareType
+    }
+}
+
+function Get-FirmwareCoreSnapshot {
+    $queryTimer = [Diagnostics.Stopwatch]::StartNew()
+    $firmwareType = Get-NativeFirmwareType
+    $bios = Get-CimInstance `
+        -Namespace 'root/cimv2' `
+        -ClassName 'Win32_BIOS' `
+        -OperationTimeoutSec 5 `
+        -ErrorAction Stop |
+        Select-Object -First 1
+    if (-not $bios) {
+        throw 'The BIOS provider returned no instance.'
+    }
+    $queryTimer.Stop()
+
+    $releaseDate = if ($bios.ReleaseDate -is [datetime]) {
+        ([datetime]$bios.ReleaseDate).ToUniversalTime().ToString('o')
+    } else {
+        [string]$bios.ReleaseDate
+    }
+    return [pscustomobject][ordered]@{
+        timestampUtc = [DateTime]::UtcNow.ToString('o')
+        queryDurationMilliseconds = [Math]::Round($queryTimer.Elapsed.TotalMilliseconds, 3)
+        firmwareType = $firmwareType
+        bios = [pscustomobject][ordered]@{
+            manufacturer = [string]$bios.Manufacturer
+            smbiosBiosVersion = [string]$bios.SMBIOSBIOSVersion
+            releaseDateUtc = $releaseDate
+            smbiosPresent = [bool]$bios.SMBIOSPresent
+            smbiosVersion = '{0}.{1}' -f $bios.SMBIOSMajorVersion, $bios.SMBIOSMinorVersion
+            embeddedControllerMajorVersionRaw = [uint16]$bios.EmbeddedControllerMajorVersion
+            embeddedControllerMinorVersionRaw = [uint16]$bios.EmbeddedControllerMinorVersion
+            status = [string]$bios.Status
+        }
+        redaction = 'BIOS serial number, system serial number, UUID, asset tag, firmware variables, setting values, passwords, keys, and certificates are not collected.'
+    }
+}
+
+function Measure-FirmwareProfileObserver {
+    param([ValidateRange(3, 25)][int]$Iterations)
+
+    [void](Get-FirmwareCoreSnapshot)
+    $durations = @()
+    for ($index = 0; $index -lt $Iterations; $index++) {
+        $snapshot = Get-FirmwareCoreSnapshot
+        $durations += [double]$snapshot.queryDurationMilliseconds
+    }
+    return [pscustomobject][ordered]@{
+        iterations = $Iterations
+        durationMilliseconds = Get-WorkloadDistribution -Values $durations
+        qualification = 'Times the documented GetFirmwareType call plus the bounded Win32_BIOS query after one warmup. Optional Secure Boot and HP metadata probes report their own wall time.'
+    }
+}
+
+function Get-SecureBootProfileState {
+    param([Parameter(Mandatory = $true)][string]$FirmwareType)
+
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $command = Get-Command 'Confirm-SecureBootUEFI' -ErrorAction SilentlyContinue
+    if (-not $command) {
+        $timer.Stop()
+        return [pscustomobject][ordered]@{
+            status = 'CmdletUnavailable'
+            enabled = $null
+            errorType = $null
+            durationMilliseconds = [Math]::Round($timer.Elapsed.TotalMilliseconds, 3)
+        }
+    }
+    if ($FirmwareType -ne 'Uefi') {
+        $timer.Stop()
+        return [pscustomobject][ordered]@{
+            status = 'NotApplicableToBootMode'
+            enabled = $null
+            errorType = $null
+            durationMilliseconds = [Math]::Round($timer.Elapsed.TotalMilliseconds, 3)
+        }
+    }
+
+    try {
+        $enabled = [bool](Confirm-SecureBootUEFI -ErrorAction Stop)
+        $status = 'Read'
+        $errorType = $null
+    } catch {
+        $enabled = $null
+        $status = 'Unavailable'
+        $errorType = $_.Exception.GetType().Name
+    }
+    $timer.Stop()
+    return [pscustomobject][ordered]@{
+        status = $status
+        enabled = $enabled
+        errorType = $errorType
+        durationMilliseconds = [Math]::Round($timer.Elapsed.TotalMilliseconds, 3)
+    }
+}
+
+function Get-HpBiosInterfaceState {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $namespace = 'root/HP/InstrumentedBIOS'
+    try {
+        $classNames = @(Get-CimClass `
+            -Namespace $namespace `
+            -OperationTimeoutSec 5 `
+            -ErrorAction Stop |
+            Where-Object { $_.CimClassName -like 'HP_BIOS*' } |
+            ForEach-Object { [string]$_.CimClassName } |
+            Sort-Object -Unique)
+        $status = if ($classNames.Count -gt 0) { 'MetadataAvailable' } else { 'NoHpBiosClasses' }
+        $errorType = $null
+    } catch {
+        $classNames = @()
+        $status = 'Unavailable'
+        $errorType = $_.Exception.GetType().Name
+    }
+    $timer.Stop()
+    return [pscustomobject][ordered]@{
+        namespace = $namespace
+        status = $status
+        classNames = @($classNames)
+        settingInstancesRead = $false
+        writeInterfaceInvoked = $false
+        errorType = $errorType
+        durationMilliseconds = [Math]::Round($timer.Elapsed.TotalMilliseconds, 3)
+        qualification = 'Class metadata only. BIOS setting names, values, passwords, and methods are not queried or invoked.'
+    }
+}
+
+function Invoke-FirmwareProfile {
+    param(
+        [string]$Root,
+        [ValidateRange(3, 25)][int]$CalibrationIterations
+    )
+
+    $support = Get-FirmwareProfileSupport
+    if (-not $support.supported) {
+        throw "Firmware-boundary profiling is unsupported: $($support.reason)"
+    }
+    Ensure-DataDirectories -Root $Root
+    $observer = Measure-FirmwareProfileObserver -Iterations $CalibrationIterations
+    $snapshot = Get-FirmwareCoreSnapshot
+    $secureBoot = Get-SecureBootProfileState -FirmwareType $snapshot.firmwareType.name
+    $hpBios = Get-HpBiosInterfaceState
+    $environment = Get-WindowsEnvironment
+
+    $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff')
+    $runSuffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $evidencePath = Join-Path (Join-Path $Root 'measurements') "$stamp-$runSuffix-firmware-boundary-profile.json"
+    $profile = [pscustomobject][ordered]@{
+        schemaVersion = $script:SchemaVersion
+        experimentId = $script:ExperimentId
+        layer = 3
+        kind = 'firmware-boundary-profile'
+        capturedUtc = $snapshot.timestampUtc
+        completedUtc = [DateTime]::UtcNow.ToString('o')
+        observationOnly = $true
+        support = $support
+        environment = $environment
+        firmware = $snapshot
+        secureBoot = $secureBoot
+        hpBiosInterface = $hpBios
+        requested = [pscustomobject][ordered]@{
+            calibrationIterations = $CalibrationIterations
+            cimOperationTimeoutSeconds = 5
+        }
+        instrumentation = [pscustomobject][ordered]@{
+            coreSource = 'Kernel32 GetFirmwareType plus Win32_BIOS'
+            optionalSources = 'Confirm-SecureBootUEFI when present and UEFI; root/HP/InstrumentedBIOS class metadata'
+            timer = 'System.Diagnostics.Stopwatch'
+            observerCalibration = $observer
+            finalCoreQueryMilliseconds = $snapshot.queryDurationMilliseconds
+            secureBootProbeMilliseconds = $secureBoot.durationMilliseconds
+            hpBiosMetadataProbeMilliseconds = $hpBios.durationMilliseconds
+            qualification = 'Read-only local API, CIM metadata, BIOS inventory, and Secure Boot status attempt. No firmware variable or BIOS setting instance is read or written.'
+        }
+        collectionScope = 'Records boot firmware type, BIOS/SMBIOS and raw embedded-controller version fields, Secure Boot query state, and HP BIOS class names. It excludes serials, UUIDs, asset tags, firmware variables, BIOS setting values, passwords, keys, certificates, files, content, credentials, and destinations.'
+        summary = [pscustomobject][ordered]@{
+            firmwareType = $snapshot.firmwareType.name
+            biosVersion = $snapshot.bios.smbiosBiosVersion
+            biosReleaseDateUtc = $snapshot.bios.releaseDateUtc
+            smbiosVersion = $snapshot.bios.smbiosVersion
+            embeddedControllerVersionRaw = '{0}.{1}' -f $snapshot.bios.embeddedControllerMajorVersionRaw, $snapshot.bios.embeddedControllerMinorVersionRaw
+            secureBootStatus = $secureBoot.status
+            secureBootEnabled = $secureBoot.enabled
+            hpBiosInterfaceStatus = $hpBios.status
+            hpBiosClassCount = @($hpBios.classNames).Count
+            queryDurationMilliseconds = $snapshot.queryDurationMilliseconds
+            interpretation = 'This profile establishes the documented firmware boundary and available management metadata. It does not measure pre-OS firmware duration, prove a BIOS setting is optimal, or authorize a firmware or Secure Boot change.'
+            decision = 'BaselineOnlyNoPerformanceClaim'
+        }
+        evidencePath = $evidencePath
+    }
+    $profile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
+    try {
+        Write-StructuredEvent -Root $Root -Level Information -Event 'firmware-boundary-profile-complete' -Data @{
+            evidencePath = $evidencePath
+            firmwareType = $profile.summary.firmwareType
+            biosVersion = $profile.summary.biosVersion
+            secureBootStatus = $profile.summary.secureBootStatus
+            hpBiosInterfaceStatus = $profile.summary.hpBiosInterfaceStatus
+            observationOnly = $true
+        }
+    } catch {
+        Write-Warning "The firmware profile was saved, but the optional event journal could not be updated ($($_.Exception.GetType().Name))."
+    }
+
+    Write-Host ''
+    Write-Host 'Layer 3 firmware-boundary profile (observation only)' -ForegroundColor Cyan
+    Write-Host "Boot mode: $($profile.summary.firmwareType)"
+    Write-Host "BIOS: $($profile.summary.biosVersion), released $($profile.summary.biosReleaseDateUtc)"
+    Write-Host "SMBIOS / embedded-controller fields: $($profile.summary.smbiosVersion) / $($profile.summary.embeddedControllerVersionRaw)"
+    Write-Host "Secure Boot query: $($profile.summary.secureBootStatus)"
+    Write-Host "HP BIOS WMI metadata: $($profile.summary.hpBiosInterfaceStatus) ($($profile.summary.hpBiosClassCount) classes)"
+    Write-Host $profile.summary.interpretation -ForegroundColor DarkYellow
+    Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
+    Write-Host 'No BIOS setting, firmware variable, Secure Boot state, or Windows setting was changed.' -ForegroundColor DarkYellow
     return $profile
 }
 
@@ -3353,8 +3667,8 @@ function Get-PerformanceLayerCatalog {
             number = 3
             name = 'BIOS, UEFI, embedded-controller, and firmware interactions'
             description = 'Covers firmware timing, hardware control, and supported HP firmware behavior.'
-            assessment = 'NotIntegrated'
-            assessmentLabel = 'No product-integrated assessment yet'
+            assessment = 'FirmwareProfile'
+            assessmentLabel = 'UEFI/BIOS boundary, SMBIOS/EC fields, Secure Boot query, and HP BIOS WMI metadata'
             candidates = @()
         },
         [pscustomobject][ordered]@{
@@ -3604,6 +3918,7 @@ function Invoke-LayerAssessmentStep {
         [switch]$SkipTrace,
         [int]$ThermalCalibration,
         [int]$HardwareCalibration,
+        [int]$FirmwareCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -3637,6 +3952,12 @@ function Invoke-LayerAssessmentStep {
                 -Seconds $Seconds `
                 -IntervalSeconds $Interval `
                 -CalibrationIterations $HardwareCalibration
+            $evidencePath = $profile.evidencePath
+        }
+        'FirmwareProfile' {
+            $profile = Invoke-FirmwareProfile `
+                -Root $Root `
+                -CalibrationIterations $FirmwareCalibration
             $evidencePath = $profile.evidencePath
         }
         'Baseline' {
@@ -4008,6 +4329,7 @@ function New-LayerRuntime {
         [switch]$SkipTrace,
         [int]$ThermalCalibration,
         [int]$HardwareCalibration,
+        [int]$FirmwareCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -4029,6 +4351,7 @@ function New-LayerRuntime {
         SkipTrace = [bool]$SkipTrace
         ThermalCalibration = $ThermalCalibration
         HardwareCalibration = $HardwareCalibration
+        FirmwareCalibration = $FirmwareCalibration
         ShellRuns = $ShellRuns
         ShellWarmups = $ShellWarmups
         ShellTimeout = $ShellTimeout
@@ -4106,6 +4429,9 @@ function Invoke-FullSystemDiagnostics {
         -Seconds $Runtime.Seconds `
         -IntervalSeconds $Runtime.Interval `
         -CalibrationIterations $Runtime.HardwareCalibration
+    $firmware = Invoke-FirmwareProfile `
+        -Root $Root `
+        -CalibrationIterations $Runtime.FirmwareCalibration
     $baseline = Invoke-Measurement `
         -Kind baseline `
         -Seconds $Runtime.Seconds `
@@ -4144,13 +4470,14 @@ function Invoke-FullSystemDiagnostics {
         evidence = [pscustomobject][ordered]@{
             thermalEnvelope = $thermal.evidencePath
             storagePath = $hardware.evidencePath
+            firmwareBoundary = $firmware.evidencePath
             systemBaseline = $baseline.evidencePath
             shellReadiness = $shell.evidencePath
             workloadProfile = $workload.evidencePath
             dependencyProfile = $dependencies.evidencePath
         }
-        coveredLayers = @(1, 2, 5, 6, 10, 11, 12)
-        integrationGaps = @(3, 4, 7, 8, 9)
+        coveredLayers = @(1, 2, 3, 5, 6, 10, 11, 12)
+        integrationGaps = @(4, 7, 8, 9)
         statement = 'No Windows setting was changed. A missing layer integration is not a clean bill of health.'
     }
     $manifest | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
@@ -4293,6 +4620,7 @@ function Invoke-LayerWorkflow {
         [switch]$SkipTrace,
         [int]$ThermalCalibration,
         [int]$HardwareCalibration,
+        [int]$FirmwareCalibration,
         [int]$ShellRuns,
         [int]$ShellWarmups,
         [int]$ShellTimeout,
@@ -4314,6 +4642,7 @@ function Invoke-LayerWorkflow {
         -SkipTrace:$SkipTrace `
         -ThermalCalibration $ThermalCalibration `
         -HardwareCalibration $HardwareCalibration `
+        -FirmwareCalibration $FirmwareCalibration `
         -ShellRuns $ShellRuns `
         -ShellWarmups $ShellWarmups `
         -ShellTimeout $ShellTimeout `
@@ -4567,6 +4896,7 @@ function Invoke-ZBookPerfMain {
     elseif ($Watch) { $script:Action = 'Watch' }
     elseif ($ThermalProfile) { $script:Action = 'ThermalProfile' }
     elseif ($HardwareProfile) { $script:Action = 'HardwareProfile' }
+    elseif ($FirmwareProfile) { $script:Action = 'FirmwareProfile' }
     elseif ($ShellProfile) { $script:Action = 'ShellProfile' }
     elseif ($WorkloadProfile) { $script:Action = 'WorkloadProfile' }
     elseif ($DependencyProfile) { $script:Action = 'DependencyProfile' }
@@ -4580,6 +4910,7 @@ function Invoke-ZBookPerfMain {
         -SkipTrace:$NoTrace `
         -ThermalCalibration $ThermalCalibrationIterations `
         -HardwareCalibration $HardwareCalibrationIterations `
+        -FirmwareCalibration $FirmwareCalibrationIterations `
         -ShellRuns $ShellRunCount `
         -ShellWarmups $ShellWarmupRunCount `
         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -4671,6 +5002,7 @@ function Invoke-ZBookPerfMain {
                     -SkipTrace:$NoTrace `
                     -ThermalCalibration $ThermalCalibrationIterations `
                     -HardwareCalibration $HardwareCalibrationIterations `
+                    -FirmwareCalibration $FirmwareCalibrationIterations `
                     -ShellRuns $ShellRunCount `
                     -ShellWarmups $ShellWarmupRunCount `
                     -ShellTimeout $ShellTimeoutMilliseconds `
@@ -4694,6 +5026,7 @@ function Invoke-ZBookPerfMain {
                         -SkipTrace:$NoTrace `
                         -ThermalCalibration $ThermalCalibrationIterations `
                         -HardwareCalibration $HardwareCalibrationIterations `
+                        -FirmwareCalibration $FirmwareCalibrationIterations `
                         -ShellRuns $ShellRunCount `
                         -ShellWarmups $ShellWarmupRunCount `
                         -ShellTimeout $ShellTimeoutMilliseconds `
@@ -4727,6 +5060,11 @@ function Invoke-ZBookPerfMain {
                     -Seconds $DurationSeconds `
                     -IntervalSeconds $SampleIntervalSeconds `
                     -CalibrationIterations $HardwareCalibrationIterations)
+            }
+            'FirmwareProfile' {
+                [void](Invoke-FirmwareProfile `
+                    -Root $DataRoot `
+                    -CalibrationIterations $FirmwareCalibrationIterations)
             }
             'ShellProfile' {
                 [void](Invoke-ShellProfile `

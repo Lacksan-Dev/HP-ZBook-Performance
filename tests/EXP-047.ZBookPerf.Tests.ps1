@@ -44,6 +44,16 @@ Describe 'EXP-047 ZBookPerf' {
             $validateSet.ValidValues | Should -Contain 'HardwareProfile'
         }
 
+        It 'exposes the Layer 3 firmware-boundary profile as a public read-only action' {
+            $command = Get-Command $scriptPath
+            ($command.Parameters.Keys -contains 'FirmwareProfile') | Should -BeTrue
+            ($command.Parameters.Keys -contains 'FirmwareCalibrationIterations') | Should -BeTrue
+            $validateSet = @($command.Parameters['Action'].Attributes | Where-Object {
+                $_ -is [System.Management.Automation.ValidateSetAttribute]
+            })[0]
+            $validateSet.ValidValues | Should -Contain 'FirmwareProfile'
+        }
+
         It 'exposes the Layer 10 shell profile as a public read-only action' {
             $command = Get-Command $scriptPath
             ($command.Parameters.Keys -contains 'ShellProfile') | Should -BeTrue
@@ -331,8 +341,9 @@ Describe 'EXP-047 ZBookPerf' {
             $catalog.number | Should -Be (1..12)
             $catalog[0].assessment | Should -Be 'ThermalProfile'
             $catalog[1].assessment | Should -Be 'HardwareProfile'
-            $catalog[2].assessment | Should -Be 'NotIntegrated'
-            $catalog[2].assessmentLabel | Should -Match 'No product-integrated'
+            $catalog[2].assessment | Should -Be 'FirmwareProfile'
+            $catalog[3].assessment | Should -Be 'NotIntegrated'
+            $catalog[3].assessmentLabel | Should -Match 'No product-integrated'
             $catalog[9].assessment | Should -Be 'ShellProfile'
             $catalog[10].assessment | Should -Be 'WorkloadProfile'
         }
@@ -374,7 +385,7 @@ Describe 'EXP-047 ZBookPerf' {
         It 'marks an unavailable assessment explicitly and lets the next safe step advance' {
             $root = Join-Path $TestDrive 'unavailable-assessment'
             $state = New-LayerWorkflowState
-            $state.currentLayer = 3
+            $state.currentLayer = 4
             $runtime = @{
                 Seconds = 5
                 Interval = 1
@@ -395,7 +406,7 @@ Describe 'EXP-047 ZBookPerf' {
             @($state.history)[-1].action | Should -Be 'assessment-unavailable'
 
             Invoke-NextLayerWorkflowStep -Root $root -State $state -Runtime $runtime
-            $state.currentLayer | Should -Be 4
+            $state.currentLayer | Should -Be 5
             $state.phase | Should -Be 'assessment-required'
         }
 
@@ -426,6 +437,36 @@ Describe 'EXP-047 ZBookPerf' {
             Should -Invoke Invoke-HardwareProfile -Times 1
             $state.phase | Should -Be 'assessed'
             @($state.history)[-1].evidencePath | Should -Be 'hardware-profile.json'
+        }
+
+        It 'routes the Layer 3 assessment to the firmware-boundary profiler' {
+            $root = Join-Path $TestDrive 'firmware-layer'
+            $state = New-LayerWorkflowState
+            $state.currentLayer = 3
+            Mock Invoke-FirmwareProfile {
+                [pscustomobject]@{ evidencePath = 'firmware-profile.json' }
+            }
+
+            Invoke-LayerAssessmentStep `
+                -Root $root `
+                -State $state `
+                -Seconds 5 `
+                -Interval 1 `
+                -SkipTrace `
+                -ThermalCalibration 3 `
+                -HardwareCalibration 3 `
+                -FirmwareCalibration 3 `
+                -ShellRuns 3 `
+                -ShellWarmups 0 `
+                -ShellTimeout 1000 `
+                -ShellCalibration 5 `
+                -WorkloadNames @('explorer.exe') `
+                -WorkloadInterval 500 `
+                -WorkloadCalibration 3
+
+            Should -Invoke Invoke-FirmwareProfile -Times 1
+            $state.phase | Should -Be 'assessed'
+            @($state.history)[-1].evidencePath | Should -Be 'firmware-profile.json'
         }
 
         It 'routes the Layer 10 assessment to the shell profiler' {
@@ -883,6 +924,136 @@ Describe 'EXP-047 ZBookPerf' {
             Invoke-ZBookPerfMain
 
             Should -Invoke Invoke-HardwareProfile -Times 1
+        }
+    }
+
+    Context 'Layer 3 firmware-boundary profile' {
+        It 'captures documented firmware and SMBIOS fields without serial or setting data' {
+            Mock Get-NativeFirmwareType {
+                [pscustomobject]@{ rawValue = [uint32]2; name = 'Uefi'; source = 'test' }
+            }
+            Mock Get-CimInstance {
+                [pscustomobject]@{
+                    Manufacturer = 'HP'
+                    SMBIOSBIOSVersion = 'T76 Ver. 01.24.02'
+                    ReleaseDate = [datetime]'2025-01-01T00:00:00Z'
+                    SMBIOSPresent = $true
+                    SMBIOSMajorVersion = 3
+                    SMBIOSMinorVersion = 3
+                    EmbeddedControllerMajorVersion = [byte]1
+                    EmbeddedControllerMinorVersion = [byte]2
+                    Status = 'OK'
+                    SerialNumber = 'must-not-be-collected'
+                }
+            }
+
+            $snapshot = Get-FirmwareCoreSnapshot
+
+            $snapshot.firmwareType.name | Should -Be 'Uefi'
+            $snapshot.bios.smbiosBiosVersion | Should -Be 'T76 Ver. 01.24.02'
+            $snapshot.bios.smbiosVersion | Should -Be '3.3'
+            $snapshot.bios.embeddedControllerMajorVersionRaw | Should -Be 1
+            ($snapshot.bios.PSObject.Properties.Name -contains 'serialNumber') | Should -BeFalse
+        }
+
+        It 'treats an unavailable Secure Boot privilege as evidence rather than a failed profile' {
+            Mock Get-Command { [pscustomobject]@{ Name = 'Confirm-SecureBootUEFI' } } -ParameterFilter {
+                $Name -eq 'Confirm-SecureBootUEFI'
+            }
+            Mock Confirm-SecureBootUEFI { throw [UnauthorizedAccessException]::new('denied') }
+
+            $state = Get-SecureBootProfileState -FirmwareType Uefi
+
+            $state.status | Should -Be 'Unavailable'
+            $state.enabled | Should -BeNullOrEmpty
+            $state.errorType | Should -Be 'UnauthorizedAccessException'
+        }
+
+        It 'writes bounded structured evidence without reading BIOS setting instances' {
+            Mock Get-FirmwareProfileSupport {
+                [pscustomobject]@{
+                    supported = $true
+                    provider = 'Win32_BIOS'
+                    reason = 'supported'
+                    missingProperties = @()
+                    firmwareType = [pscustomobject]@{ rawValue = 2; name = 'Uefi'; source = 'test' }
+                }
+            }
+            Mock Measure-FirmwareProfileObserver {
+                [pscustomobject]@{
+                    iterations = 3
+                    durationMilliseconds = [pscustomobject]@{ count = 3; median = 1; p95 = 2; minimum = 1; maximum = 2 }
+                    qualification = 'test'
+                }
+            }
+            Mock Get-FirmwareCoreSnapshot {
+                [pscustomobject]@{
+                    timestampUtc = [DateTime]::UtcNow.ToString('o')
+                    queryDurationMilliseconds = 2
+                    firmwareType = [pscustomobject]@{ rawValue = 2; name = 'Uefi'; source = 'test' }
+                    bios = [pscustomobject]@{
+                        manufacturer = 'HP'
+                        smbiosBiosVersion = 'T76 Ver. 01.24.02'
+                        releaseDateUtc = '2025-01-01T00:00:00.0000000Z'
+                        smbiosPresent = $true
+                        smbiosVersion = '3.3'
+                        embeddedControllerMajorVersionRaw = 1
+                        embeddedControllerMinorVersionRaw = 2
+                        status = 'OK'
+                    }
+                    redaction = 'test'
+                }
+            }
+            Mock Get-SecureBootProfileState {
+                [pscustomobject]@{
+                    status = 'Read'
+                    enabled = $true
+                    errorType = $null
+                    durationMilliseconds = 1
+                }
+            }
+            Mock Get-HpBiosInterfaceState {
+                [pscustomobject]@{
+                    namespace = 'root/HP/InstrumentedBIOS'
+                    status = 'MetadataAvailable'
+                    classNames = @('HP_BIOSSetting', 'HP_BIOSSettingInterface')
+                    settingInstancesRead = $false
+                    writeInterfaceInvoked = $false
+                    errorType = $null
+                    durationMilliseconds = 1
+                    qualification = 'test'
+                }
+            }
+            Mock Get-WindowsEnvironment { [pscustomobject]@{ windows = [pscustomobject]@{ build = '26200' } } }
+            Mock Write-StructuredEvent { }
+            Mock Write-Host { }
+
+            $profile = Invoke-FirmwareProfile -Root $TestDrive -CalibrationIterations 3
+
+            $profile.observationOnly | Should -BeTrue
+            $profile.summary.firmwareType | Should -Be 'Uefi'
+            $profile.summary.hpBiosClassCount | Should -Be 2
+            $profile.hpBiosInterface.settingInstancesRead | Should -BeFalse
+            Test-Path -LiteralPath $profile.evidencePath | Should -BeTrue
+            $raw = Get-Content -LiteralPath $profile.evidencePath -Raw
+            $raw | Should -Match 'firmware-boundary-profile'
+            $raw | Should -Not -Match 'serialNumber|systemUuid|assetTag|settingValues'
+        }
+
+        It 'contains no firmware, Secure Boot, BIOS-setting, or Windows mutation command' {
+            $body = (Get-Command Invoke-FirmwareProfile).ScriptBlock.ToString()
+            $body | Should -Not -Match 'Set-SecureBootUEFI|Set-HPBIOS|HP_BIOSSettingInterface|Set-ItemProperty|New-ItemProperty|Remove-ItemProperty|Restart-Computer|shutdown|powercfg'
+        }
+
+        It 'routes the public action directly to the profiler' {
+            $script:Action = 'FirmwareProfile'
+            $script:DataRoot = $TestDrive
+            $script:FirmwareCalibrationIterations = 3
+            Mock Invoke-FirmwareProfile { }
+
+            Invoke-ZBookPerfMain
+
+            Should -Invoke Invoke-FirmwareProfile -Times 1
         }
     }
 
@@ -1399,6 +1570,9 @@ Describe 'EXP-047 ZBookPerf' {
             Mock Invoke-HardwareProfile {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'hardware.json') }
             }
+            Mock Invoke-FirmwareProfile {
+                [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'firmware.json') }
+            }
             Mock Invoke-Measurement {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'baseline.json') }
             }
@@ -1415,7 +1589,7 @@ Describe 'EXP-047 ZBookPerf' {
             Mock Write-Host { }
             $runtime = @{
                 Seconds = 5; Interval = 1; SkipTrace = $true
-                ThermalCalibration = 3; HardwareCalibration = 3
+                ThermalCalibration = 3; HardwareCalibration = 3; FirmwareCalibration = 3
                 ShellRuns = 1; ShellWarmups = 0; ShellTimeout = 1000; ShellCalibration = 5
                 WorkloadNames = @('explorer.exe'); WorkloadInterval = 1000; WorkloadCalibration = 3
                 DependencyPaths = @($TestDrive); DependencyEndpoints = @()
@@ -1425,13 +1599,15 @@ Describe 'EXP-047 ZBookPerf' {
             $result = Invoke-FullSystemDiagnostics -Root $TestDrive -Runtime $runtime
 
             $result.observationOnly | Should -BeTrue
-            $result.coveredLayers | Should -Be @(1, 2, 5, 6, 10, 11, 12)
+            $result.coveredLayers | Should -Be @(1, 2, 3, 5, 6, 10, 11, 12)
             $result.evidence.storagePath | Should -Match 'hardware.json'
+            $result.evidence.firmwareBoundary | Should -Match 'firmware.json'
             Test-Path -LiteralPath $result.evidence.systemBaseline | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $TestDrive 'measurements') | Should -BeTrue
             Should -Invoke Invoke-Measurement -Times 1
             Should -Invoke Invoke-ThermalProfile -Times 1
             Should -Invoke Invoke-HardwareProfile -Times 1
+            Should -Invoke Invoke-FirmwareProfile -Times 1
             Should -Invoke Invoke-ShellProfile -Times 1
             Should -Invoke Invoke-WorkloadProfile -Times 1
             Should -Invoke Invoke-DependencyProfile -Times 1
