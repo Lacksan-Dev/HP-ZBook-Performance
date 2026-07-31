@@ -1,37 +1,67 @@
 # EXP-049: Classic Teams demand launch
 
-## Candidate
+Status: Experimental  
+Stage: validation  
+Evidence: needs-evidence
 
-Remove exactly one current-user `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value named `com.squirrel.Teams.Teams` when its unexpanded command resolves to the classic Teams Squirrel `Update.exe` launcher and contains both `--processStart Teams.exe` and `--process-start-args --system-initiated`.
+## Hypothesis
 
-The provider refuses new Teams MSIX identities, `ms-teams.exe`, WindowsApps paths, updater-only commands, protected identities, invalid Microsoft publisher signatures, absent executables, ambiguous candidates, enterprise-management ownership, unsupported devices, and state drift.
+Removing the exact current-user classic Microsoft Teams Squirrel Run registration may reduce sign-in contention while preserving manual classic Teams launch, sign-in, meeting readiness, update behavior, and the new Teams MSIX startup mechanism.
+
+## Candidate boundary
+
+The `ClassicTeamsDemandLaunch` provider may remove exactly one value:
+
+- Path: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+- Name: `com.squirrel.Teams.Teams`
+- Command: the classic Teams Squirrel `Update.exe` launcher with `--processStart Teams.exe` and `--process-start-args --system-initiated`
+
+The provider refuses broad matches, updater-only commands, new Teams `ms-teams.exe` identities, multiple eligible entries, invalid signatures, non-Microsoft publishers, management ownership, existing state artifacts, and identity or protected-scope drift.
 
 ## Reversible lifecycle
 
-The `ClassicTeamsDemandLaunch` controller profile provides `Check`, `Capture`, `DryRun`, `Apply`, `Verify`, `VerifyReboot`, and `Rollback`.
+1. `Check` detects HP Windows 11 support, management ownership, the exact Run registration, signed Microsoft launcher and application binaries, and protected scope.
+2. `Capture` records the exact unexpanded value data, registry kind, key owner and SDDL, executable paths, SHA-256 hashes, versions, publisher thumbprints, machine, user SID, boot time, and protected-scope hash.
+3. `DryRun` reports the one planned mutation and exact rollback with zero configuration change.
+4. `Apply` removes the captured value through `ShouldProcess`, verifies removal and binary preservation, and supports an idempotent repeat.
+5. `Verify` confirms immediate removal and preserved executable identities.
+6. `VerifyReboot` requires an observed later boot and confirms persistence.
+7. `Rollback` refuses destination overwrite and drift, then restores the exact captured value name, registry kind, and unexpanded command before verifying equality.
 
-Capture records the exact Run path, value name, registry kind, unexpanded command, resolved executable, executable SHA-256 and version, Microsoft publisher identity, machine identity, current-user SID, and UTC timestamp. Apply removes one registry value through `ShouldProcess`, verifies removal, and treats a repeated application as idempotent. Reboot verification records the boot time and confirms persistence.
-
-Rollback refuses overwrite, command drift, publisher drift, and executable hash drift. It restores the exact registry kind and unexpanded command and verifies equality.
+Every lifecycle action writes append-only JSONL records. Terminating failures preserve the stage, error type, message, and state path. Failed, adverse, rejected, and inconclusive evidence remains retained.
 
 ## Safety boundary
 
-The candidate changes one current-user Run value only. It changes no Teams package, executable, profile, credential, cache, meeting data, service, scheduled task, StartupTask registration, Windows security control, Windows Update component, recovery setting, enterprise-management state, device-critical driver, Omnissa component, Windows App component, Remote Desktop component, or Tailscale component.
+The experiment changes no package, executable, credential, profile, cache, service, scheduled task, firewall rule, update component, recovery setting, enterprise-management state, device, driver, firmware, or new Teams StartupTask. Windows security, Windows Update, recovery, enterprise management, device-critical drivers, Omnissa, Windows App, Remote Desktop, and Tailscale remain protected.
 
-## Static and integration validation
-
-Run:
+## Test coverage
 
 ```powershell
-Invoke-Pester .\controller\tests\EXP-049.ClassicTeamsRun.Tests.ps1
+Invoke-Pester .\controller\tests\ClassicTeamsDemandLaunch.Tests.ps1
 ```
 
-On an eligible unmanaged HP Windows 11 test machine, run `Check` and `DryRun` with temporary state and JSONL paths. Snapshot the Run value before and after. The exact value name, kind, and unexpanded data must remain unchanged. `Apply -WhatIf` must also produce zero mutation.
+Opt-in integration coverage snapshots the entire current-user Run key before and after `Check`, `Capture`, `DryRun`, and `Apply -WhatIf`:
 
-For the controlled mutation phase, run `Capture`, `Apply`, `Verify`, reboot, `VerifyReboot`, validate Teams manual launch, sign-in, meeting readiness, update behavior, and protected remote-access readiness, then execute `Rollback` and verify exact restoration.
+```powershell
+$env:LACKSAN_RUN_WINDOWS_INTEGRATION = '1'
+Invoke-Pester .\controller\tests\ClassicTeamsDemandLaunch.Integration.Tests.ps1
+```
 
-## Physical evidence
+## Physical validation plan
 
-Physical measurements remain `needs-evidence`. Complete at least five matched baseline and five treatment sign-in trials under controlled power and thermal conditions. Record Windows build, HP model, BIOS, storage, display and network drivers, classic Teams version, executable hash, power source, thermal state, instrumentation overhead, sign-in to usable desktop, first-120-second CPU and disk activity, Teams process activity, Teams manual-launch and meeting readiness, update behavior, and readiness of Omnissa, Windows App, Remote Desktop, and Tailscale.
+Use the same HP Windows 11 device, account, power source, network, servicing state, driver versions, startup workload, and instrumentation for every matched trial.
 
-Report medians and preserve favorable, adverse, failed, and inconclusive evidence. The experiment remains Experimental. Stable requires explicit human approval.
+1. Qualify instrumentation overhead.
+2. Capture at least five baseline sign-in trials.
+3. Apply the candidate and verify immediate state.
+4. Reboot and execute at least five matched treatment trials.
+5. Measure sign-in readiness and first-120-second CPU, disk active time, disk bytes, memory, and classic Teams process activity.
+6. Verify classic Teams manual launch, sign-in, chat, meeting join, audio and video device readiness, and update discovery.
+7. Verify new Teams launch and its existing StartupTask state.
+8. Verify Outlook and Edge readiness plus Omnissa, Windows App, Remote Desktop, and Tailscale readiness.
+9. Execute exact rollback, reboot, and confirm restored startup behavior and protected scope.
+10. Report every trial, medians, dispersion, adverse observations, failures, and inconclusive evidence.
+
+Physical HP execution, five matched baseline and treatment trials, first-120-second CPU and disk measurements, protected remote-access readiness, Teams launch and meeting checks, update validation, reboot persistence, exact rollback execution, instrumentation qualification, medians, and dispersion remain `needs-evidence`.
+
+Stable remains unassigned.
