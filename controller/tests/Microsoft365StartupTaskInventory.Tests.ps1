@@ -1,0 +1,17 @@
+$probe=Join-Path $PSScriptRoot '..\research\Microsoft365StartupTaskInventory.ps1'
+$decision=Join-Path $PSScriptRoot '..\..\experiments\EXP-128\research-decision.md'
+Describe 'EXP-128 issue 295 Microsoft365StartupTaskInventory research contract' {
+ BeforeAll{$text=Get-Content -LiteralPath $probe -Raw;$research=Get-Content -LiteralPath $decision -Raw}
+ It 'parses as valid PowerShell'{[scriptblock]::Create($text)|Should -Not -BeNullOrEmpty}
+ It 'declares the exact Experimental research identity'{foreach($t in 'EXP-128','issue=295','Microsoft365StartupTaskInventory','microsoft-365-startuptask-inventory'){$text|Should -Match [regex]::Escape($t)};$text|Should -Not -Match 'status:stable|stage:stable'}
+ It 'offers read-only Check and Capture actions only'{$text|Should -Match "ValidateSet\('Check','Capture'\)";foreach($t in 'Apply','Rollback','Disable\(','RequestEnableAsync','StartupApproved','Set-ItemProperty','Remove-ItemProperty','Register-ScheduledTask','Disable-ScheduledTask','Enable-ScheduledTask','Remove-AppxPackage'){$text|Should -Not -Match $t}}
+ It 'captures Windows HP management and protected scope' {foreach($t in 'Windows 11','Hewlett-Packard','DomainJoined','MdmEnrollments','PolicyManager','ConfigMgr','WinDefend','mpssvc','wuauserv','UsoSvc','BITS','Tailscale','omnissa','remote desktop'){$text|Should -Match $t}}
+ It 'captures Microsoft 365 package and manifest StartupTask identity' {foreach($t in 'Get-AppxPackageManifest','windows.startupTask','TaskId','DisplayName','ExecutableLeaf','ExecutablePathHash','EntryPoint','ManifestEnabled','PackageFamilyName','PackageFullNameHash','InstallLocationHash','Version','Publisher'){$text|Should -Match [regex]::Escape($t)}}
+ It 'refuses candidate attribution to servicing and protected identities through classification' {foreach($t in 'clicktorun','activation','licens','setup','repair','security','credential','driver','firmware','ProtectedIdentity','ServicingIdentity'){$text|Should -Match $t}}
+ It 'captures related Office startup mechanisms without mutation' {foreach($t in 'CurrentVersion\\Run','CurrentVersion\\RunOnce','GetFolderPath','ScheduledTasks','StartupFolders','relatedStartup'){$text|Should -Match $t}}
+ It 'hashes sensitive local package and path identity' {foreach($t in 'Get-PathHash','PackageFullNameHash','InstallLocationHash','ExecutablePathHash','statePathHash'){$text|Should -Match $t}}
+ It 'emits structured evidence and preserves failure details' {foreach($t in 'schemaVersion','timestampUtc','machine','userSid','ConvertTo-Json -Compress','refusalReason','failureDetail','ErrorActionPreference=''Stop''','State overwrite refused'){$text|Should -Match [regex]::Escape($t)}}
+ It 'keeps mutation gated on physical supported API proof' {$text|Should -Match 'mutationSupported=\$false';$text|Should -Match 'Physical supported-API state-transition proof is required before provider implementation'}
+ It 'documents supported API exact restore acceptance criteria' {foreach($t in 'StartupTask.Disable\(\)','StartupTask.RequestEnableAsync\(\)','DisabledByUser','DisabledByPolicy','EnabledByPolicy','exact return to `Enabled`','five matched baseline','needs-evidence'){$research|Should -Match $t}}
+ It 'documents protected applications and Windows preservation' {foreach($t in 'Omnissa','Windows App','Remote Desktop','Tailscale','Windows security','Windows Update','recovery','enterprise management','device-critical drivers'){$research|Should -Match [regex]::Escape($t)}}
+}
