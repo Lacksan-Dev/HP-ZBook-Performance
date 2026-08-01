@@ -1,0 +1,16 @@
+$provider=Join-Path $PSScriptRoot '..\providers\Microsoft365RunOnceDemandLaunch.ps1'
+Describe 'EXP-098 Microsoft365RunOnceDemandLaunch provider contract' {
+    BeforeAll {$text=Get-Content -LiteralPath $provider -Raw;$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($provider,[ref]$tokens,[ref]$errors)}
+    It 'parses as valid PowerShell' {$errors.Count|Should -Be 0}
+    It 'implements the complete reversible lifecycle' {foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
+    It 'uses ShouldProcess WhatIf structured logging idempotence and terminating failures' {foreach($t in 'SupportsShouldProcess','WhatIfPreference','ShouldProcess','ConvertTo-Json -Compress',"'idempotent'","'failure' 'fail'",'ErrorActionPreference'){$text|Should -Match [regex]::Escape($t)}}
+    It 'requires HP Windows 11 and refuses enterprise ownership' {foreach($t in 'Windows 11','Hewlett-Packard','DomainJoined','MdmEnrollments','PolicyManager','ConfigMgr','Intune','Enterprise-management ownership detected'){$text|Should -Match [regex]::Escape($t)}}
+    It 'limits discovery to approved RunOnce locations and refuses special value semantics' {$text|Should -Match 'CurrentVersion\\RunOnce';$text|Should -Match "StartsWith\('!'\)";$text|Should -Match "StartsWith\('\*'\)"}
+    It 'limits eligibility to Microsoft signed Office user applications' {foreach($t in 'OUTLOOK','WINWORD','EXCEL','POWERPNT','ONENOTE','MSACCESS','Get-AuthenticodeSignature','Microsoft Corporation','Microsoft Office'){$text|Should -Match $t}}
+    It 'refuses Click-to-Run servicing update repair activation setup and protected identities' {foreach($t in 'click.?to.?run','officec2rclient','update','servic','repair','activation','licens','setup','omnissa','windows app','remote desktop','tailscale'){$text|Should -Match $t}}
+    It 'captures exact registry executable product and identity evidence' {foreach($t in 'DoNotExpandEnvironmentNames','GetValueKind','Data=','Sha256','FileVersion','ProductName','CompanyName','Publisher','Thumbprint','KeyOwner','KeySddl','capturedBootTime','machine','userSid'){$text|Should -Match $t}}
+    It 'limits mutation to one exact registry value' {$text|Should -Match 'Remove-ItemProperty -LiteralPath';$text|Should -Match '\.SetValue\(';$text|Should -Not -Match 'Remove-AppxPackage|Uninstall-Package|Disable-ScheduledTask|Set-Service|Stop-Service|pnputil|Remove-PnpDevice'}
+    It 'preserves Microsoft 365 servicing data and application scope' {foreach($t in 'PreserveMicrosoft365','PreserveClickToRun','PreserveActivation','PreserveUpdates','PreserveDocuments','PreserveAddins'){$text|Should -Match $t}}
+    It 'requires later-boot evidence and exact drift-aware rollback' {foreach($t in 'A later boot is required','Reboot persistence failed','RunOnce registration drift detected','Microsoft 365 executable identity drift detected','Protected-scope drift detected','Rollback overwrite refused','Exact rollback verification failed','restoredExactOriginal'){$text|Should -Match [regex]::Escape($t)}}
+    It 'retains one-shot physical evidence requirements' {$text|Should -Match 'needs-evidence';$text|Should -Match 'oneShotAttribution';$text|Should -Match 'OneShotConsumptionEvidenceRequired'}
+}
