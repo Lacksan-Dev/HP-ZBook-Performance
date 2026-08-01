@@ -1,12 +1,18 @@
 $provider=Join-Path $PSScriptRoot '..\providers\HPOneAgentDelayedStart.ps1'
 $runIntegration=$env:LACKSAN_RUN_WINDOWS_INTEGRATION -eq '1'
 Describe 'EXP-101 HPOneAgentDelayedStart zero-mutation integration' -Skip:(-not $runIntegration) {
+    function Get-TextSha256([string]$Text) {
+        $sha=[Security.Cryptography.SHA256]::Create()
+        try { (($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text)) | ForEach-Object {$_.ToString('x2')}) -join '') }
+        finally { $sha.Dispose() }
+    }
     function Get-ServiceSnapshot {
         Get-CimInstance Win32_Service | Sort-Object Name | Select-Object Name,State,StartMode,PathName | ConvertTo-Json -Compress -Depth 4
     }
     function Get-OneAgentTaskSnapshot {
         Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {$_.TaskName -match '(?i)HpOneAgent' -or $_.TaskPath -match '(?i)HP.*OneAgent'} | Sort-Object TaskPath,TaskName | ForEach-Object {
-            [ordered]@{TaskPath=$_.TaskPath;TaskName=$_.TaskName;State=$_.State.ToString();Enabled=($_.Settings.Enabled-ne$false);XmlHash=([BitConverter]::ToString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes((Export-ScheduledTask -TaskName $_.TaskName -TaskPath $_.TaskPath)))).Replace('-',''))}
+            $xml=Export-ScheduledTask -TaskName $_.TaskName -TaskPath $_.TaskPath
+            [ordered]@{TaskPath=$_.TaskPath;TaskName=$_.TaskName;State=$_.State.ToString();XmlHash=(Get-TextSha256 $xml)}
         } | ConvertTo-Json -Compress -Depth 6
     }
     function Get-DriverSnapshot {
