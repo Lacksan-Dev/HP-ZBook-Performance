@@ -13,7 +13,7 @@ $runPaths=@('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run','HKLM:\Softwar
 $allRunPaths=@('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run','HKLM:\Software\Microsoft\Windows\CurrentVersion\Run','HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce','HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce')
 $protected='(?i)omnissa|vmware horizon|windows app|remote desktop|mstsc|tailscale|defender|securityhealth|firewall|bitlocker|credential|windows update|wuauserv|usosvc|bits|recovery|intune|sccm|configmgr|mdm|driver|firmware|accessibility'
 $servicing='(?i)click.?to.?run|officeclicktorun|officec2rclient|integratedoffice|update|updater|servic|repair|activation|licens|setup|install|bootstrap|telemetry|ose\.exe|sppsvc'
-$officeHint='(?i)microsoft office|office16|outlook|winword|excel|powerpnt|onenote|msaccess|microsoft 365'
+$officeHint='(?i)microsoft office|office16|outlook|winword|word|excel|powerpnt|powerpoint|onenote|msaccess|access|microsoft 365'
 
 function Write-Log([string]$Event,[string]$Result,[object]$Data){
     if([string]::IsNullOrWhiteSpace($LogPath)){return}
@@ -72,9 +72,9 @@ function Get-Candidates{
 function Get-RelatedStartupInventory([string]$ExcludePath,[string]$ExcludeName){
     $registry=@()
     foreach($path in $allRunPaths){if(Test-Path -LiteralPath $path){$k=Get-Item -LiteralPath $path;foreach($n in $k.GetValueNames()|Sort-Object){if($path-eq$ExcludePath-and$n-eq$ExcludeName){continue};$d=[string]$k.GetValue($n,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames);if("$n $d"-match$officeHint){$registry+=[ordered]@{Path=$path;Name=$n;Kind=$k.GetValueKind($n).ToString();Data=$d}}}}}
-    $folders=@([Environment]::GetFolderPath('Startup'),[Environment]::GetFolderPath('CommonStartup'))|Where-Object{$_}|Sort-Object -Unique
+    $folders=@([Environment]::GetFolderPath([Environment+SpecialFolder]::Startup),[Environment]::GetFolderPath([Environment+SpecialFolder]::CommonStartup))|Where-Object{$_}|Sort-Object -Unique
     $startup=@();foreach($folder in $folders){if(Test-Path -LiteralPath $folder){$startup+=@(Get-ChildItem -LiteralPath $folder -File -ErrorAction SilentlyContinue|Where-Object{$_.Name-match$officeHint}|Sort-Object FullName|ForEach-Object{[ordered]@{Path=$_.FullName;Length=$_.Length;LastWriteTimeUtc=$_.LastWriteTimeUtc.ToString('o')}})}}
-    $tasks=@(Get-ScheduledTask -ErrorAction SilentlyContinue|ForEach-Object{$t=$_;$acts=@($t.Actions|ForEach-Object{"$($_.Execute) $($_.Arguments)"});if(($acts-join' ') -match$officeHint){[ordered]@{TaskPath=$t.TaskPath;TaskName=$t.TaskName;State=$t.State.ToString();Actions=$acts}}}|Sort-Object TaskPath,TaskName)
+    $tasks=@(Get-ScheduledTask -ErrorAction SilentlyContinue|ForEach-Object{$t=$_;$acts=@($t.Actions|ForEach-Object{"$($_.Execute) $($_.Arguments)"});if(($acts-join' ') -match$officeHint){[ordered]@{TaskPath=$t.TaskPath;TaskName=$t.TaskName;Enabled=[bool]$t.Settings.Enabled;Actions=$acts}}}|Sort-Object TaskPath,TaskName)
     $json=[ordered]@{Registry=$registry;StartupFolder=$startup;ScheduledTasks=$tasks}|ConvertTo-Json -Compress -Depth 10
     [pscustomobject]@{Hash=Get-Hash $json;Snapshot=$json}
 }
