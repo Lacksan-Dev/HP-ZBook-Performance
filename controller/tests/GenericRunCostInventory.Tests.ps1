@@ -1,0 +1,13 @@
+$probe=Join-Path $PSScriptRoot '..\research\GenericRunCostInventory.ps1'
+Describe 'EXP-134 issue 303 GenericRunCostInventory contract' {
+    BeforeAll {$text=Get-Content -LiteralPath $probe -Raw;$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($probe,[ref]$tokens,[ref]$errors)}
+    It 'parses as valid PowerShell' {$errors.Count|Should -Be 0}
+    It 'declares Experimental research identity and read-only lifecycle' {$text|Should -Match 'EXP-134';$text|Should -Match 'issue=303';$text|Should -Match "ValidateSet\('Check','Capture','Select'\)";$text|Should -Not -Match "'Apply'|'Rollback'|Remove-ItemProperty|Set-ItemProperty|New-ItemProperty|Set-Service|Stop-Service|Disable-ScheduledTask|Enable-ScheduledTask|Remove-AppxPackage|pnputil"}
+    It 'limits discovery to approved persistent Run locations' {$text|Should -Match 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';$text|Should -Match 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';$text|Should -Not -Match 'CurrentVersion\\RunOnce'}
+    It 'requires Windows 11 HP context and captures management ownership' {foreach($t in 'Windows 11','Hewlett-Packard','DomainJoined','MdmEnrollments','PolicyManager','ConfigMgr','Intune','RunPolicy'){$text|Should -Match [regex]::Escape($t)}}
+    It 'excludes protected servicing and product-specific experiment identities' {foreach($t in 'omnissa','windows app','remote desktop','tailscale','defender','credential','windows update','accessibility','driver','firmware','update|updater','activation','teams|msteams','microsoft 365','outlook','logitech','logi options','logi bolt','g hub'){$text|Should -Match $t}}
+    It 'captures exact registry and executable identity without exposing raw command data' {foreach($t in 'DoNotExpandEnvironmentNames','GetValueKind','DataHash','ArgumentsHash','Sha256','FileVersion','ProductVersion','ProductName','CompanyName','Publisher','Thumbprint','KeyOwner','KeySddlHash','CandidateId'){$text|Should -Match $t}}
+    It 'requires five physical attribution trials before selection' {$text|Should -Match 'm.Count-lt5';$text|Should -Match 'valid.Count-lt5';foreach($t in 'cpuMs','diskBytes','workingSetBytes','processStarts','CostScore','needs-evidence'){$text|Should -Match $t}}
+    It 'emits structured JSONL and retains failures' {foreach($t in 'ConvertTo-Json -Compress','timestampUtc','machine','userSid',"'failure' 'fail'",'refusalReason','failureDetail','ErrorActionPreference'){$text|Should -Match [regex]::Escape($t)}}
+    It 'keeps mutation behind a dedicated provider gate' {$text|Should -Match 'dedicated reversible provider';$text|Should -Match 'mutationReady';$text|Should -Match 'mutationGate'}
+}
