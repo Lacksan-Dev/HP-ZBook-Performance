@@ -14,12 +14,12 @@ Describe 'EdgeBackgroundModeOff provider contract' {
     It 'targets only the recommended BackgroundModeEnabled DWORD' {
         $text | Should -Match 'Edge\\Recommended'
         $text | Should -Match 'BackgroundModeEnabled'
-        $text | Should -Match "Value=0"
-        $text | Should -Match "MutationCount=1"
+        $text | Should -Match 'Value=0'
+        $text | Should -Match 'MutationCount=1'
         $text | Should -Not -Match 'Set-Service|Stop-Service|Disable-ScheduledTask|Remove-AppxPackage|Remove-Item .*Profile|DiskCacheSize|HardwareAccelerationModeEnabled|SleepingTabs'
     }
     It 'requires HP Windows 11 elevation Edge 77 and Microsoft signature' {
-        foreach($token in 'Windows 11','Hewlett-Packard','Test-Elevated','Major','-ge 77','ValidPublisher','Microsoft Corporation') { $text | Should -Match [regex]::Escape($token) }
+        foreach($token in 'Windows 11','Hewlett-Packard','Test-Elevated','Major','-ge 77','ValidPublisher','Microsoft Corporation') { $text | Should -Match ([regex]::Escape($token)) }
     }
     It 'captures and preserves Startup Boost separately' {
         foreach($token in 'StartupBoostEnabled','MandatoryRelated','RecommendedRelated','Related Edge policy drift detected') { $text | Should -Match $token }
