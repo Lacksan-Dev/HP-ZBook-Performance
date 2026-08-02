@@ -15,7 +15,7 @@ Develop repeatable methods to measure, improve, verify, document, and reverse Wi
 - Convert useful findings from any research layer into focused EXP issues.
 - Merge Experimental work by default after automated checks, scope review, original-state capture, verification, and rollback are complete.
 - Use `needs-evidence` rather than blocking the portfolio.
-- Stable release still requires explicit human approval.
+- Stable release requires explicit human approval. The operator granted that approval on 2026-08-02 for validation-ready UX-ROM work after each candidate completes its declared physical verification on the operator-controlled lab computer; see `release/STABLE-APPROVAL-2026-08-02.md`.
 
 ## Current priorities
 1. Reduce sign-in to usable-desktop latency.
@@ -27,6 +27,7 @@ Develop repeatable methods to measure, improve, verify, document, and reverse Wi
 7. Prototype lightweight user-mode replacements for redundant launchers, updaters, telemetry, readiness probes, and experiment logging.
 8. Measure every candidate with repeated runs and medians.
 9. On explicitly self-managed lab systems, clean operator-controlled Workplace/MDM enrollment state when it interferes with validation while keeping Windows security, Windows Update, Edge Update, credentials, and browser profile data outside the cleanup mutation scope.
+10. Run merged validation-ready providers through the UX-ROM Physical Validation / Stable Promotion surface and retain machine-local evidence for promotion decisions.
 
 ## Experiments
 - `EXP-001`: Establish an HP ZBook responsiveness baseline for Windows sign-in, Outlook, Edge, Windows Search, idle activity, and wake-to-network readiness.
