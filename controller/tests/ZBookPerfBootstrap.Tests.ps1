@@ -3,10 +3,15 @@ $sut = Join-Path $repoRoot 'ZBookPerf.ps1'
 $core = Join-Path $repoRoot 'controller\core\ZBookPerf.Core.ps1'
 $installer = Join-Path $repoRoot 'Install-UXROM.ps1'
 $progress = Join-Path $repoRoot 'controller\ui\UxRomWorkProgress.ps1'
+$layerIntegration = Join-Path $repoRoot 'controller\ui\UxRomLayerIntegration.ps1'
+$stableValidation = Join-Path $repoRoot 'controller\release\UxRomStableValidation.ps1'
+$stableApproval = Join-Path $repoRoot 'release\STABLE-APPROVAL-2026-08-02.md'
 $source = Get-Content -LiteralPath $sut -Raw
 $coreSource = Get-Content -LiteralPath $core -Raw
 $installerSource = Get-Content -LiteralPath $installer -Raw
 $progressSource = Get-Content -LiteralPath $progress -Raw
+$layerSource = Get-Content -LiteralPath $layerIntegration -Raw
+$stableSource = Get-Content -LiteralPath $stableValidation -Raw
 
 Describe 'UX-ROM bootstrap contract' {
     It 'keeps the existing performance controller available through the core component' {
@@ -92,6 +97,54 @@ Describe 'UX-ROM bootstrap contract' {
         $progressSource | Should -Match 'Get-KernelTraceToolState'
     }
 
+    It 'runs an integrated layer assessment even when its legacy treatment list is empty' {
+        Test-Path -LiteralPath $layerIntegration | Should -BeTrue
+        $source | Should -Match 'controller\\ui\\UxRomLayerIntegration.ps1'
+        $source | Should -Match '\. \$layerIntegration'
+        $layerSource | Should -Match "if \(\[string\]\$layer\.assessment -ne 'NotIntegrated'\)"
+        $layerSource | Should -Match 'Invoke-LayerAssessmentStep @Runtime'
+        $layerSource | Should -Match 'Assessment complete\.'
+        $layerSource | Should -Match 'Physical Validation / Stable Promotion providers'
+        $layerSource.IndexOf('Invoke-LayerAssessmentStep @Runtime') | Should -BeLessThan $layerSource.IndexOf('if (-not $candidate)')
+    }
+
+    It 'integrates human-approved Physical Validation and Stable Promotion into the main UX-ROM menu' {
+        Test-Path -LiteralPath $stableValidation | Should -BeTrue
+        Test-Path -LiteralPath $stableApproval | Should -BeTrue
+        $source | Should -Match 'controller\\release\\UxRomStableValidation.ps1'
+        $source | Should -Match '\. \$stableValidation'
+        $source | Should -Match 'V\. Physical Validation / Stable Promotion'
+        $source | Should -Match 'Show-UxRomStableValidationMenu -Root \$DataRoot'
+        $stableSource | Should -Match 'STABLE-APPROVAL-2026-08-02'
+        $stableSource | Should -Match 'Get-UxRomMergedProviderCatalog'
+        $stableSource | Should -Match 'Get-UxRomMergedExperimentCatalog'
+        $stableSource | Should -Match 'contents/controller/providers\?ref=main'
+        $stableSource | Should -Match 'git/trees/main\?recursive=1'
+        $stableSource | Should -Match "'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'"
+        $stableSource | Should -Match 'Stable for this machine / performance effect unqualified'
+        $stableSource | Should -Match 'stableClaim=\$true'
+        $stableSource | Should -Match 'performanceClaim=\$false'
+        $stableSource | Should -Match 'Deploy-UxRomMachineStableProvider'
+    }
+
+    It 'keeps machine Stable implementation evidence separate from performance claims' {
+        $approvalSource = Get-Content -LiteralPath $stableApproval -Raw
+        $approvalSource | Should -Match 'does not manufacture or substitute physical evidence'
+        $approvalSource | Should -Match 'Stable approved / physical validation pending'
+        $approvalSource | Should -Match 'Stable implementation status does not create a responsiveness-gain claim'
+        $stableSource | Should -Match 'Five baseline and five treatment runs are requested'
+        $stableSource | Should -Match 'rebootVerified=\$true'
+        $stableSource | Should -Match 'rollbackExecuted=\$true'
+        $stableSource | Should -Match 'performance effect remains separately qualified'
+    }
+
+    It 'discovers experiment scripts rather than leaving merged engineering outside the product surface' {
+        $stableSource | Should -Match '\^experiments/EXP-\\d\{3\}/\.\+\\\.ps1\$'
+        $stableSource | Should -Match 'Invoke-Exp'
+        $stableSource | Should -Match "kind = if \(\$leaf -match '\(\?i\)LabHarness\|ValidationHarness\|Harness'\)"
+        $stableSource | Should -Match 'Merged experiment controller'
+    }
+
     It 'exposes EXP-137 inside the same UX-ROM menu and as a direct action' {
         $source | Should -Match "'EnrollmentCleanup'"
         $source | Should -Match 'SelfManagedEnrollmentConfirmed'
@@ -115,5 +168,13 @@ Describe 'UX-ROM bootstrap contract' {
         $installerSource | Should -Match 'Transferring control'
         $installerSource | Should -Match 'Set-ExecutionPolicy -Scope Process'
         $installerSource | Should -Match 'Unblock-File'
+    }
+
+    It 'parses every new release-surface PowerShell file' {
+        foreach ($path in @($sut,$layerIntegration,$stableValidation)) {
+            $tokens=$null;$errors=$null
+            [void][Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
+            @($errors).Count | Should -Be 0 -Because "$path must remain valid Windows PowerShell"
+        }
     }
 }
