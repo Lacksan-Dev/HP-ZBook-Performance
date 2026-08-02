@@ -151,7 +151,12 @@ function Resolve-UxRomComponent {
         [Parameter(Mandatory=$true)][string]$RelativePath,
         [Parameter(Mandatory=$true)][string]$CacheName
     )
-    $local = Join-Path $PSScriptRoot $RelativePath
+    $basePath = if ([string]::IsNullOrWhiteSpace([string]$PSScriptRoot)) {
+        (Get-Location).Path
+    } else {
+        $PSScriptRoot
+    }
+    $local = Join-Path $basePath $RelativePath
     if (Test-Path -LiteralPath $local) { return $local }
 
     $cacheRoot = Join-Path $DataRoot 'runtime'
