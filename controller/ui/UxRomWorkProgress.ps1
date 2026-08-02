@@ -107,6 +107,131 @@ function Invoke-LayerAssessmentStep {
     }
 }
 
+# Layer 5 contains several synchronous Get-Counter windows. Keep those exact
+# measurement calls and evidence fields, while exposing each real phase through
+# the native progress surface so the console never appears idle between actions.
+function Invoke-KernelProfile {
+    param(
+        [string]$Root,
+        [ValidateRange(3, 15)][int]$BlockCount,
+        [ValidateRange(3, 60)][int]$SamplesPerBlock,
+        [ValidateRange(1, 10)][int]$SampleIntervalSeconds,
+        [ValidateRange(3, 25)][int]$CalibrationIterations
+    )
+
+    $activity = 'Layer 5 kernel-pressure profile'
+    Write-UxRomWorkProgress -Activity $activity -Status 'Checking required performance counters'
+    try {
+        $support = Get-KernelProfileSupport
+        if (-not $support.supported) {
+            throw "Kernel-pressure profiling is unsupported: $($support.reason)"
+        }
+
+        Ensure-DataDirectories -Root $Root
+        Write-UxRomWorkProgress `
+            -Activity $activity `
+            -Status "Calibrating counter observer ($CalibrationIterations runs)" `
+            -PercentComplete 5
+        $observer = Measure-KernelCounterObserver -Iterations $CalibrationIterations
+
+        $blocks = @()
+        $expectedBlockSeconds = [Math]::Max(1, (($SamplesPerBlock - 1) * $SampleIntervalSeconds))
+        for ($blockNumber = 1; $blockNumber -le $BlockCount; $blockNumber++) {
+            $blockStartPercent = 10 + [int][Math]::Floor((($blockNumber - 1) / [double]$BlockCount) * 65)
+            $remainingSeconds = [int](($BlockCount - $blockNumber + 1) * $expectedBlockSeconds)
+            Write-UxRomWorkProgress `
+                -Activity $activity `
+                -Status "Collecting block $blockNumber of $BlockCount ($SamplesPerBlock samples at ${SampleIntervalSeconds}s)" `
+                -PercentComplete $blockStartPercent `
+                -SecondsRemaining $remainingSeconds
+
+            $blocks += Get-KernelCounterBlock `
+                -BlockNumber $blockNumber `
+                -SamplesPerBlock $SamplesPerBlock `
+                -SampleIntervalSeconds $SampleIntervalSeconds
+
+            $blockDonePercent = 10 + [int][Math]::Floor(($blockNumber / [double]$BlockCount) * 65)
+            Write-UxRomWorkProgress `
+                -Activity $activity `
+                -Status "Completed block $blockNumber of $BlockCount" `
+                -PercentComplete $blockDonePercent
+        }
+
+        Write-UxRomWorkProgress -Activity $activity -Status 'Reading Windows environment' -PercentComplete 80
+        $environment = Get-KernelProfileEnvironment
+
+        Write-UxRomWorkProgress -Activity $activity -Status 'Checking trace-tool availability' -PercentComplete 87
+        $traceTools = Get-KernelTraceToolState
+
+        Write-UxRomWorkProgress -Activity $activity -Status 'Calculating kernel-pressure summary' -PercentComplete 93
+        $summary = Get-KernelProfileSummary -Blocks $blocks
+
+        $stamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff')
+        $runSuffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $evidencePath = Join-Path (Join-Path $Root 'measurements') "$stamp-$runSuffix-kernel-pressure-profile.json"
+        $profile = [pscustomobject][ordered]@{
+            schemaVersion = $script:SchemaVersion
+            experimentId = $script:ExperimentId
+            layer = 5
+            kind = 'kernel-pressure-profile'
+            capturedUtc = @($blocks[0].samples)[0].timestampUtc
+            completedUtc = [DateTime]::UtcNow.ToString('o')
+            observationOnly = $true
+            support = $support
+            environment = $environment
+            requested = [pscustomobject][ordered]@{
+                blockCount = $BlockCount
+                samplesPerBlock = $SamplesPerBlock
+                sampleIntervalSeconds = $SampleIntervalSeconds
+                calibrationIterations = $CalibrationIterations
+                maximumSamplingWindowSeconds = ($BlockCount * (($SamplesPerBlock - 1) * $SampleIntervalSeconds))
+            }
+            instrumentation = [pscustomobject][ordered]@{
+                source = 'Local Windows performance counters through Get-Counter'
+                timer = 'System.Diagnostics.Stopwatch'
+                observerCalibration = $observer
+                traceTools = $traceTools
+                qualification = 'Each block retains its complete raw sample series, wall duration, expected inter-sample span, and combined observer/scheduling excess. Results are not overhead-corrected.'
+            }
+            collectionScope = 'Twelve aggregate counters only. No process, thread, stack, module, device, driver, file, path, network identity, command line, credential, or customer content is collected.'
+            counterCatalog = @(Get-KernelProfileCounterCatalog)
+            blocks = @($blocks)
+            summary = $summary
+            evidencePath = $evidencePath
+        }
+
+        Write-UxRomWorkProgress -Activity $activity -Status 'Saving kernel-pressure evidence' -PercentComplete 98
+        $profile | ConvertTo-Json -Depth 24 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
+        try {
+            Write-StructuredEvent -Root $Root -Level Information -Event 'kernel-pressure-profile-complete' -Data @{
+                evidencePath = $evidencePath
+                blockCount = $summary.blockCount
+                sampleCount = $summary.sampleCount
+                dpcTimeMedianPercent = $summary.rawSampleDistributions.dpcTimePercent.median
+                interruptTimeMedianPercent = $summary.rawSampleDistributions.interruptTimePercent.median
+                observationOnly = $true
+            }
+        } catch {
+            Write-Warning "The kernel profile was saved, but the optional event journal could not be updated ($($_.Exception.GetType().Name))."
+        }
+
+        Write-UxRomWorkProgress -Activity $activity -Status 'Complete' -PercentComplete 100
+        Write-Host ''
+        Write-Host 'Layer 5 kernel-pressure profile (observation only)' -ForegroundColor Cyan
+        Write-Host "Blocks / samples: $($summary.blockCount) / $($summary.sampleCount)"
+        Write-Host "DPC / interrupt time median (%): $($summary.rawSampleDistributions.dpcTimePercent.median) / $($summary.rawSampleDistributions.interruptTimePercent.median)"
+        Write-Host "DPC queue / interrupt rate median: $($summary.rawSampleDistributions.dpcsQueuedPerSecond.median) / $($summary.rawSampleDistributions.interruptsPerSecond.median)"
+        Write-Host "Context switches / processor queue median: $($summary.rawSampleDistributions.contextSwitchesPerSecond.median) / $($summary.rawSampleDistributions.processorQueueLength.median)"
+        Write-Host "Disk latency / queue median: $($summary.rawSampleDistributions.diskLatencyMilliseconds.median) ms / $($summary.rawSampleDistributions.diskQueueLength.median)"
+        Write-Host $summary.interpretation -ForegroundColor DarkYellow
+        Write-Host "Evidence: $evidencePath" -ForegroundColor DarkGray
+        Write-Host 'No scheduler, interrupt, memory, storage, driver, service, registry, power, or Windows setting was changed.' -ForegroundColor DarkYellow
+        return $profile
+    } finally {
+        Write-UxRomWorkProgress -Activity $activity -Completed
+    }
+}
+
 # Replace only the presentation around the existing EXP-047 measurement contract.
 # Collection, trace handling, evidence schema, session state, and summary behavior
 # remain equivalent to the core implementation.
