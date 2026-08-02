@@ -1,0 +1,13 @@
+$provider = Join-Path $PSScriptRoot '..\providers\EdgeDisableCopilotNewTabPage.ps1'
+Describe 'EdgeDisableCopilotNewTabPage provider contract' {
+ BeforeAll { $text=Get-Content -LiteralPath $provider -Raw }
+ It 'stays Experimental and avoids forbidden release state and label' { Test-Path $provider|Should -BeTrue; $text|Should -Match 'EXP-139';$text|Should -Match 'EdgeDisableCopilotNewTabPage';$text|Should -Not -Match 'status:stable|Stable=';$text|Should -Not -Match "'blocked'|\"blocked\"" }
+ It 'implements complete reversible lifecycle' { foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"} }
+ It 'targets only the recommended Copilot new-tab policy DWORD zero' { foreach($t in 'CopilotNewTabPageEnabled','Recommended','DWord','Value=0','MutationCount=1'){$text|Should -Match $t};$text|Should -Not -Match 'Set-Service|Stop-Service|Disable-ScheduledTask|Remove-AppxPackage|Remove-Item .*User Data|Remove-Item .*Profile' }
+ It 'requires Windows 11 HP elevation Microsoft-signed Edge and an eligible controlled profile' { foreach($t in 'Windows 11','Hewlett-Packard','Test-Elevated','Microsoft Corporation','controlledProfile','microsoftAccountSignedIn','copilotNewTabPageEnabled','ProfileFixturePath'){$text|Should -Match ([regex]::Escape($t))} }
+ It 'refuses existing mandatory or recommended ownership and captures held Edge state' { foreach($t in 'Mandatory','Recommended','NewTabPagePrerenderEnabled','StartupBoostEnabled','BackgroundModeEnabled','SleepingTabsEnabled','HardwareAccelerationModeEnabled','NetworkPredictionOptions','Get-Management','Get-StartupFolders'){$text|Should -Match $t} }
+ It 'captures Edge identity profile management boot and protected scope' { foreach($t in 'Sha256','Thumbprint','MarkerSha256','capturedBootTime','userSid','Get-Protected'){$text|Should -Match $t} }
+ It 'has dry run WhatIf structured logs idempotence and terminating failure evidence' { foreach($t in 'DryRun','WhatIfPreference','Write-Log','ConvertTo-Json -Compress','idempotent','catch','failure'){$text|Should -Match $t} }
+ It 'requires reboot persistence and exact drift-safe rollback' { foreach($t in 'A later boot is required','Reboot persistence failed','rollback overwrite refused','Exact rollback verification failed','restoredExactOriginal'){$text|Should -Match $t} }
+ It 'preserves Windows security update Edge Update and Tailscale service configuration' { foreach($t in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','Tailscale','edgeupdate','edgeupdatem','Protected service configuration drift detected'){$text|Should -Match $t} }
+}
