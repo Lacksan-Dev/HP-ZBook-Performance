@@ -8,8 +8,9 @@
     Preserves the UX-ROM ASCII console and twelve-layer performance interface while
     adding EXP-137 as an integrated maintenance choice. Interactive launches render
     an animated bootstrap, component-fetch indicator, ASCII splash, layer-indexing
-    sequence, command-surface transition, and native PowerShell runtime progress for
-    longer measurements. Redirected and automation launches remain fast and deterministic.
+    sequence, command-surface transition, native PowerShell runtime progress, and
+    the machine Physical Validation / Stable Promotion surface. Redirected and
+    automation launches remain fast and deterministic.
 #>
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
@@ -144,7 +145,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '2026.08.02.4'
+$script:BootstrapVersion = '2026.08.02.5'
 $script:RawRoot = 'https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main'
 
 function Test-UxRomAnimationEnabled {
@@ -309,6 +310,16 @@ foreach ($key in $PSBoundParameters.Keys) {
 $workProgress = Resolve-UxRomComponent -RelativePath 'controller\ui\UxRomWorkProgress.ps1' -CacheName 'UxRomWorkProgress.ps1'
 . $workProgress
 
+# Direct layer selection must always run an integrated assessment even when the older
+# EXP-047 candidate array is empty.
+$layerIntegration = Resolve-UxRomComponent -RelativePath 'controller\ui\UxRomLayerIntegration.ps1' -CacheName 'UxRomLayerIntegration.ps1'
+. $layerIntegration
+
+# Human-approved release lane. The component discovers validation-ready providers from
+# main and records physical results locally before any machine-specific Stable claim.
+$stableValidation = Resolve-UxRomComponent -RelativePath 'controller\release\UxRomStableValidation.ps1' -CacheName 'UxRomStableValidation.ps1'
+. $stableValidation
+
 Write-UxRomAnimatedStage -Label 'Mounting performance core' -Frames 8 -DelayMilliseconds 28
 
 # Interactive splash override. Automation and redirected launches use the original,
@@ -361,7 +372,7 @@ function Show-UxRomSplash {
     Write-Host ''
 }
 
-# EXP-137 is integrated into the same menu rather than bypassing the product UI.
+# EXP-137 and the machine Stable-validation lane are integrated into the same product UI.
 function Show-ZBookPerfMenu {
     do {
         Write-Host ''
@@ -373,6 +384,7 @@ function Show-ZBookPerfMenu {
         }
         Write-Host ''
         Write-Host 'A. Apply all eligible tweaks - one measured, reversible synergy batch' -ForegroundColor Yellow
+        Write-Host 'V. Physical Validation / Stable Promotion - run merged providers on this machine' -ForegroundColor Green
         Write-Host 'E. Self-managed enrollment cleanup - capture, clean, reboot, verify, resume EXP-071' -ForegroundColor Yellow
         Write-Host 'K. Keep the measured layer change and continue'
         Write-Host 'R. Revert the active layer change or latest synergy batch'
@@ -380,6 +392,10 @@ function Show-ZBookPerfMenu {
         Write-Host 'M. Maintenance and direct measurement tools'
         Write-Host 'Q. Quit'
         $choice = Read-Host 'Choose diagnostics, a layer, or an action'
+        if ($choice -in @('v','V')) {
+            Show-UxRomStableValidationMenu -Root $DataRoot
+            continue
+        }
         if ($choice -in @('e','E')) {
             Write-Host ''
             Write-Host 'EXP-137 self-managed enrollment cleanup' -ForegroundColor Cyan
