@@ -1,0 +1,34 @@
+$provider=Join-Path $PSScriptRoot '..\providers\HpConnectionRecoveryManualDemandStart.ps1'
+Describe 'EXP-070 HP Connection Recovery zero-mutation integration' -Tag 'WindowsIntegration' {
+ BeforeAll {
+  if($env:RUN_LACKSAN_WINDOWS_INTEGRATION-ne'1'-or$env:OS-ne'Windows_NT'){return}
+  $script:enabled=$true
+  $script:state=Join-Path $env:TEMP 'lacksan-exp070-integration-state.json'
+  $script:log=Join-Path $env:TEMP 'lacksan-exp070-integration.jsonl'
+  Remove-Item $script:state,$script:log -Force -ErrorAction SilentlyContinue
+ }
+ It 'runs Check without mutation' -Skip:(-not $script:enabled) {
+  $before=Get-CimInstance Win32_Service -Filter "Name='HPCommRecovery'" -ErrorAction SilentlyContinue
+  & $provider -Action Check -StatePath $script:state -LogPath $script:log | Out-Null
+  $after=Get-CimInstance Win32_Service -Filter "Name='HPCommRecovery'" -ErrorAction SilentlyContinue
+  if($before-and$after){$after.StartMode|Should -Be $before.StartMode;$after.State|Should -Be $before.State}
+ }
+ It 'runs DryRun without mutation when supported' -Skip:(-not $script:enabled) {
+  $check=& $provider -Action Check -StatePath $script:state -LogPath $script:log
+  if(!$check.Supported){Set-ItResult -Skipped -Because ($check.Reasons -join '; ');return}
+  $before=Get-CimInstance Win32_Service -Filter "Name='HPCommRecovery'"
+  & $provider -Action DryRun -StatePath $script:state -LogPath $script:log | Out-Null
+  $after=Get-CimInstance Win32_Service -Filter "Name='HPCommRecovery'"
+  $after.StartMode|Should -Be $before.StartMode;$after.State|Should -Be $before.State
+ }
+ It 'simulates Apply with WhatIf after capture and leaves service unchanged' -Skip:(-not $script:enabled) {
+  $check=& $provider -Action Check -StatePath $script:state -LogPath $script:log
+  if(!$check.Supported){Set-ItResult -Skipped -Because ($check.Reasons -join '; ');return}
+  & $provider -Action Capture -StatePath $script:state -LogPath $script:log | Out-Null
+  $before=Get-CimInstance Win32_Service -Filter "Name='HPCommRecovery'"
+  & $provider -Action Apply -WhatIf -StatePath $script:state -LogPath $script:log | Out-Null
+  $after=Get-CimInstance Win32_Service -Filter "Name='HPCommRecovery'"
+  $after.StartMode|Should -Be $before.StartMode;$after.State|Should -Be $before.State
+ }
+ AfterAll {if($script:enabled){Remove-Item $script:state,$script:log -Force -ErrorAction SilentlyContinue}}
+}
