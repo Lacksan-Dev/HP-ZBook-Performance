@@ -16,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:Experiment = 'EXP-137'
 $script:Issue = 313
-$script:SchemaVersion = 1
+$script:SchemaVersion = 2
 $script:ResumeTaskName = 'Lacksan-EXP137-EnrollmentCleanup-Resume'
 $script:GuidPattern = '(?i)^\{?[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\}?$'
 $script:EnrollmentRoots = [ordered]@{
@@ -27,12 +27,14 @@ $script:EnrollmentRoots = [ordered]@{
     OmadmSessions = 'HKLM:\SOFTWARE\Microsoft\Provisioning\OMADM\Sessions'
     WorkplaceJoin = 'HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\WorkplaceJoin\JoinInfo'
 }
+$script:MdmAutoEnrollPolicyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\MDM'
 $script:RegistryExportRoots = [ordered]@{
     Enrollments = 'HKLM\SOFTWARE\Microsoft\Enrollments'
     OmadmAccounts = 'HKLM\SOFTWARE\Microsoft\Provisioning\OMADM\Accounts'
     OmadmLogger = 'HKLM\SOFTWARE\Microsoft\Provisioning\OMADM\Logger'
     OmadmSessions = 'HKLM\SOFTWARE\Microsoft\Provisioning\OMADM\Sessions'
     WorkplaceJoin = 'HKCU\SOFTWARE\Microsoft\Windows NT\CurrentVersion\WorkplaceJoin\JoinInfo'
+    MdmAutoEnrollPolicy = 'HKLM\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\MDM'
 }
 $script:ProtectedServices = @('WinDefend','mpssvc','wuauserv','UsoSvc','BITS','edgeupdate','edgeupdatem')
 $script:RawExp071Url = 'https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main/controller/providers/EdgeBackgroundModeOff.ps1'
@@ -127,6 +129,26 @@ function Get-GuidChildren {
     } | Where-Object { $_ } | Sort-Object -Unique)
 }
 
+function Get-RegistryValueState {
+    param([string]$Path,[string]$Name)
+    if (-not (Test-Path -LiteralPath $Path)) { return [pscustomobject]@{keyExists=$false;valueExists=$false;kind=$null;value=$null} }
+    $key = Get-Item -LiteralPath $Path
+    if ($key.GetValueNames() -notcontains $Name) { return [pscustomobject]@{keyExists=$true;valueExists=$false;kind=$null;value=$null} }
+    [pscustomobject]@{
+        keyExists=$true
+        valueExists=$true
+        kind=$key.GetValueKind($Name).ToString()
+        value=$key.GetValue($Name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    }
+}
+
+function Get-MdmAutoEnrollPolicyState {
+    [pscustomobject][ordered]@{
+        AutoEnrollMDM = Get-RegistryValueState $script:MdmAutoEnrollPolicyPath 'AutoEnrollMDM'
+        UseAADCredentialType = Get-RegistryValueState $script:MdmAutoEnrollPolicyPath 'UseAADCredentialType'
+    }
+}
+
 function Get-DsRegSnapshot {
     param([string]$Label)
     $result = Invoke-Native -FilePath 'dsregcmd.exe' -Arguments @('/status') -AllowFailure
@@ -167,6 +189,7 @@ function Get-EnterpriseMgmtTasks {
         $combined = "$($task.TaskPath)$($task.TaskName)"
         $m = [regex]::Match($combined,'(?i)\\Microsoft\\Windows\\EnterpriseMgmt\\(?<folder>\{?[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\}?)\\')
         $guid = if ($m.Success) { ConvertTo-CanonicalGuid $m.Groups['folder'].Value } else { $null }
+        $rootEnrollmentTask = (-not $guid -and $task.TaskPath -eq '\Microsoft\Windows\EnterpriseMgmt\' -and $task.TaskName -match '(?i)enroll|mdm|management')
         $xml = $null
         try { $xml = Export-ScheduledTask -TaskName $task.TaskName -TaskPath $task.TaskPath -ErrorAction Stop } catch { }
         $records += [pscustomobject][ordered]@{
@@ -175,6 +198,7 @@ function Get-EnterpriseMgmtTasks {
             state=[string]$task.State
             enrollmentGuid=$guid
             folderName=if ($m.Success) { [string]$m.Groups['folder'].Value } else { $null }
+            rootEnrollmentTaskCandidate=[bool]$rootEnrollmentTask
             xmlSha256=if ($xml) { Get-Sha256Text $xml } else { $null }
         }
     }
@@ -202,15 +226,18 @@ function Get-EnrollmentInventory {
         $active = (
             'WorkplaceJoin' -in $present -or
             'OmadmAccounts' -in $present -or
-            $taskCount -gt 0 -or
-            ('Enrollments' -in $present -and ('EnrollmentStatus' -in $present -or 'OmadmSessions' -in $present))
+            ('Enrollments' -in $present -and (
+                'EnrollmentStatus' -in $present -or
+                'OmadmSessions' -in $present -or
+                $taskCount -gt 0
+            ))
         )
         $classification = if ($active) {
             'active-or-correlated-enrollment'
+        } elseif ($taskCount -gt 0 -and $present.Count -eq 1) {
+            'residual-enterprisemgmt-task'
         } elseif ($present -contains 'Enrollments' -or $present -contains 'EnrollmentStatus') {
             'residual-enrollment-record'
-        } elseif ($present -contains 'EnterpriseMgmtTasks') {
-            'residual-enterprisemgmt-task'
         } else {
             'residual-enrollment-artifact'
         }
@@ -222,11 +249,14 @@ function Get-EnrollmentInventory {
             enterpriseMgmtTaskCount=$taskCount
         }
     }
+    $rootTasks = @($tasks | Where-Object rootEnrollmentTaskCandidate)
     [pscustomobject][ordered]@{
         capturedUtc=[DateTime]::UtcNow.ToString('o')
         enrollmentContainerChildCount=if (Test-Path $script:EnrollmentRoots.Enrollments) { @(Get-ChildItem $script:EnrollmentRoots.Enrollments -ErrorAction SilentlyContinue).Count } else { 0 }
         sources=[pscustomobject]$sources
         enterpriseMgmtTasks=@($tasks)
+        rootEnrollmentTaskCount=$rootTasks.Count
+        mdmAutoEnrollPolicy=Get-MdmAutoEnrollPolicyState
         records=@($records)
         activeCount=@($records | Where-Object activeOrCorrelated).Count
         residualCount=@($records | Where-Object { -not $_.activeOrCorrelated }).Count
@@ -295,7 +325,7 @@ function Export-TaskBackups {
             $xml = Export-ScheduledTask -TaskName $task.taskName -TaskPath $task.taskPath -ErrorAction Stop
             $file = Join-Path $BackupRoot ("task-{0:D3}.xml" -f $index)
             $xml | Set-Content -LiteralPath $file -Encoding Unicode
-            $rows += [pscustomobject]@{ taskPath=$task.taskPath; taskName=$task.taskName; enrollmentGuid=$task.enrollmentGuid; file=$file; xmlSha256=(Get-Sha256Text $xml) }
+            $rows += [pscustomobject]@{ taskPath=$task.taskPath; taskName=$task.taskName; enrollmentGuid=$task.enrollmentGuid; rootEnrollmentTaskCandidate=$task.rootEnrollmentTaskCandidate; file=$file; xmlSha256=(Get-Sha256Text $xml) }
         } catch {
             Write-Evidence 'task-backup' 'fail' @{taskPath=$task.taskPath;taskName=$task.taskName;error=$_.Exception.Message}
             throw
@@ -321,13 +351,19 @@ function Confirm-SelfManagedLab {
 
 function Remove-EnterpriseMgmtArtifacts {
     param([object[]]$Tasks,[string[]]$TargetGuids)
-    $removed = @()
+    $results = @()
     foreach ($task in $Tasks) {
-        if (-not $task.enrollmentGuid -or $task.enrollmentGuid -notin $TargetGuids) { continue }
+        $selected = ($task.enrollmentGuid -and $task.enrollmentGuid -in $TargetGuids) -or $task.rootEnrollmentTaskCandidate
+        if (-not $selected) { continue }
         if ($PSCmdlet.ShouldProcess("$($task.taskPath)$($task.taskName)",'Remove captured EnterpriseMgmt enrollment task')) {
-            Unregister-ScheduledTask -TaskName $task.taskName -TaskPath $task.taskPath -Confirm:$false -ErrorAction Stop
-            $removed += "$($task.taskPath)$($task.taskName)"
-            Write-Evidence 'remove-enterprisemgmt-task' 'pass' @{taskPath=$task.taskPath;taskName=$task.taskName;enrollmentGuid=$task.enrollmentGuid}
+            try {
+                Unregister-ScheduledTask -TaskName $task.taskName -TaskPath $task.taskPath -Confirm:$false -ErrorAction Stop
+                $results += [pscustomobject]@{taskPath=$task.taskPath;taskName=$task.taskName;status='removed'}
+                Write-Evidence 'remove-enterprisemgmt-task' 'pass' @{taskPath=$task.taskPath;taskName=$task.taskName;enrollmentGuid=$task.enrollmentGuid}
+            } catch {
+                $results += [pscustomobject]@{taskPath=$task.taskPath;taskName=$task.taskName;status='retained';error=$_.Exception.Message}
+                Write-Evidence 'remove-enterprisemgmt-task' 'retained' @{taskPath=$task.taskPath;taskName=$task.taskName;error=$_.Exception.Message}
+            }
         }
     }
     $folders = @($Tasks | Where-Object { $_.enrollmentGuid -in $TargetGuids -and $_.folderName } | Select-Object -ExpandProperty folderName -Unique)
@@ -337,32 +373,56 @@ function Remove-EnterpriseMgmtArtifacts {
             $scheduler.Connect()
             $parent = $scheduler.GetFolder('\Microsoft\Windows\EnterpriseMgmt')
             foreach ($folder in $folders) {
-                try { $parent.DeleteFolder($folder,0); Write-Evidence 'remove-enterprisemgmt-folder' 'pass' @{folder=$folder} } catch { Write-Evidence 'remove-enterprisemgmt-folder' 'retained' @{folder=$folder;error=$_.Exception.Message} }
+                try { $parent.DeleteFolder($folder,0); Write-Evidence 'remove-enterprisemgmt-folder' 'pass' @{folder=$folder} }
+                catch { Write-Evidence 'remove-enterprisemgmt-folder' 'retained' @{folder=$folder;error=$_.Exception.Message} }
             }
         } catch { Write-Evidence 'remove-enterprisemgmt-folder' 'retained' @{error=$_.Exception.Message} }
     }
-    return @($removed)
+    return @($results)
 }
 
 function Remove-RegistryArtifacts {
     param([string[]]$TargetGuids)
-    $removed = @()
+    $results = @()
     foreach ($guid in $TargetGuids) {
         foreach ($name in $script:EnrollmentRoots.Keys) {
             $path = Join-Path $script:EnrollmentRoots[$name] $guid
             $bracePath = Join-Path $script:EnrollmentRoots[$name] "{$guid}"
             foreach ($candidate in @($path,$bracePath) | Select-Object -Unique) {
-                if (Test-Path -LiteralPath $candidate) {
-                    if ($PSCmdlet.ShouldProcess($candidate,'Remove captured self-managed enrollment registry artifact')) {
+                if (-not (Test-Path -LiteralPath $candidate)) { continue }
+                if ($PSCmdlet.ShouldProcess($candidate,'Remove captured self-managed enrollment registry artifact')) {
+                    try {
                         Remove-Item -LiteralPath $candidate -Recurse -Force -ErrorAction Stop
-                        $removed += $candidate
+                        $results += [pscustomobject]@{path=$candidate;status='removed'}
                         Write-Evidence 'remove-enrollment-registry' 'pass' @{path=$candidate;enrollmentGuid=$guid}
+                    } catch {
+                        $results += [pscustomobject]@{path=$candidate;status='retained';error=$_.Exception.Message}
+                        Write-Evidence 'remove-enrollment-registry' 'retained' @{path=$candidate;enrollmentGuid=$guid;error=$_.Exception.Message}
                     }
                 }
             }
         }
     }
-    return @($removed)
+    return @($results)
+}
+
+function Remove-MdmAutoEnrollPolicy {
+    $results = @()
+    foreach ($name in @('AutoEnrollMDM','UseAADCredentialType')) {
+        $state = Get-RegistryValueState $script:MdmAutoEnrollPolicyPath $name
+        if (-not $state.valueExists) { continue }
+        if ($PSCmdlet.ShouldProcess("$script:MdmAutoEnrollPolicyPath::$name",'Remove captured self-managed MDM auto-enrollment policy value')) {
+            try {
+                Remove-ItemProperty -LiteralPath $script:MdmAutoEnrollPolicyPath -Name $name -ErrorAction Stop
+                $results += [pscustomobject]@{name=$name;status='removed'}
+                Write-Evidence 'remove-mdm-autoenroll-policy' 'pass' @{name=$name}
+            } catch {
+                $results += [pscustomobject]@{name=$name;status='retained';error=$_.Exception.Message}
+                Write-Evidence 'remove-mdm-autoenroll-policy' 'retained' @{name=$name;error=$_.Exception.Message}
+            }
+        }
+    }
+    return @($results)
 }
 
 function Resolve-Exp071Provider {
@@ -480,6 +540,7 @@ function Invoke-Start {
         disconnect=$null
         removedRegistry=@()
         removedTasks=@()
+        removedMdmPolicy=@()
         afterMutationDsregcmd=$null
         afterMutationInventory=$null
         exp071=$null
@@ -493,12 +554,13 @@ function Invoke-Start {
     Write-Host "Active/correlated enrollment records: $($beforeInventory.activeCount)"
     Write-Host "Residual enrollment records: $($beforeInventory.residualCount)"
     Write-Host "EnterpriseMgmt tasks: $(@($beforeInventory.enterpriseMgmtTasks).Count)"
+    Write-Host "Root enrollment tasks: $($beforeInventory.rootEnrollmentTaskCount)"
     Write-Host "Workplace joined: $($beforeDsreg.workplaceJoined)"
 
     if ($WhatIfPreference) {
         $state.phase = 'dry-run-complete'
         Save-State $state
-        Write-Evidence 'dry-run' 'pass' @{targetGuidCount=$targets.Count;enterpriseMgmtTaskCount=@($beforeInventory.enterpriseMgmtTasks).Count;wouldReboot=(-not $NoReboot)}
+        Write-Evidence 'dry-run' 'pass' @{targetGuidCount=$targets.Count;enterpriseMgmtTaskCount=@($beforeInventory.enterpriseMgmtTasks).Count;rootEnrollmentTaskCount=$beforeInventory.rootEnrollmentTaskCount;wouldReboot=(-not $NoReboot)}
         Write-Host "Dry run evidence: $script:RunRoot" -ForegroundColor DarkYellow
         return $state
     }
@@ -519,6 +581,7 @@ function Invoke-Start {
 
     $state.removedTasks = @(Remove-EnterpriseMgmtArtifacts -Tasks @($beforeInventory.enterpriseMgmtTasks) -TargetGuids $targets)
     $state.removedRegistry = @(Remove-RegistryArtifacts -TargetGuids $targets)
+    $state.removedMdmPolicy = @(Remove-MdmAutoEnrollPolicy)
     $state.afterMutationDsregcmd = Get-DsRegSnapshot 'after-mutation'
     $state.afterMutationInventory = Get-EnrollmentInventory
     $state.exp071 = Invoke-Exp071PreReboot
@@ -528,7 +591,7 @@ function Invoke-Start {
     $resumeScript = Join-Path $script:RunRoot 'UxRomEnrollmentCleanup.Resume.ps1'
     Copy-Item -LiteralPath $PSCommandPath -Destination $resumeScript -Force
     Register-ResumeTask -ResumeScript $resumeScript
-    Write-Evidence 'pre-reboot-complete' 'pass' @{removedRegistryCount=@($state.removedRegistry).Count;removedTaskCount=@($state.removedTasks).Count;exp071Status=$state.exp071.status}
+    Write-Evidence 'pre-reboot-complete' 'pass' @{removedRegistryCount=@($state.removedRegistry | Where-Object status -eq 'removed').Count;removedTaskCount=@($state.removedTasks | Where-Object status -eq 'removed').Count;removedMdmPolicyCount=@($state.removedMdmPolicy | Where-Object status -eq 'removed').Count;exp071Status=$state.exp071.status}
 
     Write-Host "Evidence: $script:RunRoot" -ForegroundColor Green
     if ($NoReboot) {
@@ -551,7 +614,8 @@ function Invoke-Resume {
     $remainingTargets = @($afterInventory.records | Where-Object { $_.guid -in @($state.targetGuids) })
     $protectedOk = Test-ProtectedEquivalent -Before $state.protectedBefore -After $protectedAfter
     $joinClean = (-not $afterDsreg.domainJoined -and -not $afterDsreg.azureAdJoined -and -not $afterDsreg.enterpriseJoined -and -not $afterDsreg.workplaceJoined)
-    $artifactsClean = ($remainingTargets.Count -eq 0)
+    $mdmPolicyClean = (-not $afterInventory.mdmAutoEnrollPolicy.AutoEnrollMDM.valueExists -and -not $afterInventory.mdmAutoEnrollPolicy.UseAADCredentialType.valueExists)
+    $artifactsClean = ($remainingTargets.Count -eq 0 -and $afterInventory.rootEnrollmentTaskCount -eq 0 -and $mdmPolicyClean)
 
     $expStatus = [string]$state.exp071.status
     if ($state.exp071.applied) {
@@ -572,20 +636,24 @@ function Invoke-Resume {
         laterBoot=$true
         joinStateClean=$joinClean
         targetEnrollmentArtifactsClean=$artifactsClean
+        mdmAutoEnrollPolicyClean=$mdmPolicyClean
         protectedConfigurationUnchanged=$protectedOk
         remainingTargetCount=$remainingTargets.Count
+        remainingRootEnrollmentTaskCount=$afterInventory.rootEnrollmentTaskCount
         exp071Status=$expStatus
     }) -Force
     $state.exp071.status = $expStatus
     $state.needsEvidence = -not ($joinClean -and $artifactsClean -and $protectedOk -and $expStatus -eq 'verified-reboot')
     $state.phase = if ($state.needsEvidence) { 'complete-needs-evidence' } else { 'complete' }
     Save-State $state
-    Write-Evidence 'post-reboot-verification' $(if ($state.needsEvidence) {'needs-evidence'} else {'pass'}) @{joinStateClean=$joinClean;artifactsClean=$artifactsClean;protectedUnchanged=$protectedOk;exp071Status=$expStatus;remainingTargetCount=$remainingTargets.Count}
+    Write-Evidence 'post-reboot-verification' $(if ($state.needsEvidence) {'needs-evidence'} else {'pass'}) @{joinStateClean=$joinClean;artifactsClean=$artifactsClean;mdmAutoEnrollPolicyClean=$mdmPolicyClean;protectedUnchanged=$protectedOk;exp071Status=$expStatus;remainingTargetCount=$remainingTargets.Count;remainingRootEnrollmentTaskCount=$afterInventory.rootEnrollmentTaskCount}
 
     Write-Host ''
     Write-Host 'EXP-137 post-reboot verification' -ForegroundColor Cyan
     Write-Host "Workplace joined: $($afterDsreg.workplaceJoined)"
     Write-Host "Remaining captured enrollment GUIDs: $($remainingTargets.Count)"
+    Write-Host "Remaining root EnterpriseMgmt enrollment tasks: $($afterInventory.rootEnrollmentTaskCount)"
+    Write-Host "MDM auto-enrollment policy values cleared: $mdmPolicyClean"
     Write-Host "Windows Update / Defender / Edge Update configuration unchanged: $protectedOk"
     Write-Host "EXP-071: $expStatus"
     Write-Host "Evidence: $script:RunRoot" -ForegroundColor Green
