@@ -117,19 +117,32 @@ Describe 'UX-ROM bootstrap contract' {
         $source | Should -Match 'Show-UxRomStableValidationMenu -Root \$DataRoot'
         $stableSource | Should -Match 'STABLE-APPROVAL-2026-08-02'
         $stableSource | Should -Match 'Get-UxRomMergedProviderCatalog'
+        $stableSource | Should -Match 'Get-UxRomMergedExperimentCatalog'
         $stableSource | Should -Match 'contents/controller/providers\?ref=main'
+        $stableSource | Should -Match 'git/trees/main\?recursive=1'
         $stableSource | Should -Match "'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'"
-        $stableSource | Should -Match 'Physical mechanics validated / performance evidence may still be required'
-        $stableSource | Should -Match 'stableClaim=\$false'
+        $stableSource | Should -Match 'Stable for this machine / performance effect unqualified'
+        $stableSource | Should -Match 'stableClaim=\$true'
+        $stableSource | Should -Match 'performanceClaim=\$false'
+        $stableSource | Should -Match 'Deploy-UxRomMachineStableProvider'
     }
 
-    It 'never converts human approval into fabricated physical evidence' {
+    It 'keeps machine Stable implementation evidence separate from performance claims' {
         $approvalSource = Get-Content -LiteralPath $stableApproval -Raw
         $approvalSource | Should -Match 'does not manufacture or substitute physical evidence'
         $approvalSource | Should -Match 'Stable approved / physical validation pending'
-        $stableSource | Should -Match 'five baseline and five treatment runs'
+        $approvalSource | Should -Match 'Stable implementation status does not create a responsiveness-gain claim'
+        $stableSource | Should -Match 'Five baseline and five treatment runs are requested'
         $stableSource | Should -Match 'rebootVerified=\$true'
         $stableSource | Should -Match 'rollbackExecuted=\$true'
+        $stableSource | Should -Match 'performance effect remains separately qualified'
+    }
+
+    It 'discovers experiment scripts rather than leaving merged engineering outside the product surface' {
+        $stableSource | Should -Match '\^experiments/EXP-\\d\{3\}/\.\+\\\.ps1\$'
+        $stableSource | Should -Match 'Invoke-Exp'
+        $stableSource | Should -Match "kind = if \(\$leaf -match '\(\?i\)LabHarness\|ValidationHarness\|Harness'\)"
+        $stableSource | Should -Match 'Merged experiment controller'
     }
 
     It 'exposes EXP-137 inside the same UX-ROM menu and as a direct action' {
