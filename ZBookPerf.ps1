@@ -6,9 +6,10 @@
 
 .DESCRIPTION
     Preserves the UX-ROM ASCII console and twelve-layer performance interface while
-    adding EXP-137 as an integrated maintenance choice. The cleanup captures
-    enrollment state, removes operator-authorized self-managed enrollment artifacts,
-    reruns EXP-071, reboots once, resumes automatically, and retains evidence.
+    adding EXP-137 as an integrated maintenance choice. Interactive launches render
+    an animated bootstrap, component-fetch indicator, ASCII splash, layer-indexing
+    sequence, and command-surface transition. Redirected and automation launches
+    remain fast and deterministic.
 #>
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
@@ -143,8 +144,90 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '2026.08.02.2'
+$script:BootstrapVersion = '2026.08.02.3'
 $script:RawRoot = 'https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main'
+
+function Test-UxRomAnimationEnabled {
+    if ($Host.Name -ne 'ConsoleHost') { return $false }
+    try {
+        if ([Console]::IsOutputRedirected) { return $false }
+    } catch {
+        return $false
+    }
+    return $true
+}
+
+function Write-UxRomAnimatedStage {
+    param(
+        [Parameter(Mandatory=$true)][string]$Label,
+        [ValidateRange(2, 60)][int]$Frames = 10,
+        [ValidateRange(10, 250)][int]$DelayMilliseconds = 35,
+        [ValidateRange(10, 40)][int]$Width = 22
+    )
+
+    if (-not (Test-UxRomAnimationEnabled)) {
+        Write-Host "$Label..." -ForegroundColor DarkGray
+        return
+    }
+
+    $spinner = @('|','/','-','\')
+    for ($frame = 0; $frame -lt $Frames; $frame++) {
+        $filled = [Math]::Max(1, [Math]::Min($Width, [int][Math]::Ceiling((($frame + 1) / [double]$Frames) * $Width)))
+        $bar = ('#' * $filled) + ('.' * ($Width - $filled))
+        $line = '  {0} {1,-30} [{2}]' -f $spinner[$frame % $spinner.Count], $Label.ToUpperInvariant(), $bar
+        Write-Host ("`r{0,-78}" -f $line) -NoNewline -ForegroundColor DarkGray
+        Start-Sleep -Milliseconds $DelayMilliseconds
+    }
+    $done = '  + {0,-30} [{1}]' -f $Label.ToUpperInvariant(), ('#' * $Width)
+    Write-Host ("`r{0,-78}" -f $done) -ForegroundColor Green
+}
+
+function Invoke-UxRomAnimatedDownload {
+    param(
+        [Parameter(Mandatory=$true)][string]$Uri,
+        [Parameter(Mandatory=$true)][string]$OutFile,
+        [Parameter(Mandatory=$true)][string]$Label
+    )
+
+    if (-not (Test-UxRomAnimationEnabled)) {
+        Write-Host "$Label..." -ForegroundColor DarkGray
+        Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $OutFile
+        return
+    }
+
+    $temporary = "$OutFile.download"
+    Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    $client = New-Object Net.WebClient
+    $spinner = @('|','/','-','\')
+    $width = 24
+    $tick = 0
+    try {
+        $task = $client.DownloadFileTaskAsync([Uri]$Uri, $temporary)
+        while (-not $task.IsCompleted) {
+            $track = New-Object char[] $width
+            for ($i = 0; $i -lt $width; $i++) { $track[$i] = '.' }
+            $track[$tick % $width] = '>'
+            $sizeKb = 0
+            if (Test-Path -LiteralPath $temporary) {
+                $sizeKb = [Math]::Round((Get-Item -LiteralPath $temporary).Length / 1KB, 1)
+            }
+            $line = '  {0} {1,-24} [{2}] {3,7} KB' -f $spinner[$tick % $spinner.Count], $Label.ToUpperInvariant(), (-join $track), $sizeKb
+            Write-Host ("`r{0,-90}" -f $line) -NoNewline -ForegroundColor DarkGray
+            Start-Sleep -Milliseconds 70
+            $tick++
+        }
+        $task.GetAwaiter().GetResult()
+        Move-Item -LiteralPath $temporary -Destination $OutFile -Force
+        $finalKb = [Math]::Round((Get-Item -LiteralPath $OutFile).Length / 1KB, 1)
+        $done = '  + {0,-24} [{1}] {2,7} KB' -f $Label.ToUpperInvariant(), ('#' * $width), $finalKb
+        Write-Host ("`r{0,-90}" -f $done) -ForegroundColor Green
+    } catch {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        throw
+    } finally {
+        $client.Dispose()
+    }
+}
 
 function Resolve-UxRomComponent {
     param(
@@ -164,7 +247,7 @@ function Resolve-UxRomComponent {
     $cache = Join-Path $cacheRoot $CacheName
     $uri = "$script:RawRoot/$($RelativePath.Replace('\','/'))"
     try {
-        Invoke-WebRequest -UseBasicParsing -Uri $uri -OutFile $cache
+        Invoke-UxRomAnimatedDownload -Uri $uri -OutFile $cache -Label "Fetching $CacheName"
     } catch {
         if (-not (Test-Path -LiteralPath $cache)) { throw }
         Write-Warning "Using cached UX-ROM component because refresh failed: $cache"
@@ -202,7 +285,15 @@ if ($Action -eq 'EnrollmentCleanupRollback') {
     return
 }
 
+if (Test-UxRomAnimationEnabled) {
+    Write-Host ''
+    Write-Host 'LACKSAN UX-ROM BOOTSTRAP' -ForegroundColor Red
+    Write-UxRomAnimatedStage -Label 'Initializing session' -Frames 7 -DelayMilliseconds 28
+}
+
 $core = Resolve-UxRomComponent -RelativePath 'controller\core\ZBookPerf.Core.ps1' -CacheName 'ZBookPerf.Core.ps1'
+Write-UxRomAnimatedStage -Label 'Verifying controller' -Frames 7 -DelayMilliseconds 28
+
 $forward = @{}
 foreach ($key in $PSBoundParameters.Keys) {
     if ($key -notin @('EnrollmentCleanup','SelfManagedEnrollmentConfirmed','NoReboot','EnrollmentStatePath')) {
@@ -210,12 +301,62 @@ foreach ($key in $PSBoundParameters.Keys) {
     }
 }
 
-# Dot-source the existing controller so the original ASCII splash, layer menu,
-# advanced tools, and all controller functions remain the interactive UX-ROM.
+# Dot-source the existing controller so its full feature set remains available.
 . $core @forward
 
+Write-UxRomAnimatedStage -Label 'Mounting performance core' -Frames 8 -DelayMilliseconds 28
+
+# Interactive splash override. Automation and redirected launches use the original,
+# immediate core splash so tests and scripted callers stay deterministic.
+function Show-UxRomSplash {
+    if ($script:SplashShown) { return }
+    $script:SplashShown = $true
+    Write-Host ''
+
+    if (-not (Test-UxRomAnimationEnabled)) {
+        Show-UxRomHeader
+        Write-Host 'Loading the twelve performance layers...' -ForegroundColor DarkGray
+        Write-Host ''
+        return
+    }
+
+    $logoLines = @(
+        '   _        _    ____ _  __ ____    _    _   _',
+        '  | |      / \  / ___| |/ // ___|  / \  | \ | |',
+        "  | |     / _ \| |   | ' / \___ \ / _ \ |  \| |",
+        '  | |___ / ___ \ |___| . \  ___) / ___ \| |\  |',
+        '  |_____/_/   \_\____|_|\_\|____/_/   \_\_| \_|'
+    )
+    foreach ($line in $logoLines) {
+        Write-Host $line -ForegroundColor Gray
+        Start-Sleep -Milliseconds 32
+    }
+
+    for ($pulse = 0; $pulse -lt 4; $pulse++) {
+        $tone = if (($pulse % 2) -eq 0) { 'Red' } else { 'DarkRed' }
+        Write-Host ("`r{0,-70}" -f '                    U X - R O M') -NoNewline -ForegroundColor $tone
+        Start-Sleep -Milliseconds 85
+    }
+    Write-Host ("`r{0,-70}" -f '                    U X - R O M') -ForegroundColor Red
+    Write-Host 'Windows performance-layer controller  ' -ForegroundColor DarkGray -NoNewline
+    Write-Host $script:ProductVersion -ForegroundColor Red
+
+    $layers = @(Get-PerformanceLayerCatalog)
+    $width = 28
+    for ($index = 0; $index -lt $layers.Count; $index++) {
+        $complete = $index + 1
+        $filled = [Math]::Max(1, [int][Math]::Ceiling(($complete / [double]$layers.Count) * $width))
+        $bar = ('#' * $filled) + ('.' * ($width - $filled))
+        $label = 'INDEXING LAYER {0:00}/{1:00}  {2,-24} [{3}]' -f $complete, $layers.Count, ([string]$layers[$index].name), $bar
+        Write-Host ("`r{0,-105}" -f $label) -NoNewline -ForegroundColor DarkGray
+        Start-Sleep -Milliseconds 42
+    }
+    Write-Host ("`r{0,-105}" -f ('PERFORMANCE MAP ONLINE'.PadRight(44) + '[' + ('#' * $width) + ']')) -ForegroundColor Green
+    Write-UxRomAnimatedStage -Label 'Rendering command surface' -Frames 9 -DelayMilliseconds 30
+    Write-Host ''
+}
+
 # EXP-137 is integrated into the same menu rather than bypassing the product UI.
-# The function name intentionally overrides the core menu after it is loaded.
 function Show-ZBookPerfMenu {
     do {
         Write-Host ''

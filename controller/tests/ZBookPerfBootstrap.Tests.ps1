@@ -1,8 +1,10 @@
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $sut = Join-Path $repoRoot 'ZBookPerf.ps1'
 $core = Join-Path $repoRoot 'controller\core\ZBookPerf.Core.ps1'
+$installer = Join-Path $repoRoot 'Install-UXROM.ps1'
 $source = Get-Content -LiteralPath $sut -Raw
 $coreSource = Get-Content -LiteralPath $core -Raw
+$installerSource = Get-Content -LiteralPath $installer -Raw
 
 Describe 'UX-ROM bootstrap contract' {
     It 'keeps the existing performance controller available through the core component' {
@@ -16,10 +18,23 @@ Describe 'UX-ROM bootstrap contract' {
         $coreSource | Should -Match 'Show-UxRomHeader'
         $coreSource | Should -Match 'U X - R O M'
         $coreSource | Should -Match 'Loading the twelve performance layers'
+        $source | Should -Match 'function Show-UxRomSplash'
+        $source | Should -Match 'INDEXING LAYER'
+        $source | Should -Match 'PERFORMANCE MAP ONLINE'
+        $source | Should -Match 'Rendering command surface'
         $source | Should -Match 'function Show-ZBookPerfMenu'
         $source | Should -Match 'Full system diagnostics'
         $source | Should -Match 'Apply all eligible tweaks'
         $source | Should -Match 'Maintenance and direct measurement tools'
+    }
+
+    It 'animates interactive component fetching without delaying redirected automation' {
+        $source | Should -Match 'Test-UxRomAnimationEnabled'
+        $source | Should -Match '\[Console\]::IsOutputRedirected'
+        $source | Should -Match 'Invoke-UxRomAnimatedDownload'
+        $source | Should -Match 'DownloadFileTaskAsync'
+        $source | Should -Match 'Start-Sleep -Milliseconds'
+        $source | Should -Match 'if \(-not \(Test-UxRomAnimationEnabled\)\)'
     }
 
     It 'exposes EXP-137 inside the same UX-ROM menu and as a direct action' {
@@ -34,5 +49,16 @@ Describe 'UX-ROM bootstrap contract' {
         $source | Should -Match 'raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main'
         $source | Should -Match 'Invoke-WebRequest -UseBasicParsing'
         $source | Should -Match "Join-Path \$DataRoot 'runtime'"
+    }
+
+    It 'provides an animated installer for first-run deployment' {
+        Test-Path -LiteralPath $installer | Should -BeTrue
+        $installerSource | Should -Match 'LACKSAN UX-ROM DEPLOYMENT'
+        $installerSource | Should -Match 'Authorizing session'
+        $installerSource | Should -Match 'FETCHING UX-ROM'
+        $installerSource | Should -Match 'Unsealing package'
+        $installerSource | Should -Match 'Transferring control'
+        $installerSource | Should -Match 'Set-ExecutionPolicy -Scope Process'
+        $installerSource | Should -Match 'Unblock-File'
     }
 }
