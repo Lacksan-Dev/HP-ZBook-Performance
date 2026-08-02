@@ -1,0 +1,12 @@
+$provider=Join-Path $PSScriptRoot '..\providers\EdgeDisableExtensionsPerformanceDetector.ps1'
+Describe 'EdgeDisableExtensionsPerformanceDetector provider contract' {
+ BeforeAll {$text=Get-Content -LiteralPath $provider -Raw}
+ It 'stays Experimental with evidence pending' {Test-Path $provider|Should -BeTrue;$text|Should -Match 'EXP-130';$text|Should -Match 'needs-evidence';$text|Should -Not -Match 'status:stable|Stable='}
+ It 'implements complete reversible lifecycle' {foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
+ It 'targets exactly the recommended detector DWORD zero' {foreach($t in 'ExtensionsPerformanceDetectorEnabled','Recommended','DWord','Value=0','MutationCount=1'){$text|Should -Match $t};$text|Should -Not -Match 'Set-Service|Stop-Service|Disable-ScheduledTask|Remove-AppxPackage|Remove-Item .*User Data|Remove-Item .*Profile'}
+ It 'requires HP Windows 11 Edge 130 Microsoft signature elevation and eligible non-MSA profile' {foreach($t in 'Windows 11','Hewlett-Packard','Major -ge 130','Microsoft Corporation','Test-Elevated','microsoftAccountSignedIn','detectorBaselineEligible','controlledProfile'){$text|Should -Match ([regex]::Escape($t))}}
+ It 'captures classified extension inventory and rejects drift' {foreach($t in 'management','installSource','Enabled','UserManageableEnabledCount','MarkerSha256','Profile or extension inventory drift detected','ExtensionInventoryUnchanged'){$text|Should -Match $t}}
+ It 'holds extension management and performance policy state' {foreach($t in 'ExtensionSettings','ExtensionInstallForcelist','ExtensionInstallBlocklist','StartupBoostEnabled','BackgroundModeEnabled','SleepingTabsEnabled','EfficiencyModeEnabled','HardwareAccelerationModeEnabled','NetworkPredictionOptions'){$text|Should -Match $t}}
+ It 'captures identity management boot startup and protected scope' {foreach($t in 'Sha256','Thumbprint','capturedBootTime','userSid','Get-Management','Get-StartupFolders','WinDefend','wuauserv','Tailscale','TermService','edgeupdate'){$text|Should -Match $t}}
+ It 'supports dry run WhatIf structured logs idempotence failure retention reboot and exact rollback' {foreach($t in 'WhatIfPreference','ConvertTo-Json -Compress','idempotent','catch','failure','A later boot is required','Reboot persistence failed','rollback overwrite refused','Exact rollback verification failed'){$text|Should -Match $t}}
+}
