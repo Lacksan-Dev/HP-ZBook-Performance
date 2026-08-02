@@ -1,6 +1,8 @@
 $provider=Join-Path $PSScriptRoot '..\providers\EdgeSetSleepingTabsTimeout.ps1'
 Describe 'EXP-073 Windows zero-mutation integration' -Tag 'Integration' {
-    It 'keeps policy, startup, service, task, driver, and device state unchanged during Check, DryRun, and Apply -WhatIf' -Skip:(-not $env:LACKSAN_WINDOWS_INTEGRATION) {
+    It 'keeps production policy, startup, service, task, driver, and device state unchanged during Check, Capture, DryRun, and Apply -WhatIf' -Skip:(-not $env:LACKSAN_WINDOWS_INTEGRATION) {
+        $state=Join-Path $TestDrive 'EXP-073-state.json'
+        $log=Join-Path $TestDrive 'EXP-073.jsonl'
         function Snapshot {
             [ordered]@{
                 policy = if(Test-Path 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'){Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'|ConvertTo-Json -Depth 5 -Compress}else{'absent'}
@@ -13,9 +15,10 @@ Describe 'EXP-073 Windows zero-mutation integration' -Tag 'Integration' {
             }|ConvertTo-Json -Depth 3 -Compress
         }
         $before=Snapshot
-        & $provider -Action Check | Out-Null
-        & $provider -Action DryRun | Out-Null
-        & $provider -Action Apply -WhatIf | Out-Null
+        & $provider -Action Check -StatePath $state -LogPath $log | Out-Null
+        & $provider -Action Capture -StatePath $state -LogPath $log | Out-Null
+        & $provider -Action DryRun -StatePath $state -LogPath $log | Out-Null
+        & $provider -Action Apply -StatePath $state -LogPath $log -WhatIf | Out-Null
         $after=Snapshot
         $after | Should -BeExactly $before
     }
