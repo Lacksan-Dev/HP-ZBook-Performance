@@ -167,7 +167,7 @@ function Get-UxRomScriptContract {
     param([string]$Path)
     $tokens=$null;$errors=$null
     $ast=[Management.Automation.Language.Parser]::ParseFile($Path,[ref]$tokens,[ref]$errors)
-    if (@($errors).Count -gt 0) { throw "PowerShell parser rejected $Path: $($errors[0].Message)" }
+    if (@($errors).Count -gt 0) { throw ('PowerShell parser rejected {0}: {1}' -f $Path,$errors[0].Message) }
     $parameterNames = @()
     if ($ast.ParamBlock) { $parameterNames = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath }) }
     $source = Get-Content -LiteralPath $Path -Raw
