@@ -25,7 +25,15 @@ function Get-PackageIdentity{
   $matches=@(foreach($root in $roots){Get-ItemProperty $root -ErrorAction SilentlyContinue|Where-Object {$_.DisplayName -match '(?i)HP.*(Touchpoint.*Analytics|Device Health)' -and $_.Publisher -match '(?i)HP Inc|Hewlett-Packard'}|ForEach-Object {[pscustomobject]@{ProductKey=$_.PSChildName;DisplayName=$_.DisplayName;DisplayVersion=$_.DisplayVersion;Publisher=$_.Publisher;InstallLocation=$_.InstallLocation;UninstallString=$_.UninstallString}}})
   $unique=@($matches|Sort-Object ProductKey,DisplayName,DisplayVersion -Unique);if($unique.Count -ne 1){throw 'HP Touchpoint package identity absent or ambiguous'};$unique[0]
 }
-function Get-ServiceTriggerState{$root=Join-Path $ServiceKey 'TriggerInfo';if(!(Test-Path -LiteralPath $root)){return @()};@((Get-ChildItem -LiteralPath $root -ErrorAction Stop|Sort-Object PSChildName|ForEach-Object{$k=$_;$props=Get-ItemProperty -LiteralPath $k.PSPath;[pscustomobject]@{Name=$k.PSChildName;Type=$props.Type;Action=$props.Action;GUID=if($props.PSObject.Properties.Name -contains 'GUID'){[Convert]::ToBase64String([byte[]]$props.GUID)}else{$null};Data=if($props.PSObject.Properties.Name -contains 'Data'){[Convert]::ToBase64String([byte[]]$props.Data)}else{$null}}}))}
+function Get-ServiceTriggerState{
+  $root=Join-Path $ServiceKey 'TriggerInfo';if(!(Test-Path -LiteralPath $root)){return @()}
+  @((Get-ChildItem -LiteralPath $root -ErrorAction Stop|Sort-Object PSChildName|ForEach-Object{
+    $k=$_;$props=Get-ItemProperty -LiteralPath $k.PSPath;$guid=$null;$data=$null
+    if($props.PSObject.Properties.Name -contains 'GUID'){$guid=[Convert]::ToBase64String([byte[]]$props.GUID)}
+    if($props.PSObject.Properties.Name -contains 'Data'){$data=[Convert]::ToBase64String([byte[]]$props.Data)}
+    [pscustomobject]@{Name=$k.PSChildName;Type=$props.Type;Action=$props.Action;GUID=$guid;Data=$data}
+  }))
+}
 function Test-Same($A,$B){($A|ConvertTo-Json -Compress -Depth 12) -eq ($B|ConvertTo-Json -Compress -Depth 12)}
 function Get-Candidate{
   Test-Elevation;$os=Get-CimInstance Win32_OperatingSystem;$cs=Get-CimInstance Win32_ComputerSystem;$bios=Get-CimInstance Win32_BIOS
