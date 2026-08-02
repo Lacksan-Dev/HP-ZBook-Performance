@@ -1,0 +1,15 @@
+$provider=Join-Path $PSScriptRoot '..\providers\LogitechGamingSoftwareRemoval.ps1'
+Describe 'EXP-085 Logitech Gaming Software removal provider contract' {
+ BeforeAll {$content=Get-Content -LiteralPath $provider -Raw}
+ It 'parses as PowerShell' {$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($provider,[ref]$t,[ref]$e);$e.Count|Should -Be 0}
+ It 'exposes the complete reversible action surface' {foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$content|Should -Match ([regex]::Escape("'$a'"))}}
+ It 'requires HP Windows 11 elevation and one Logitech product' {$content|Should -Match 'Windows 11 required';$content|Should -Match 'HP platform required';$content|Should -Match 'elevation required';$content|Should -Match 'exactly one Logitech Gaming Software product required'}
+ It 'requires exact signed rollback media and version matching' {$content|Should -Match 'ValidLogitech';$content|Should -Match 'rollback installer version mismatch';$content|Should -Match 'Get-FileHash';$content|Should -Match 'Rollback installer identity drift detected'}
+ It 'refuses unsafe uninstall command surfaces' {foreach($token in 'powershell','cmd\.exe','pnputil','devcon','dism','remove-pnpdevice','disable-pnpdevice','driverstore'){$content|Should -Match $token}}
+ It 'refuses management pending reboot and state overwrite' {$content|Should -Match 'enterprise management ownership detected';$content|Should -Match 'pending reboot detected';$content|Should -Match 'State overwrite refused'}
+ It 'implements ShouldProcess WhatIf idempotence and structured JSONL logging' {$content|Should -Match 'SupportsShouldProcess';$content|Should -Match 'WhatIfPreference';$content|Should -Match "'idempotent'";$content|Should -Match 'ConvertTo-Json -Compress';$content|Should -Match 'mutationCount'}
+ It 'requires a later boot for reboot verification' {$content|Should -Match 'A later boot is required';$content|Should -Match 'Removal failed reboot persistence'}
+ It 'preserves protected services and refuses drift' {$content|Should -Match 'WinDefend';$content|Should -Match 'wuauserv';$content|Should -Match 'TermService';$content|Should -Match 'Tailscale';$content|Should -Match 'Protected service state drift detected'}
+ It 'restores only through the exact captured installer and verifies exact product identity' {$content|Should -Match 'Reinstall exact captured version';$content|Should -Match 'Exact-version rollback verification failed';$content|Should -Match 'Rollback collision with another Logitech Gaming Software identity'}
+ It 'contains no device driver firmware or broad cleanup mutation commands' {$content|Should -Not -Match 'Remove-PnpDevice\s';$content|Should -Not -Match 'Disable-PnpDevice\s';$content|Should -Not -Match 'pnputil\s+/delete-driver';$content|Should -Not -Match 'Remove-Item\s+.*DriverStore';$content|Should -Not -Match 'Remove-Item\s+.*Firmware'}
+}
