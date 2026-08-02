@@ -36,6 +36,13 @@ An experiment may remain Experimental while later research continues in separate
 - Unsafe, irreversible, security-reducing, or unsupported proposals remain research findings and never become live-change code.
 - Never assign Stable automatically. Stable requires explicit human approval.
 
+## Management-state boundary
+- Do not treat management state as protected when the operator explicitly declares the lab machine self-managed and requests management cleanup.
+- Self-managed Workplace/MDM cleanup must be its own focused experiment with enrollment inventory, active-versus-residual classification, pre-change evidence, structured logs, reboot verification, and local rollback artifacts where Windows exposes them.
+- Preserve externally owned domain, MDM, ConfigMgr, or enterprise policy unless the operator explicitly brings that ownership into the experiment scope.
+- Never weaken Windows security, Windows Update, Edge Update, credentials, browser profile data, or device-critical drivers as a side effect of management cleanup.
+- When cloud registration cannot be reconstructed exactly from local artifacts, record that limitation as `needs-evidence` rather than inventing rollback success.
+
 ## Parallel discovery policy
 Every research layer must search for specific candidate experiments, including:
 - Startup registrations and logon contention
@@ -60,7 +67,7 @@ Preserve startup behavior for:
 - Remote Desktop
 - Tailscale
 
-Also preserve Windows security, credential, accessibility, device-driver, recovery, update, and enterprise-management components.
+Also preserve Windows security, credential, accessibility, device-driver, recovery, and update components. Externally owned enterprise management remains protected. Self-managed lab enrollment can be removed only through the dedicated management-cleanup workflow above.
 
 ### Cleanup target
 For all other user applications, inventory and remove or disable auto-launch registrations when safely reversible, including:
@@ -92,14 +99,16 @@ Requirements:
 - Measure cold launch, first interactive window, first navigation, new-tab readiness, and memory cost.
 - Test supported Edge mechanisms separately, including Startup Boost, background mode, sleeping tabs, extension removal, profile state, hardware acceleration, cache behavior, and documented enterprise policies.
 - Startup Boost may run supported Edge background processes without a Startup-folder shortcut; record the resource cost and compare it with true cold launch.
-- Preserve user profiles, passwords, cookies, favorites, security controls, update behavior, and management policy.
+- Preserve user profiles, passwords, cookies, favorites, security controls, and update behavior.
+- Preserve externally owned Edge management policy. Self-managed Windows enrollment may be cleaned separately under the management-state boundary.
 - Select the fastest supported configuration using repeated runs and medians.
 
 ## Service suspension and replacement workstream
 - Research one service or tightly related service group per experiment.
 - Prefer vendor telemetry, updater, tray, helper, and redundant user-mode services before Windows platform services.
 - Compare Automatic, Automatic Delayed Start, Manual, demand-start, temporary suspension, and a smaller replacement component where supported.
-- Never weaken Defender, Firewall, BitLocker, Credential Guard, VBS, Windows Update, recovery, credential providers, networking required by Omnissa/Windows App/Remote Desktop/Tailscale, or enterprise management.
+- Never weaken Defender, Firewall, BitLocker, Credential Guard, VBS, Windows Update, recovery, credential providers, networking required by Omnissa/Windows App/Remote Desktop/Tailscale, or externally owned enterprise management.
+- Self-managed management enrollment changes belong in the dedicated management-cleanup experiment rather than a service experiment.
 - A replacement must preserve the required customer function and expose support detection, health checks, logs, and rollback.
 
 ## Engineering requirements
