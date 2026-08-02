@@ -8,8 +8,8 @@
     Preserves the UX-ROM ASCII console and twelve-layer performance interface while
     adding EXP-137 as an integrated maintenance choice. Interactive launches render
     an animated bootstrap, component-fetch indicator, ASCII splash, layer-indexing
-    sequence, and command-surface transition. Redirected and automation launches
-    remain fast and deterministic.
+    sequence, command-surface transition, and native PowerShell runtime progress for
+    longer measurements. Redirected and automation launches remain fast and deterministic.
 #>
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
@@ -144,7 +144,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '2026.08.02.3'
+$script:BootstrapVersion = '2026.08.02.4'
 $script:RawRoot = 'https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main'
 
 function Test-UxRomAnimationEnabled {
@@ -303,6 +303,11 @@ foreach ($key in $PSBoundParameters.Keys) {
 
 # Dot-source the existing controller so its full feature set remains available.
 . $core @forward
+
+# Runtime progress is a presentation-only overlay. It uses native Write-Progress and
+# preserves the controller's evidence, measurement, and rollback behavior.
+$workProgress = Resolve-UxRomComponent -RelativePath 'controller\ui\UxRomWorkProgress.ps1' -CacheName 'UxRomWorkProgress.ps1'
+. $workProgress
 
 Write-UxRomAnimatedStage -Label 'Mounting performance core' -Frames 8 -DelayMilliseconds 28
 
