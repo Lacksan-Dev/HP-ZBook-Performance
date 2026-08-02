@@ -62,12 +62,34 @@ Describe 'UX-ROM bootstrap contract' {
         $progressSource | Should -Match 'Write-UxRomWorkProgress -Activity \$activity -Completed'
     }
 
+    It 'keeps Layer 5 visibly active through its synchronous counter windows' {
+        $progressSource | Should -Match 'function Invoke-KernelProfile'
+        $progressSource | Should -Match 'Layer 5 kernel-pressure profile'
+        $progressSource | Should -Match 'Checking required performance counters'
+        $progressSource | Should -Match 'Calibrating counter observer'
+        $progressSource | Should -Match 'Collecting block \$blockNumber of \$BlockCount'
+        $progressSource | Should -Match 'Completed block \$blockNumber of \$BlockCount'
+        $progressSource | Should -Match 'Reading Windows environment'
+        $progressSource | Should -Match 'Checking trace-tool availability'
+        $progressSource | Should -Match 'Calculating kernel-pressure summary'
+        $progressSource | Should -Match 'Saving kernel-pressure evidence'
+        $progressSource | Should -Match 'Get-KernelCounterBlock'
+    }
+
     It 'preserves the measurement evidence contract while changing presentation only' {
         $progressSource | Should -Match "instrumentation = 'Get-Counter with CIM fallback; per-process CIM snapshots; optional WPR GeneralProfile \+ CPU \+ DiskIO'"
-        $progressSource | Should -Match "Join-Path \$Root 'session.json'"
+        $progressSource | Should -Match 'Join-Path \$Root ''session\.json'''
         $progressSource | Should -Match "Event 'measurement-complete'"
         $progressSource | Should -Match 'Show-MeasurementSummary -Measurement \$measurement'
         $progressSource | Should -Match 'Stop-WprCapture -Trace \$trace'
+    }
+
+    It 'preserves the Layer 5 evidence contract while changing presentation only' {
+        $progressSource | Should -Match "kind = 'kernel-pressure-profile'"
+        $progressSource | Should -Match "source = 'Local Windows performance counters through Get-Counter'"
+        $progressSource | Should -Match "Event 'kernel-pressure-profile-complete'"
+        $progressSource | Should -Match 'Get-KernelProfileSummary -Blocks \$blocks'
+        $progressSource | Should -Match 'Get-KernelTraceToolState'
     }
 
     It 'exposes EXP-137 inside the same UX-ROM menu and as a direct action' {
