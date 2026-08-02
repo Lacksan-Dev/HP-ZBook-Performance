@@ -1,9 +1,10 @@
-$repoRoot = Split-Path (Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent) -Parent
-$sut = Join-Path $repoRoot 'controller\release\UxRomStableValidation.ps1'
-
 Describe 'UX-ROM Stable release catalog' {
+    BeforeAll {
+        $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..')
+        . (Join-Path $repoRoot 'controller\release\UxRomStableValidation.ps1')
+    }
+
     BeforeEach {
-        . $sut
         Mock Get-UxRomStableRoot { return $TestDrive }
         Mock Write-UxRomStableJson { }
     }
