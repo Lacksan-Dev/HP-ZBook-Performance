@@ -3,7 +3,7 @@ $source = Get-Content -LiteralPath $sut -Raw
 
 Describe 'EXP-136 scheduled task inventory contract' {
     It 'is explicitly zero mutation during research selection' {
-        $source | Should -Match "mutationAllowed = \$false"
+        $source | Should -Match 'mutationAllowed = \$false'
         $source | Should -Match "ValidateSet\('Check','Capture','DryRun','Select'\)"
         $source | Should -Not -Match 'Disable-ScheduledTask'
         $source | Should -Not -Match 'Enable-ScheduledTask'
@@ -71,7 +71,7 @@ Describe 'EXP-136 scheduled task inventory contract' {
 
     It 'preserves structured JSONL failure evidence' {
         $source | Should -Match 'ConvertTo-Json -Depth 12 -Compress'
-        $source | Should -Match "Write-EvidenceLog \$Action 'fail'"
+        $source | Should -Match 'Write-EvidenceLog \$Action ''fail'''
         $source | Should -Match 'refusalReason'
         $source | Should -Match 'failureDetail'
         $source | Should -Match 'throw'
