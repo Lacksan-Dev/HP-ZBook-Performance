@@ -138,7 +138,12 @@ function Get-UxRomStableCatalog {
         } catch {}
     }
 
-    $entries = @((Get-UxRomMergedProviderCatalog) + (Get-UxRomMergedExperimentCatalog))
+    # PowerShell unwraps a single pipeline result to a PSCustomObject. Build the
+    # combined catalog by appending each result set to a real array so one-item
+    # catalogs cannot invoke PSObject op_Addition.
+    $entries = @()
+    $entries += @(Get-UxRomMergedProviderCatalog)
+    $entries += @(Get-UxRomMergedExperimentCatalog)
     $deduped = @($entries | Sort-Object path -Unique | Sort-Object layer,experiment,name,path)
     Write-UxRomStableJson -Path $cachePath -Value ([ordered]@{
         schemaVersion=$script:StableValidationSchema
