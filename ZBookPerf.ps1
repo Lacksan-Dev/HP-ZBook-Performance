@@ -2,12 +2,12 @@
 
 <#
 .SYNOPSIS
-    Lacksan UX-ROM bootstrap and self-managed enrollment maintenance entrypoint.
+    Lacksan UX-ROM performance controller and self-managed enrollment maintenance entrypoint.
 
 .DESCRIPTION
-    Preserves the existing UX-ROM performance controller while adding EXP-137,
-    an explicitly operator-authorized self-managed Workplace/MDM cleanup path.
-    The cleanup captures enrollment state, removes captured enrollment artifacts,
+    Preserves the UX-ROM ASCII console and twelve-layer performance interface while
+    adding EXP-137 as an integrated maintenance choice. The cleanup captures
+    enrollment state, removes operator-authorized self-managed enrollment artifacts,
     reruns EXP-071, reboots once, resumes automatically, and retains evidence.
 #>
 
@@ -143,7 +143,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '2026.08.02.1'
+$script:BootstrapVersion = '2026.08.02.2'
 $script:RawRoot = 'https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main'
 
 function Resolve-UxRomComponent {
@@ -210,8 +210,40 @@ foreach ($key in $PSBoundParameters.Keys) {
     }
 }
 
-if ($MyInvocation.InvocationName -eq '.') {
-    . $core @forward
-} else {
-    & $core @forward
+# Dot-source the existing controller so the original ASCII splash, layer menu,
+# advanced tools, and all controller functions remain the interactive UX-ROM.
+. $core @forward
+
+# EXP-137 is integrated into the same menu rather than bypassing the product UI.
+# The function name intentionally overrides the core menu after it is loaded.
+function Show-ZBookPerfMenu {
+    do {
+        Write-Host ''
+        Write-Host 'D. Full system diagnostics - one read-only pass across every integrated check' -ForegroundColor White
+        Write-Host ''
+        foreach ($layer in Get-PerformanceLayerCatalog) {
+            Write-Host ("{0,2}. {1}" -f $layer.number, $layer.name) -ForegroundColor White
+            Write-Host ("    {0}" -f $layer.description) -ForegroundColor DarkGray
+        }
+        Write-Host ''
+        Write-Host 'A. Apply all eligible tweaks - one measured, reversible synergy batch' -ForegroundColor Yellow
+        Write-Host 'E. Self-managed enrollment cleanup - capture, clean, reboot, verify, resume EXP-071' -ForegroundColor Yellow
+        Write-Host 'K. Keep the measured layer change and continue'
+        Write-Host 'R. Revert the active layer change or latest synergy batch'
+        Write-Host 'S. Show workflow, build, WPR, and support status'
+        Write-Host 'M. Maintenance and direct measurement tools'
+        Write-Host 'Q. Quit'
+        $choice = Read-Host 'Choose diagnostics, a layer, or an action'
+        if ($choice -in @('e','E')) {
+            Write-Host ''
+            Write-Host 'EXP-137 self-managed enrollment cleanup' -ForegroundColor Cyan
+            Invoke-EnrollmentMaintenance -Mode Start
+            continue
+        }
+        return $choice
+    } while ($true)
+}
+
+if ($MyInvocation.InvocationName -ne '.') {
+    Invoke-ZBookPerfMain
 }
