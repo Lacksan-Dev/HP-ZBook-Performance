@@ -38,7 +38,6 @@ function Get-Management {
     [ordered]@{domainJoined=[bool]$domain;configMgr=[bool]$ccm;enrollmentTree=[bool]$enroll}
 }
 function Get-StartupFolders {
-    $shell=New-Object -ComObject Shell.Application
     $paths=@([Environment]::GetFolderPath('Startup'),[Environment]::GetFolderPath('CommonStartup'))|Where-Object{$_}
     $hits=@(); foreach($d in $paths){if(Test-Path $d){Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue|ForEach-Object{if($_.Name -match 'Edge|msedge'){$hits+=$_.FullName}}}}
     @($hits)
@@ -77,10 +76,9 @@ try {
             $s=Load-State; Assert-DriftSafe $s; $cur=Get-RegValue $PolicyPath $ValueName
             if($cur.valueExists -and [int]$cur.raw -eq $Treatment){Write-ExpLog $Action 'idempotent' $cur $cur;return $cur}
             if($cur.valueExists){throw 'Refuse: policy changed since capture.'}
-            if($PSCmdlet.ShouldProcess("$PolicyPath\$ValueName","Set REG_DWORD $Treatment")){
-                if(-not(Test-Path $PolicyPath)){New-Item -Path $PolicyPath -Force|Out-Null}
-                New-ItemProperty -Path $PolicyPath -Name $ValueName -PropertyType DWord -Value $Treatment -Force|Out-Null
-            }
+            if(-not $PSCmdlet.ShouldProcess("$PolicyPath\$ValueName","Set REG_DWORD $Treatment")){Write-ExpLog $Action 'whatif' $cur @{SleepingTabsTimeout=$Treatment};return $cur}
+            if(-not(Test-Path $PolicyPath)){New-Item -Path $PolicyPath -Force|Out-Null}
+            New-ItemProperty -Path $PolicyPath -Name $ValueName -PropertyType DWord -Value $Treatment -Force|Out-Null
             $after=Get-RegValue $PolicyPath $ValueName; if(-not $after.valueExists -or [int]$after.raw -ne $Treatment){throw 'Treatment verification failed.'}
             Write-ExpLog $Action 'applied' $cur $after;$after
         }
@@ -89,12 +87,11 @@ try {
         'Rollback' {
             $s=Load-State;Assert-DriftSafe $s;$cur=Get-RegValue $PolicyPath $ValueName
             if($cur.valueExists -and [int]$cur.raw -ne $Treatment){throw 'Refuse: rollback collision or policy drift.'}
-            if($PSCmdlet.ShouldProcess("$PolicyPath\$ValueName",'Restore captured state')){
-                if($s.policy.recommended.valueExists){
-                    $kind=[Microsoft.Win32.RegistryValueKind]::$($s.policy.recommended.kind)
-                    $k=Get-Item -LiteralPath $PolicyPath; $k.SetValue($ValueName,$s.policy.recommended.raw,$kind)
-                } elseif(Test-Path $PolicyPath){Remove-ItemProperty -Path $PolicyPath -Name $ValueName -ErrorAction SilentlyContinue}
-            }
+            if(-not $PSCmdlet.ShouldProcess("$PolicyPath\$ValueName",'Restore captured state')){Write-ExpLog $Action 'whatif' $cur $s.policy.recommended;return $cur}
+            if($s.policy.recommended.valueExists){
+                $kind=[Microsoft.Win32.RegistryValueKind]::$($s.policy.recommended.kind)
+                $k=Get-Item -LiteralPath $PolicyPath; $k.SetValue($ValueName,$s.policy.recommended.raw,$kind)
+            } elseif(Test-Path $PolicyPath){Remove-ItemProperty -Path $PolicyPath -Name $ValueName -ErrorAction SilentlyContinue}
             $after=Get-RegValue $PolicyPath $ValueName
             if([bool]$after.valueExists -ne [bool]$s.policy.recommended.valueExists){throw 'Rollback verification failed.'}
             if($after.valueExists -and ($after.kind -ne $s.policy.recommended.kind -or "$($after.raw)" -ne "$($s.policy.recommended.raw)")){throw 'Rollback exact-state mismatch.'}
