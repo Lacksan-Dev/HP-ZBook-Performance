@@ -128,12 +128,12 @@ function Get-UxRomScriptContract {
     $parameterNames = @()
     if ($ast.ParamBlock) { $parameterNames = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath }) }
     $source = Get-Content -LiteralPath $Path -Raw
-    $actions = @('Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback') | Where-Object { $source -match "['\"]$_['\"]" }
+    $actions = @('Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback') | Where-Object { $source -match [regex]::Escape($_) }
     return [pscustomobject][ordered]@{
         parameters=$parameterNames
         lifecycleActions=$actions
         standardProvider=($parameterNames -contains 'Action' -and @($actions).Count -eq 7)
-        harness=($parameterNames -contains 'Action' -and $source -match "['\"]Start['\"]" -and $source -match "['\"]Continue['\"]")
+        harness=($parameterNames -contains 'Action' -and $source -match 'Start' -and $source -match 'Continue')
     }
 }
 
