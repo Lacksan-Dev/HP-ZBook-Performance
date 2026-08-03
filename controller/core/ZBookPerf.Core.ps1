@@ -148,7 +148,7 @@ $ErrorActionPreference = 'Stop'
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
 $script:ProductName = 'Lacksan UX-ROM'
-$script:ProductVersion = '2026.08.04.1'
+$script:ProductVersion = '2026.08.04.2'
 $script:LayerWorkflowSchemaVersion = 1
 $script:BlogRepository = 'Lacksan-Dev/lacksan-website'
 $script:BlogDispatchEvent = 'uxrom_test_result'
@@ -5727,6 +5727,19 @@ function Get-CandidateDisplayName {
     }
 }
 
+function Get-CandidateDescription {
+    param([string]$Name)
+
+    switch ($Name) {
+        'PowerAc' { return 'Uses the captured built-in High performance plan for plugged-in processor behavior; only available when Windows exposes that plan.' }
+        'MmcssResponsiveness' { return 'Tests the documented multimedia scheduling reservation at 10 percent; machine-wide and reversible.' }
+        'NtfsLastAccess' { return 'Tests the documented NTFS last-access update policy; requires a controlled reboot and persistence check.' }
+        'VisualEffects' { return 'Turns off supported Windows animation effects for the current user, then measures visible response time.' }
+        'FastStartupDiagnostic' { return 'Temporarily disables Fast Startup to isolate boot and device-state behavior; diagnostic-only and reboot-dependent.' }
+        default { return 'Experimental UX-ROM performance control.' }
+    }
+}
+
 function Get-LayerWorkflowPath {
     param([string]$Root)
     return (Join-Path $Root 'layer-workflow.json')
@@ -5836,6 +5849,163 @@ function Get-WorkflowCandidateSupport {
         supported = $true
         reason = 'Candidate-specific support detection runs again before original-state capture and application.'
     }
+}
+
+function Get-UxRomTweakDeploymentStatus {
+    param([string]$Root)
+
+    $activeEntries = @()
+    try {
+        $changeLog = Get-ChangeLog -Root $Root
+        $activeEntries = @($changeLog.entries | Where-Object { $_.status -eq 'applied' })
+    } catch {
+        $activeEntries = @()
+    }
+
+    $items = New-Object System.Collections.ArrayList
+    $menuNumber = 0
+    foreach ($layer in Get-PerformanceLayerCatalog) {
+        foreach ($candidate in @($layer.candidates)) {
+            $menuNumber++
+            $support = $null
+            try {
+                $support = Get-WorkflowCandidateSupport -Name $candidate
+            } catch {
+                $support = [pscustomobject]@{ supported = $false; reason = $_.Exception.Message }
+            }
+
+            $statusCode = 'Unavailable'
+            $statusLabel = 'UNAVAILABLE'
+            $reason = [string]$support.reason
+            $selectable = $false
+            $verifiedRequestedState = $false
+            if ($support.supported) {
+                try {
+                    $verifiedRequestedState = [bool](Test-CandidateApplied -Name $candidate)
+                } catch {
+                    $statusCode = 'NeedsAttention'
+                    $statusLabel = 'CHECK FAILED'
+                    $reason = "UX-ROM could not verify this setting: $($_.Exception.Message)"
+                }
+
+                if ($statusCode -ne 'NeedsAttention') {
+                    $activeEntry = @($activeEntries | Where-Object { $_.candidate -eq $candidate } | Select-Object -Last 1)
+                    if ($activeEntry.Count -gt 0 -and $verifiedRequestedState) {
+                        $statusCode = 'Applied'
+                        $rebootCheckRequired = (
+                            $activeEntry[0].PSObject.Properties.Name -contains 'rebootRequired' -and
+                            [bool]$activeEntry[0].rebootRequired
+                        )
+                        if ($rebootCheckRequired) {
+                            $statusLabel = 'APPLIED / REBOOT CHECK'
+                            $reason = 'Applied and verified in this session. Reboot-persistence validation is still required; the original-state rollback record is available.'
+                        } else {
+                            $statusLabel = 'APPLIED'
+                            $reason = 'Applied and verified by UX-ROM. An original-state rollback record is available.'
+                        }
+                    } elseif ($activeEntry.Count -gt 0) {
+                        $statusCode = 'NeedsAttention'
+                        $statusLabel = 'VERIFY'
+                        $reason = 'UX-ROM has an active rollback record, but the current Windows state no longer matches it.'
+                    } elseif ($verifiedRequestedState) {
+                        $statusCode = 'AlreadyConfigured'
+                        $statusLabel = 'ALREADY SET'
+                        $reason = 'Windows already matches this value. UX-ROM did not apply it, so UX-ROM has no original-state rollback record.'
+                    } elseif ($candidate -in @('NtfsLastAccess', 'FastStartupDiagnostic')) {
+                        $statusCode = 'Advanced'
+                        $statusLabel = 'LAB ONLY'
+                        $reason = 'Available only through Advanced because it requires a controlled reboot and persistence or diagnostic validation.'
+                    } else {
+                        $statusCode = 'Ready'
+                        $statusLabel = 'READY'
+                        $reason = 'Not applied yet. UX-ROM can baseline, apply, verify, measure, and roll it back.'
+                        if ($candidate -in $script:MachineCandidates -and -not (Test-IsAdministrator)) {
+                            $reason += ' Start PowerShell as Administrator before applying this machine-wide control.'
+                        }
+                        $selectable = $true
+                    }
+                }
+            }
+
+            [void]$items.Add([pscustomobject][ordered]@{
+                menuNumber = $menuNumber
+                candidate = [string]$candidate
+                displayName = Get-CandidateDisplayName -Name $candidate
+                description = Get-CandidateDescription -Name $candidate
+                layer = [int]$layer.number
+                layerName = [string]$layer.name
+                statusCode = $statusCode
+                statusLabel = $statusLabel
+                reason = $reason
+                supported = [bool]$support.supported
+                verifiedRequestedState = $verifiedRequestedState
+                selectable = $selectable
+                includedInApplyAll = ($selectable -and $candidate -in @('MmcssResponsiveness', 'PowerAc', 'VisualEffects'))
+            })
+        }
+    }
+    return @($items)
+}
+
+function Show-UxRomDeploymentDashboard {
+    param([string]$Root)
+
+    $items = @(Get-UxRomTweakDeploymentStatus -Root $Root)
+    Write-Host ''
+    Write-Host 'DEPLOYMENT STATUS' -ForegroundColor Cyan
+    Write-Host 'Every built-in tweak is shown below. Only READY items can be selected here.' -ForegroundColor DarkGray
+    foreach ($item in $items) {
+        $color = switch ($item.statusCode) {
+            'Ready' { 'Green' }
+            'Applied' { 'Cyan' }
+            'AlreadyConfigured' { 'DarkCyan' }
+            'Advanced' { 'DarkYellow' }
+            'NeedsAttention' { 'Red' }
+            default { 'DarkGray' }
+        }
+        Write-Host ("{0}. [{1}] Layer {2} - {3}" -f $item.menuNumber, $item.statusLabel, $item.layer, $item.displayName) -ForegroundColor $color
+        Write-Host ("   {0}" -f $item.description) -ForegroundColor Gray
+        if ($item.statusCode -ne 'Ready') {
+            Write-Host ("   {0}" -f $item.reason) -ForegroundColor DarkGray
+        }
+    }
+
+    $readyCount = @($items | Where-Object selectable).Count
+    $appliedCount = @($items | Where-Object { $_.statusCode -eq 'Applied' }).Count
+    $remainingBatchCount = @($items | Where-Object includedInApplyAll).Count
+    Write-Host ''
+    Write-Host ("Ready now: {0}  |  Applied by UX-ROM: {1}  |  Remaining in Apply All: {2}" -f $readyCount, $appliedCount, $remainingBatchCount) -ForegroundColor White
+    return $items
+}
+
+function Show-UxRomDeploymentMenu {
+    param([string]$Root)
+
+    do {
+        $items = @(Show-UxRomDeploymentDashboard -Root $Root)
+        Write-Host ''
+        Write-Host 'A. Apply all remaining READY tweaks as one measured, reversible batch' -ForegroundColor Yellow
+        Write-Host 'D. Run one full read-only diagnostic pass'
+        Write-Host 'S. Show detailed status and rollback records'
+        Write-Host 'R. Roll back the active tweak or latest batch'
+        Write-Host 'X. Advanced research, reboot experiments, validation, and maintenance'
+        Write-Host 'Q. Quit'
+        $choice = Read-Host 'Choose a READY tweak number or an action'
+        $number = 0
+        if ([int]::TryParse($choice, [ref]$number)) {
+            $item = @($items | Where-Object { $_.menuNumber -eq $number })
+            if ($item.Count -eq 0) {
+                Write-Host 'That tweak number does not exist.' -ForegroundColor DarkYellow
+                continue
+            }
+            if (-not $item[0].selectable) {
+                Write-Host ("{0}: {1}" -f $item[0].statusLabel, $item[0].reason) -ForegroundColor DarkYellow
+                continue
+            }
+            return "Tweak:$($item[0].candidate)"
+        }
+        return $choice
+    } while ($true)
 }
 
 function Move-LayerWorkflowForward {
@@ -6023,7 +6193,8 @@ function Invoke-LayerEnhancementStep {
         [int]$Seconds,
         [int]$Interval,
         [switch]$SkipTrace,
-        [switch]$DryRun
+        [switch]$DryRun,
+        [AllowNull()][string]$CandidateName
     )
 
     if ($State.activeCandidate) {
@@ -6032,7 +6203,12 @@ function Invoke-LayerEnhancementStep {
     }
 
     $layerNumber = [int]$State.currentLayer
-    $candidate = Get-NextLayerCandidate -State $State -Layer $layerNumber
+    $candidate = $CandidateName
+    if (-not $candidate) {
+        $candidate = Get-NextLayerCandidate -State $State -Layer $layerNumber
+    } elseif ($candidate -notin @((Get-PerformanceLayer -Number $layerNumber).candidates)) {
+        throw "Candidate '$candidate' does not belong to Layer $layerNumber."
+    }
     if (-not $candidate) {
         Write-Host "Layer $layerNumber has no remaining integrated change experiment." -ForegroundColor DarkYellow
         return
@@ -6453,6 +6629,52 @@ function Invoke-SelectedPerformanceLayer {
         -DryRun:$Runtime.DryRun
 }
 
+function Invoke-UxRomDeploymentCandidate {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][string]$CandidateName,
+        [hashtable]$Runtime
+    )
+
+    $deploymentItem = @(Get-UxRomTweakDeploymentStatus -Root $Root | Where-Object { $_.candidate -eq $CandidateName })
+    if ($deploymentItem.Count -ne 1) {
+        throw "Unknown UX-ROM deployment candidate: $CandidateName"
+    }
+    if (-not $deploymentItem[0].selectable) {
+        Write-Host ("{0}: {1}" -f $deploymentItem[0].statusLabel, $deploymentItem[0].reason) -ForegroundColor DarkYellow
+        return
+    }
+
+    $state = Get-LayerWorkflowState -Root $Root
+    if ($state.activeCandidate) {
+        Write-Host "Layer $($state.currentLayer) has an unfinished change. Measure or roll it back before applying another tweak." -ForegroundColor DarkYellow
+        return
+    }
+
+    $layerNumber = [int]$deploymentItem[0].layer
+    $layer = Get-PerformanceLayer -Number $layerNumber
+    Write-Host ''
+    Write-Host "Deploying Layer $layerNumber - $($deploymentItem[0].displayName)" -ForegroundColor Cyan
+    Write-Host $deploymentItem[0].description
+    Write-Host 'UX-ROM will collect the required baseline before it asks to change Windows.' -ForegroundColor DarkGray
+    Set-LayerWorkflowCurrentLayer -Root $Root -State $state -Layer $layerNumber
+
+    if ([string]$layer.assessment -eq 'NotIntegrated') {
+        Write-Host "This candidate is not available from the deployment dashboard because its Layer $layerNumber baseline is not integrated." -ForegroundColor DarkYellow
+        return
+    }
+
+    Invoke-LayerAssessmentStep @Runtime -Root $Root -State $state
+    Invoke-LayerEnhancementStep `
+        -Root $Root `
+        -State $state `
+        -Seconds $Runtime.Seconds `
+        -Interval $Runtime.Interval `
+        -SkipTrace:$Runtime.SkipTrace `
+        -DryRun:$Runtime.DryRun `
+        -CandidateName $CandidateName
+}
+
 function Invoke-FullSystemDiagnostics {
     param(
         [string]$Root,
@@ -6582,16 +6804,28 @@ function Invoke-FullSystemDiagnostics {
 }
 
 function Get-SynergyBatchPlan {
+    param([AllowNull()][string]$Root)
+
+    $deploymentStatuses = @()
+    if (-not [string]::IsNullOrWhiteSpace($Root)) {
+        $deploymentStatuses = @(Get-UxRomTweakDeploymentStatus -Root $Root)
+    }
     $items = New-Object System.Collections.ArrayList
     foreach ($candidate in @('MmcssResponsiveness', 'PowerAc', 'VisualEffects')) {
         $support = Get-WorkflowCandidateSupport -Name $candidate
         $layer = @(Get-PerformanceLayerCatalog | Where-Object { $candidate -in @($_.candidates) })[0]
+        $deploymentStatus = @($deploymentStatuses | Where-Object { $_.candidate -eq $candidate })
+        $statusCode = if ($deploymentStatus.Count -eq 1) { [string]$deploymentStatus[0].statusCode } elseif ($support.supported) { 'Ready' } else { 'Unavailable' }
+        $statusLabel = if ($deploymentStatus.Count -eq 1) { [string]$deploymentStatus[0].statusLabel } elseif ($support.supported) { 'READY' } else { 'UNAVAILABLE' }
+        $reason = if ($deploymentStatus.Count -eq 1) { [string]$deploymentStatus[0].reason } else { [string]$support.reason }
         [void]$items.Add([pscustomobject][ordered]@{
             candidate = $candidate
             displayName = Get-CandidateDisplayName -Name $candidate
             layer = [int]$layer.number
             supported = [bool]$support.supported
-            reason = $support.reason
+            deploymentStatus = $statusCode
+            statusLabel = $statusLabel
+            reason = $reason
         })
     }
     return @($items)
@@ -6615,19 +6849,19 @@ function Invoke-AllEligibleTweaks {
     if ($workflowState.activeCandidate) {
         throw "Layer $($workflowState.currentLayer) has an unfinished change. Measure or revert it before starting a synergy batch."
     }
-    $plan = @(Get-SynergyBatchPlan)
-    $eligible = @($plan | Where-Object supported)
+    $plan = @(Get-SynergyBatchPlan -Root $Root)
+    $eligible = @($plan | Where-Object { $_.supported -and $_.deploymentStatus -eq 'Ready' })
     Write-Host ''
     Write-Host 'Apply all eligible tweaks - synergy batch' -ForegroundColor Cyan
     foreach ($item in $plan) {
-        $status = if ($item.supported) { 'included' } else { 'skipped: unsupported' }
+        $status = if ($item.deploymentStatus -eq 'Ready') { 'included' } else { "skipped: $($item.statusLabel.ToLowerInvariant())" }
         Write-Host ("Layer {0}: {1} [{2}]" -f $item.layer, $item.displayName, $status)
-        if (-not $item.supported) { Write-Host "  $($item.reason)" -ForegroundColor DarkYellow }
+        if ($item.deploymentStatus -ne 'Ready') { Write-Host "  $($item.reason)" -ForegroundColor DarkYellow }
     }
     Write-Host 'Excluded: NTFS last-access and Fast Startup experiments require reboot-specific validation.' -ForegroundColor DarkGray
     Write-Host 'The included controls are applied as one named synergy experiment with one before/after measurement and a batch rollback record.'
     if ($eligible.Count -eq 0) {
-        Write-Host 'No eligible tweak is supported on this PC.' -ForegroundColor DarkYellow
+        Write-Host 'No remaining READY tweak is available on this PC.' -ForegroundColor DarkYellow
         return
     }
 
@@ -6934,6 +7168,7 @@ function Show-ZBookPerfStatus {
     } else {
         $log.entries | Select-Object appliedUtc, candidate, status, rebootRequired | Format-Table -AutoSize | Out-Host
     }
+    [void](Show-UxRomDeploymentDashboard -Root $Root)
 }
 
 function Show-UxRomHeader {
@@ -6960,21 +7195,7 @@ function Show-UxRomSplash {
 }
 
 function Show-ZBookPerfMenu {
-    Write-Host ''
-    Write-Host 'D. Full system diagnostics - one read-only pass across every integrated check' -ForegroundColor White
-    Write-Host ''
-    foreach ($layer in Get-PerformanceLayerCatalog) {
-        Write-Host ("{0,2}. {1}" -f $layer.number, $layer.name) -ForegroundColor White
-        Write-Host ("    {0}" -f $layer.description) -ForegroundColor DarkGray
-    }
-    Write-Host ''
-    Write-Host 'A. Apply all eligible tweaks - one measured, reversible synergy batch' -ForegroundColor Yellow
-    Write-Host 'K. Keep the measured layer change and continue'
-    Write-Host 'R. Revert the active layer change or latest synergy batch'
-    Write-Host 'S. Show workflow, build, WPR, and support status'
-    Write-Host 'M. Maintenance and direct measurement tools'
-    Write-Host 'Q. Quit'
-    return (Read-Host 'Choose diagnostics, a layer, or an action')
+    return (Show-UxRomDeploymentMenu -Root $DataRoot)
 }
 
 function Show-ZBookPerfAdvancedMenu {
@@ -6991,6 +7212,12 @@ function Show-ZBookPerfAdvancedMenu {
     Write-Host '9. Measure storage locality and declared network readiness'
     Write-Host '10. Measure enabled security protection and security-process activity'
     Write-Host '0. Show the detailed capability map'
+    if (Get-Command Show-UxRomStableValidationMenu -ErrorAction SilentlyContinue) {
+        Write-Host 'V. Physical Validation / Stable Promotion - merged experimental providers' -ForegroundColor Green
+    }
+    if (Get-Command Invoke-EnrollmentMaintenance -ErrorAction SilentlyContinue) {
+        Write-Host 'E. Self-managed enrollment cleanup - capture, clean, verify, and resume' -ForegroundColor Yellow
+    }
     Write-Host 'B. Back'
     return (Read-Host 'Choose a maintenance action')
 }
@@ -7110,6 +7337,8 @@ function Invoke-ZBookPerfMain {
             $layerChoice = 0
             if ([int]::TryParse($menuChoice, [ref]$layerChoice) -and $layerChoice -ge 1 -and $layerChoice -le 12) {
                 $selectedAction = "Layer:$layerChoice"
+            } elseif ($menuChoice -like 'Tweak:*') {
+                $selectedAction = [string]$menuChoice
             } else {
                 switch ($menuChoice) {
                 'd' { $selectedAction = 'FullDiagnostics' }
@@ -7124,6 +7353,8 @@ function Invoke-ZBookPerfMain {
                 'S' { $selectedAction = 'Status' }
                 'm' { $selectedAction = 'Advanced' }
                 'M' { $selectedAction = 'Advanced' }
+                'x' { $selectedAction = 'Advanced' }
+                'X' { $selectedAction = 'Advanced' }
                 'q' { return }
                 'Q' { return }
                 default { Write-Warning 'Unknown menu choice.'; continue }
@@ -7144,10 +7375,21 @@ function Invoke-ZBookPerfMain {
                 '9' { $selectedAction = 'DependencyProfile' }
                 '10' { $selectedAction = 'SecurityProfile' }
                 '0' { $selectedAction = 'LayerMap' }
+                'v' { $selectedAction = 'StableValidation' }
+                'V' { $selectedAction = 'StableValidation' }
+                'e' { $selectedAction = 'EnrollmentMaintenance' }
+                'E' { $selectedAction = 'EnrollmentMaintenance' }
                 'b' { continue }
                 'B' { continue }
                 default { Write-Warning 'Unknown advanced choice.'; continue }
             }
+        }
+
+        if ($selectedAction -like 'Tweak:*') {
+            $selectedCandidateName = [string]$selectedAction.Substring(6)
+            Invoke-UxRomDeploymentCandidate -Root $DataRoot -CandidateName $selectedCandidateName -Runtime $runtime
+            if ($script:Action -ne 'Menu') { return }
+            continue
         }
 
         if ($selectedAction -like 'Layer:*') {
@@ -7168,6 +7410,20 @@ function Invoke-ZBookPerfMain {
                     -Tier2Confirmed:$LabTier2Confirmed `
                     -DryRun:$WhatIfPreference `
                     -Interactive:($script:Action -eq 'Menu'))
+            }
+            'StableValidation' {
+                if (Get-Command Show-UxRomStableValidationMenu -ErrorAction SilentlyContinue) {
+                    Show-UxRomStableValidationMenu -Root $DataRoot
+                } else {
+                    Write-Host 'Physical Validation / Stable Promotion is not loaded in this launch.' -ForegroundColor DarkYellow
+                }
+            }
+            'EnrollmentMaintenance' {
+                if (Get-Command Invoke-EnrollmentMaintenance -ErrorAction SilentlyContinue) {
+                    Invoke-EnrollmentMaintenance -Mode Start
+                } else {
+                    Write-Host 'Enrollment maintenance is not loaded in this launch.' -ForegroundColor DarkYellow
+                }
             }
             'KeepLayerChange' {
                 $state = Get-LayerWorkflowState -Root $DataRoot

@@ -21,26 +21,18 @@ instructions. The name is a respectful reference to Mine's VX-ROM and its
 UX-ROM is not literally firmware or ROM; it is a PowerShell controller that
 applies measured, reversible Windows configuration.
 
-Open an **administrator Windows PowerShell 5.1** console, move to a normal working folder instead of `C:\Windows\System32`, download the current build, and run it:
-
-```powershell
-Set-Location $env:TEMP
-Invoke-WebRequest https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main/ZBookPerf.ps1 -OutFile .\ZBookPerf.ps1
-Set-ExecutionPolicy -Scope Process Bypass
-.\ZBookPerf.ps1
-```
-
-`notepad .\ZBookPerf.ps1` is optional source inspection, not an execution step.
-Double-clicking a `.ps1` file may also open it for editing; run
-`.\ZBookPerf.ps1` from Windows PowerShell to execute it.
-
-The saved-file route above is recommended because it lets you inspect the exact
-script you are about to run. If you already trust the repository, this
-convenience one-liner opens the same menu without saving a copy:
+Open **Windows PowerShell 5.1 as Administrator** and paste this one line:
 
 ```powershell
 irm https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main/ZBookPerf.ps1 | iex
 ```
+
+No separate execution-policy command, Desktop copy, `Unblock-File`, or Notepad
+step is required. The bootstrap authorizes only the current PowerShell process
+while it loads the downloaded UX-ROM components, then restores the prior process
+policy when UX-ROM exits. It never changes the `CurrentUser` or `LocalMachine`
+execution policy. A policy enforced through Group Policy still takes precedence
+and is reported instead of bypassed.
 
 ZBookPerf accepts `-Candidate` as before. Internally that parameter uses a
 collision-resistant name so the convenience command also works in Windows
@@ -51,11 +43,16 @@ UX-ROM and version accents. It does not redraw the banner whenever the menu
 returns. Downloading a new file does not replace code that is already loaded in
 an open menu; quit that menu and start the downloaded file again.
 
-The main UI now has one full-system diagnostic, one plainly described choice
-for each of the twelve performance layers, and one **Apply all eligible tweaks**
-synergy batch. Choosing a layer runs its required baseline internally and then
-offers only that layer's next supported tweak. Selecting the same layer again
-continues its measurement gate. The workflow persists at
+The first screen is a deployment dashboard instead of twelve layer submenus. It
+lists every built-in tweak as **READY**, **APPLIED**, **ALREADY SET**, **LAB
+ONLY**, or **UNAVAILABLE**, followed by a short explanation. Only READY numbers
+can be selected from this screen. **Apply all remaining READY tweaks** skips
+controls that are already applied, already configured, unsupported, or reserved
+for reboot validation. Diagnostics, the twelve-layer research map, physical
+validation, and enrollment maintenance live under one Advanced entry.
+
+Choosing a READY tweak runs its required layer baseline internally before the
+change. The workflow persists at
 `C:\ProgramData\ZBookPerf\layer-workflow.json`, so a reboot-dependent experiment
 can resume after restart. Accepted earlier changes remain in place while the
 next experiment gets a fresh baseline; this measures cumulative interactions
