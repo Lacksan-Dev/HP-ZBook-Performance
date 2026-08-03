@@ -191,7 +191,7 @@ Describe 'EXP-047 ZBookPerf' {
             $standardError = $process.StandardError.ReadToEnd()
             $process.WaitForExit()
 
-            $process.ExitCode | Should -Be 0
+            $process.ExitCode | Should -Be 0 -Because "Windows PowerShell stderr was: $standardError"
             $standardOutput | Should -Match 'U X - R O M'
             $standardError | Should -Not -Match 'ValidateSetFailure|variable Candidate'
         }
@@ -216,7 +216,7 @@ Describe 'EXP-047 ZBookPerf' {
             $standardError = $process.StandardError.ReadToEnd()
             $process.WaitForExit()
 
-            $process.ExitCode | Should -Be 0
+            $process.ExitCode | Should -Be 0 -Because "Windows PowerShell stderr was: $standardError"
             $standardOutput | Should -Match 'U X - R O M'
             $standardOutput | Should -Match 'AFTER_POLICY=Undefined'
             $standardError | Should -Not -Match 'running scripts is disabled|PSSecurityException'
@@ -242,8 +242,8 @@ Describe 'EXP-047 ZBookPerf' {
             $process.WaitForExit()
 
             $process.ExitCode | Should -Not -Be 0
-            $standardOutput | Should -Match 'Apply one reversible experiment directly'
             $standardError | Should -Match 'Unknown candidate selection.'
+            $standardOutput | Should -Match 'Apply one reversible experiment directly'
             $standardError | Should -Not -Match 'variable.*PSCmdlet'
         }
 
@@ -266,7 +266,7 @@ Describe 'EXP-047 ZBookPerf' {
             $standardError = $process.StandardError.ReadToEnd()
             $process.WaitForExit()
 
-            $process.ExitCode | Should -Be 0
+            $process.ExitCode | Should -Be 0 -Because "Windows PowerShell stderr was: $standardError"
             $standardOutput | Should -Match 'Cancelled. No setting was changed.'
             $standardError | Should -Not -Match 'pass -LabTier2Confirmed'
         }
