@@ -206,6 +206,9 @@ Describe 'EXP-047 ZBookPerf' {
             $startInfo.RedirectStandardOutput = $true
             $startInfo.RedirectStandardError = $true
             [void]$startInfo.EnvironmentVariables.Remove('PSExecutionPolicyPreference')
+            # Reproduce PowerShell 7 CI launching Windows PowerShell with an
+            # inherited module path that omits the Windows PowerShell modules.
+            $startInfo.EnvironmentVariables['PSModulePath'] = $TestDrive
 
             $process = New-Object Diagnostics.Process
             $process.StartInfo = $startInfo

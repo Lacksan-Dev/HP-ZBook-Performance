@@ -157,6 +157,8 @@ Describe 'UX-ROM bootstrap contract' {
     }
 
     It 'self-authorizes only the current PowerShell process for the literal irm-pipe-iex launcher and restores it' {
+        $source | Should -Match 'function Initialize-UxRomExecutionPolicyCommands'
+        $source | Should -Match 'Join-Path \$PSHOME ''Modules\\Microsoft\.PowerShell\.Security\\Microsoft\.PowerShell\.Security\.psd1'''
         $source | Should -Match 'function Enter-UxRomProcessExecutionPolicy'
         $source | Should -Match 'Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass'
         $source | Should -Match 'function Exit-UxRomProcessExecutionPolicy'

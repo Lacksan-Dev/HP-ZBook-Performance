@@ -148,7 +148,23 @@ $ErrorActionPreference = 'Stop'
 $script:BootstrapVersion = '2026.08.04.2'
 $script:RawRoot = 'https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main'
 
+function Initialize-UxRomExecutionPolicyCommands {
+    if (
+        (Get-Command Get-ExecutionPolicy -CommandType Cmdlet -ErrorAction SilentlyContinue) -and
+        (Get-Command Set-ExecutionPolicy -CommandType Cmdlet -ErrorAction SilentlyContinue)
+    ) {
+        return
+    }
+
+    $securityModule = Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'
+    if (-not (Test-Path -LiteralPath $securityModule)) {
+        throw "The built-in PowerShell security module is unavailable at its expected path: $securityModule"
+    }
+    Import-Module -Name $securityModule -Force -ErrorAction Stop
+}
+
 function Enter-UxRomProcessExecutionPolicy {
+    Initialize-UxRomExecutionPolicyCommands
     $original = Get-ExecutionPolicy -Scope Process
     $state = [pscustomobject][ordered]@{
         original = $original
