@@ -7,7 +7,8 @@ Describe 'EXP-143 startup inventory classification contract' {
  It 'recognizes protected remote access security accessibility driver update and management identities' {foreach($x in 'omnissa','horizon','windows app','remote desktop','mstsc','msrdc','tailscale','defender','credential','recovery','windows update','driver','hid','bluetooth','accessib','firmware','mdm','intune','configmgr'){$text|Should -Match $x}}
  It 'recognizes Teams Office Microsoft 365 Logitech telemetry and updater priority identities' {foreach($x in 'teams','msteams','office','microsoft 365','microsoft365','logi','logitech','lghub','telemetry','updat'){$text|Should -Match $x}}
  It 'retains all four EXP-002 startup surfaces' {foreach($x in "'StartupFolder'","'Registry'","'StartupTask'","'ScheduledTask'"){$text|Should -Match ([regex]::Escape($x))}}
+ It 'captures byte-exact Startup-folder restore evidence' {foreach($x in 'ReadAllBytes','contentBase64','ToBase64String','sha256','creationTimeUtc','lastWriteTimeUtc','attributes'){$text|Should -Match $x}}
  It 'retains packaged metadata that can drive classification' {foreach($x in 'packageName','packageFamilyName','packageFullName','publisher','displayName','executable','entryPoint'){$text|Should -Match $x}}
  It 'keeps runtime StartupTask state and physical evidence unresolved' {$text|Should -Match "runtimeState='needs-evidence'";$text|Should -Match "evidenceStatus='needs-evidence'"}
- It 'uses a versioned deterministic evidence bundle' {$text|Should -Match "schemaVersion=4";$text|Should -Match 'snapshotSha256'}
+ It 'uses a versioned deterministic evidence bundle' {$text|Should -Match "schemaVersion=5";$text|Should -Match 'snapshotSha256'}
 }
