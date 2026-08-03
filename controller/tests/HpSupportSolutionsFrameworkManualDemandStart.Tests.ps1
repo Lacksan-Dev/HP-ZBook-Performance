@@ -1,0 +1,14 @@
+$provider=Join-Path $PSScriptRoot '..\providers\HpSupportSolutionsFrameworkManualDemandStart.ps1'
+Describe 'EXP-087 HP Support Solutions Framework Manual demand-start contract' {
+ BeforeAll {$text=Get-Content $provider -Raw}
+ It 'parses as PowerShell' {$t=$null;$e=$null;[System.Management.Automation.Language.Parser]::ParseFile($provider,[ref]$t,[ref]$e)|Out-Null;@($e).Count|Should -Be 0}
+ It 'implements the reversible lifecycle' {foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
+ It 'discovers one installed HP Support Solutions Framework product and signed service' {foreach($x in 'HP Support Solutions Framework','Get-AuthenticodeSignature','Get-FileHash','ValidHp','exactly one signed HP Support Solutions Framework service required'){$text|Should -Match ([regex]::Escape($x))}}
+ It 'requires HP Windows 11 elevation unmanaged ownership and safe service dependencies' {foreach($x in 'Windows 11 required','HP platform required','elevation required','enterprise management ownership detected','dependency-sensitive service refused','driver-backed service refused'){$text|Should -Match ([regex]::Escape($x))}}
+ It 'captures exact startup delayed running executable machine user and boot identity' {foreach($x in 'StartMode','DelayedAutoStart','State=','PathName','Sha256','Thumbprint','machine=','userSid=','capturedBootTime'){$text|Should -Match $x}}
+ It 'changes only service startup type to Manual while preserving application-time running state' {$text|Should -Match 'Set-Service \$c.Name -StartupType Manual';$text|Should -Match 'PreserveRunningState';$text|Should -Not -Match 'Remove-Service|sc\.exe\s+delete|Remove-AppxPackage|pnputil|Disable-PnpDevice'}
+ It 'preserves security updates and remote access against drift' {foreach($x in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','TermService','Tailscale','Protected security update or remote-access state drift detected'){$text|Should -Match ([regex]::Escape($x))}}
+ It 'supports dry run WhatIf structured logging idempotence and reboot verification' {foreach($x in 'dry-run','WhatIfPreference','ConvertTo-Json -Compress','idempotent','Later boot required','Treatment failed reboot persistence'){$text|Should -Match ([regex]::Escape($x))}}
+ It 'restores delayed-start existence type raw value and original running state' {foreach($x in 'RegistryValueKind','Remove-ItemProperty','Start-Service','Stop-Service','Exact rollback verification failed','restoredExactOriginal'){$text|Should -Match $x}}
+ It 'retains physical work as needs-evidence and avoids Stable assignment' {$text|Should -Match 'needs-evidence';$text|Should -Not -Match 'status:stable|Stable='}
+}
