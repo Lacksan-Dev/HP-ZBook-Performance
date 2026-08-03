@@ -35,6 +35,41 @@
         "RemoteDesktop",
         "Tailscale"
       ]
+    },
+    {
+      "priority": 20,
+      "experiment": "EXP-095",
+      "issue": 249,
+      "track": "service-candidate",
+      "state": "ready",
+      "releaseState": "Experimental",
+      "harnessPath": "experiments/EXP-095/Invoke-Exp095LabHarness.ps1",
+      "runsPerArm": 5,
+      "sampleSeconds": 120,
+      "minimumIdleMinutes": 20,
+      "automaticReboot": true,
+      "candidate": "Change only the verified hpqcaslwmiex startup configuration from Automatic to Automatic (Delayed Start) while preserving its current running state.",
+      "benchmark": "Five matched Automatic baseline cold boots and five Automatic (Delayed Start) treatment cold boots; compare medians and dispersion for usable-desktop proxy, first-120-second CPU and disk activity, CASL attribution, and delayed-start timing.",
+      "verification": [
+        "Verify CASL starts successfully in the delayed window and all detected CASL-dependent HP services and application workflows remain healthy.",
+        "Review Service Control Manager errors and timeouts and verify reboot persistence before rollback.",
+        "Verify Omnissa, Windows App, Remote Desktop, Tailscale, Windows security, update, networking, and device health remain intact."
+      ],
+      "rollback": "Run the harness Stop path on interruption or the normal completion path after the final treatment boot; both invoke the provider's drift-safe exact rollback and verification of the captured Automatic startup state.",
+      "protectedScopes": [
+        "WindowsSecurity",
+        "WindowsUpdate",
+        "EdgeUpdate",
+        "Credentials",
+        "Recovery",
+        "EnterpriseManagement",
+        "DeviceCriticalDrivers",
+        "Networking",
+        "Omnissa",
+        "WindowsApp",
+        "RemoteDesktop",
+        "Tailscale"
+      ]
     }
   ]
 }
