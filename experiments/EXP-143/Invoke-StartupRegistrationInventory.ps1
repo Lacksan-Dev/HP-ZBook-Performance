@@ -70,13 +70,43 @@ foreach ($key in $runKeys) {
     }
 }
 
-# Packaged StartupTask state via supported CIM inventory where available.
-try {
-    Get-CimInstance -Namespace root\cimv2\mdm\dmmap -ClassName MDM_EnterpriseModernAppManagement_AppManagement01 -ErrorAction Stop | ForEach-Object {
-        $text = $_ | ConvertTo-Json -Compress -Depth 5
-        if ($text -match 'Startup') { Add-Record $records 'StartupTask' ([string]$_.InstanceID) $text @{ cim=$text } }
-    }
-} catch { }
+# Packaged StartupTask registrations. Read package manifests directly so ordinary current-user app registrations are inventoried without requiring MDM enrollment.
+Get-AppxPackage -ErrorAction SilentlyContinue | Sort-Object PackageFamilyName,PackageFullName | ForEach-Object {
+    $package = $_
+    try {
+        [xml]$manifest = Get-AppxPackageManifest -Package $package.PackageFullName -ErrorAction Stop
+        $extensions = @($manifest.SelectNodes("//*[local-name()='Extension' and @Category='windows.startupTask']"))
+        foreach ($extension in $extensions) {
+            $startupTasks = @($extension.SelectNodes(".//*[local-name()='StartupTask']"))
+            if ($startupTasks.Count -eq 0) {
+                $startupTasks = @($extension)
+            }
+            foreach ($startupTask in $startupTasks) {
+                $taskId = [string]$startupTask.TaskId
+                if ([string]::IsNullOrWhiteSpace($taskId)) { $taskId = [string]$extension.StartupTask.TaskId }
+                $executable = [string]$extension.Executable
+                $entryPoint = [string]$extension.EntryPoint
+                $command = @($executable,$entryPoint) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+                $commandText = ($command -join ' ').Trim()
+                $identity = "$($package.PackageFamilyName)::$taskId"
+                Add-Record $records 'StartupTask' $identity $commandText @{
+                    packageName=$package.Name
+                    packageFamilyName=$package.PackageFamilyName
+                    packageFullName=$package.PackageFullName
+                    publisher=$package.Publisher
+                    version=[string]$package.Version
+                    taskId=$taskId
+                    enabledByDefault=[string]$startupTask.Enabled
+                    displayName=[string]$startupTask.DisplayName
+                    executable=$executable
+                    entryPoint=$entryPoint
+                    runtimeState='needs-evidence'
+                    source='AppxManifest'
+                }
+            }
+        }
+    } catch { }
+}
 
 # Sign-in/logon scheduled tasks. Export XML to retain exact task definition for later restore planning.
 Get-ScheduledTask -ErrorAction SilentlyContinue | ForEach-Object {
@@ -95,7 +125,7 @@ $duplicates = @($normalized | Group-Object command | Where-Object { $_.Name -and
 } | Sort-Object command)
 
 # Hash only stable registration evidence. Runtime metadata is logged separately so repeated unchanged inventories produce the same SHA-256.
-$stableBundle = [pscustomobject]@{ experiment='EXP-143'; schemaVersion=2; mode='read-only'; registrations=$normalized; duplicates=$duplicates }
+$stableBundle = [pscustomobject]@{ experiment='EXP-143'; schemaVersion=3; mode='read-only'; registrations=$normalized; duplicates=$duplicates }
 $stableJson = $stableBundle | ConvertTo-Json -Depth 12
 $stableBytes = [Text.Encoding]::UTF8.GetBytes($stableJson)
 $sha = [Security.Cryptography.SHA256]::Create()
