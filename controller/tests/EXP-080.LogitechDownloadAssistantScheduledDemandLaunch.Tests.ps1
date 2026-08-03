@@ -1,6 +1,8 @@
-$Provider=Join-Path $PSScriptRoot '..\providers\LogitechDownloadAssistantScheduledDemandLaunch.ps1'
 Describe 'EXP-080 Logitech Download Assistant scheduled demand-launch contract' {
- BeforeAll {$Text=Get-Content -LiteralPath $Provider -Raw}
+ BeforeAll {
+  $Provider=Join-Path $PSScriptRoot '..\providers\LogitechDownloadAssistantScheduledDemandLaunch.ps1'
+  $Text=Get-Content -LiteralPath $Provider -Raw
+ }
  It 'parses as PowerShell' {$tokens=$null;$errors=$null;[void][Management.Automation.Language.Parser]::ParseFile($Provider,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0}
  It 'implements the complete reversible lifecycle' {foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$Text|Should -Match "'$a'"}}
  It 'requires HP Windows 11 elevation unmanaged ownership and one exact candidate' {foreach($t in 'Windows 11','Hewlett-Packard','elevation required','enterprise management ownership detected','exactly one eligible Logitech Download Assistant scheduled task'){$Text|Should -Match $t}}
