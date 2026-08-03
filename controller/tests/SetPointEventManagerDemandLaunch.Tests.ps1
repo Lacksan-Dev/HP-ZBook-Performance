@@ -1,7 +1,9 @@
-$provider = Join-Path $PSScriptRoot '..\providers\SetPointEventManagerDemandLaunch.ps1'
 Describe 'SetPointEventManagerDemandLaunch contract' {
- BeforeAll { $text = Get-Content -LiteralPath $provider -Raw }
- It 'parses as PowerShell' { [scriptblock]::Create($text) | Should -Not -BeNullOrEmpty }
+ BeforeAll {
+  $provider = Join-Path $PSScriptRoot '..\providers\SetPointEventManagerDemandLaunch.ps1'
+  $text = Get-Content -LiteralPath $provider -Raw
+ }
+ It 'parses as PowerShell' { $tokens=$null;$errors=$null;[void][Management.Automation.Language.Parser]::ParseFile($provider,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0 }
  It 'exposes the full reversible lifecycle' { foreach($action in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){ $text | Should -Match "'$action'" } }
  It 'uses ShouldProcess and supports WhatIf' { $text | Should -Match 'SupportsShouldProcess'; $text | Should -Match 'ShouldProcess'; $text | Should -Match 'WhatIfPreference' }
  It 'supports approved HKCU and HKLM Run locations with bounded elevation' { $text | Should -Match 'HKCU:'; $text | Should -Match 'HKLM:'; $text | Should -Match 'MachineWide'; $text | Should -Match 'Test-Elevated'; $text | Should -Match 'Elevation is required' }
