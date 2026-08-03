@@ -156,7 +156,7 @@ function Enter-UxRomProcessExecutionPolicy {
     }
     if ($original -eq 'Bypass') { return $state }
     try {
-        Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction Stop
+        Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -WhatIf:$false -Confirm:$false -ErrorAction Stop
         if ((Get-ExecutionPolicy) -ne 'Bypass') {
             $policies = Get-ExecutionPolicy -List | Out-String
             throw "A managed PowerShell policy overrides the temporary UX-ROM process policy.`n$policies"
@@ -172,7 +172,7 @@ function Exit-UxRomProcessExecutionPolicy {
     param([AllowNull()][object]$State)
     if ($null -eq $State -or -not $State.changed) { return }
     try {
-        Set-ExecutionPolicy -Scope Process -ExecutionPolicy $State.original -Force -ErrorAction Stop
+        Set-ExecutionPolicy -Scope Process -ExecutionPolicy $State.original -Force -WhatIf:$false -Confirm:$false -ErrorAction Stop
     } catch {
         Write-Warning "UX-ROM could not restore the prior process-only execution policy '$($State.original)'. Close this PowerShell window to discard the temporary process policy."
     }
