@@ -11,6 +11,13 @@ Develop measurable Windows responsiveness improvements for office, browser, work
 - Each hourly run must do useful work: gather evidence, create or refine an experiment, implement a reversible candidate, execute available tests, or merge an eligible pull request.
 - Repeated inventory-only reports are insufficient unless the inventory directly selects or rejects a specific candidate.
 
+## Repository Codex portfolio agent
+- The project-scoped custom agent is `.codex/agents/experiment-discovery-portfolio.toml`.
+- An hourly portfolio cycle must use that agent and follow `.codex/portfolio-agent.md` as the complete runbook.
+- Laptop mutation is allowed only through `.codex/scripts/Invoke-PortfolioValidation.ps1` and a `ready` entry in `portfolio/validation-queue.json`. Do not bypass its HP, Windows, elevation, AC-power, idle-time, pending-reboot, protected-scope, single-active-run, harness-contract, and rollback gates.
+- Raw physical evidence and exact rollback artifacts remain machine-local. Only the bounded sanitized export produced by the runner may be committed to `evidence/physical/`.
+- A completed physical run remains `Experimental`. The portfolio agent never assigns `Stable` or converts a performance hypothesis into a claim.
+
 ## Experiment flow
 1. Research Director
 2. Windows Research

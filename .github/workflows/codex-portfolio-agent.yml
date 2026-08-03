@@ -1,0 +1,38 @@
+name: Codex portfolio agent
+
+on:
+  pull_request:
+    paths:
+      - 'AGENTS.md'
+      - '.codex/**'
+      - 'portfolio/**'
+      - 'experiments/EXP-065/Invoke-Exp065LabHarness.ps1'
+      - 'experiments/EXP-065/Invoke-Exp065LabHarness.Tests.ps1'
+      - '.github/workflows/codex-portfolio-agent.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pester:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force
+      - name: Validate the Codex portfolio agent and queued harness
+        shell: pwsh
+        run: |
+          $config = New-PesterConfiguration
+          $config.Run.Path = @(
+            '.codex/tests/ExperimentDiscoveryPortfolio.Tests.ps1',
+            'experiments/EXP-065/Invoke-Exp065LabHarness.Tests.ps1'
+          )
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
