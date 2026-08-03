@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "items": [
+    {
+      "priority": 10,
+      "experiment": "EXP-065",
+      "issue": 153,
+      "track": "service-candidate",
+      "state": "ready",
+      "releaseState": "Experimental",
+      "harnessPath": "experiments/EXP-065/Invoke-Exp065LabHarness.ps1",
+      "runsPerArm": 5,
+      "sampleSeconds": 120,
+      "minimumIdleMinutes": 20,
+      "automaticReboot": true,
+      "candidate": "Change only the verified HPSysInfoCap startup configuration from Automatic or Automatic (Delayed Start) to Manual while preserving its current running state.",
+      "benchmark": "Five matched baseline boots and five matched treatment boots; compare medians and dispersion for usable-desktop proxy, first-120-second CPU and disk activity, and HPSysInfoCap resource use.",
+      "verification": [
+        "Verify HP system-information demand start and HP update behavior.",
+        "Verify reboot persistence before rollback.",
+        "Verify Omnissa, Windows App, Remote Desktop, Tailscale, Windows security, update, networking, and device health remain intact."
+      ],
+      "rollback": "Run the harness Stop path on interruption or the normal completion path after the final treatment boot; both invoke the provider's drift-safe exact rollback and verification.",
+      "protectedScopes": [
+        "WindowsSecurity",
+        "WindowsUpdate",
+        "EdgeUpdate",
+        "Credentials",
+        "Recovery",
+        "EnterpriseManagement",
+        "DeviceCriticalDrivers",
+        "Networking",
+        "Omnissa",
+        "WindowsApp",
+        "RemoteDesktop",
+        "Tailscale"
+      ]
+    }
+  ]
+}
