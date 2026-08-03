@@ -145,8 +145,38 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:BootstrapVersion = '2026.08.02.5'
+$script:BootstrapVersion = '2026.08.04.2'
 $script:RawRoot = 'https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/main'
+
+function Enter-UxRomProcessExecutionPolicy {
+    $original = Get-ExecutionPolicy -Scope Process
+    $state = [pscustomobject][ordered]@{
+        original = $original
+        changed = $false
+    }
+    if ($original -eq 'Bypass') { return $state }
+    try {
+        Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction Stop
+        if ((Get-ExecutionPolicy) -ne 'Bypass') {
+            $policies = Get-ExecutionPolicy -List | Out-String
+            throw "A managed PowerShell policy overrides the temporary UX-ROM process policy.`n$policies"
+        }
+        $state.changed = $true
+        return $state
+    } catch {
+        throw "UX-ROM could not authorize its downloaded components for this PowerShell process. No user or machine execution policy was changed. $($_.Exception.Message)"
+    }
+}
+
+function Exit-UxRomProcessExecutionPolicy {
+    param([AllowNull()][object]$State)
+    if ($null -eq $State -or -not $State.changed) { return }
+    try {
+        Set-ExecutionPolicy -Scope Process -ExecutionPolicy $State.original -Force -ErrorAction Stop
+    } catch {
+        Write-Warning "UX-ROM could not restore the prior process-only execution policy '$($State.original)'. Close this PowerShell window to discard the temporary process policy."
+    }
+}
 
 function Test-UxRomAnimationEnabled {
     if ($Host.Name -ne 'ConsoleHost') { return $false }
@@ -267,7 +297,12 @@ function Invoke-EnrollmentMaintenance {
         NoReboot = [bool]$NoReboot
     }
     if ($EnrollmentStatePath) { $arguments.StatePath = $EnrollmentStatePath }
-    & $helper @arguments -WhatIf:$WhatIfPreference -Confirm:$false
+    $policyState = Enter-UxRomProcessExecutionPolicy
+    try {
+        & $helper @arguments -WhatIf:$WhatIfPreference -Confirm:$false
+    } finally {
+        Exit-UxRomProcessExecutionPolicy -State $policyState
+    }
 }
 
 if ($EnrollmentCleanup) { $Action = 'EnrollmentCleanup' }
@@ -292,6 +327,8 @@ if (Test-UxRomAnimationEnabled) {
     Write-UxRomAnimatedStage -Label 'Initializing session' -Frames 7 -DelayMilliseconds 28
 }
 
+$executionPolicyState = Enter-UxRomProcessExecutionPolicy
+try {
 $core = Resolve-UxRomComponent -RelativePath 'controller\core\ZBookPerf.Core.ps1' -CacheName 'ZBookPerf.Core.ps1'
 Write-UxRomAnimatedStage -Label 'Verifying controller' -Frames 7 -DelayMilliseconds 28
 
@@ -372,40 +409,15 @@ function Show-UxRomSplash {
     Write-Host ''
 }
 
-# EXP-137 and the machine Stable-validation lane are integrated into the same product UI.
+# The core renders the deployment dashboard. Release validation and enrollment
+# maintenance remain available under its single Advanced entry.
 function Show-ZBookPerfMenu {
-    do {
-        Write-Host ''
-        Write-Host 'D. Full system diagnostics - one read-only pass across every integrated check' -ForegroundColor White
-        Write-Host ''
-        foreach ($layer in Get-PerformanceLayerCatalog) {
-            Write-Host ("{0,2}. {1}" -f $layer.number, $layer.name) -ForegroundColor White
-            Write-Host ("    {0}" -f $layer.description) -ForegroundColor DarkGray
-        }
-        Write-Host ''
-        Write-Host 'A. Apply all eligible tweaks - one measured, reversible synergy batch' -ForegroundColor Yellow
-        Write-Host 'V. Physical Validation / Stable Promotion - run merged providers on this machine' -ForegroundColor Green
-        Write-Host 'E. Self-managed enrollment cleanup - capture, clean, reboot, verify, resume EXP-071' -ForegroundColor Yellow
-        Write-Host 'K. Keep the measured layer change and continue'
-        Write-Host 'R. Revert the active layer change or latest synergy batch'
-        Write-Host 'S. Show workflow, build, WPR, and support status'
-        Write-Host 'M. Maintenance and direct measurement tools'
-        Write-Host 'Q. Quit'
-        $choice = Read-Host 'Choose diagnostics, a layer, or an action'
-        if ($choice -in @('v','V')) {
-            Show-UxRomStableValidationMenu -Root $DataRoot
-            continue
-        }
-        if ($choice -in @('e','E')) {
-            Write-Host ''
-            Write-Host 'EXP-137 self-managed enrollment cleanup' -ForegroundColor Cyan
-            Invoke-EnrollmentMaintenance -Mode Start
-            continue
-        }
-        return $choice
-    } while ($true)
+    return (Show-UxRomDeploymentMenu -Root $DataRoot)
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
     Invoke-ZBookPerfMain
+}
+} finally {
+    Exit-UxRomProcessExecutionPolicy -State $executionPolicyState
 }

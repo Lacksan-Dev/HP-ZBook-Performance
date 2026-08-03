@@ -196,6 +196,32 @@ Describe 'EXP-047 ZBookPerf' {
             $standardError | Should -Not -Match 'ValidateSetFailure|variable Candidate'
         }
 
+        It 'self-authorizes cached components for the exact flag-free one-line Invoke-Expression launch and restores the process policy' {
+            $startInfo = New-Object Diagnostics.ProcessStartInfo
+            $startInfo.FileName = 'powershell.exe'
+            $startInfo.WorkingDirectory = Split-Path $scriptPath -Parent
+            $startInfo.Arguments = '-NoProfile -Command "Get-Content -LiteralPath ''.\ZBookPerf.ps1'' -Raw | Invoke-Expression; Write-Output (''AFTER_POLICY='' + (Get-ExecutionPolicy -Scope Process))"'
+            $startInfo.UseShellExecute = $false
+            $startInfo.RedirectStandardInput = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            [void]$startInfo.EnvironmentVariables.Remove('PSExecutionPolicyPreference')
+
+            $process = New-Object Diagnostics.Process
+            $process.StartInfo = $startInfo
+            [void]$process.Start()
+            $process.StandardInput.WriteLine('Q')
+            $process.StandardInput.Close()
+            $standardOutput = $process.StandardOutput.ReadToEnd()
+            $standardError = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+
+            $process.ExitCode | Should -Be 0
+            $standardOutput | Should -Match 'U X - R O M'
+            $standardOutput | Should -Match 'AFTER_POLICY=Undefined'
+            $standardError | Should -Not -Match 'running scripts is disabled|PSSecurityException'
+        }
+
         It 'preserves the original menu error through Invoke-Expression' {
             $startInfo = New-Object Diagnostics.ProcessStartInfo
             $startInfo.FileName = 'powershell.exe'
@@ -2188,15 +2214,63 @@ Describe 'EXP-047 ZBookPerf' {
             Should -Invoke Show-UxRomHeader -Times 0
         }
 
-        It 'shows one full diagnostic, twelve layer choices, and one synergy batch on the main menu' {
+        It 'shows one deployment dashboard instead of twelve diagnostic dead ends' {
             Mock Read-Host { return 'Q' }
             Mock Write-Host { }
+            Mock Get-UxRomTweakDeploymentStatus {
+                @(
+                    [pscustomobject]@{
+                        menuNumber = 1; candidate = 'VisualEffects'; displayName = 'Documented visual-effect APIs'
+                        description = 'Current-user visual response control.'; layer = 10; statusCode = 'Ready'
+                        statusLabel = 'READY'; reason = 'Not applied yet.'; selectable = $true; includedInApplyAll = $true
+                    }
+                )
+            }
 
             Show-ZBookPerfMenu | Should -Be 'Q'
 
-            Should -Invoke Write-Host -ParameterFilter { $Object -match 'Full system diagnostics' }
-            Should -Invoke Write-Host -ParameterFilter { $Object -match 'Apply all eligible tweaks' }
-            Should -Invoke Write-Host -Times 1 -ParameterFilter { $Object -match '^10\. Shell, GUI' }
+            Should -Invoke Write-Host -ParameterFilter { $Object -match 'DEPLOYMENT STATUS' }
+            Should -Invoke Write-Host -ParameterFilter { $Object -match '\[READY\].*Layer 10' }
+            Should -Invoke Write-Host -ParameterFilter { $Object -match 'Apply all remaining READY tweaks' }
+            Should -Invoke Write-Host -ParameterFilter { $Object -match 'Advanced research' }
+            Should -Invoke Write-Host -Times 0 -ParameterFilter { $Object -match '^10\. Shell, GUI' }
+        }
+
+        It 'reports whether every built-in tweak is ready, applied, already set, lab-only, or unavailable' {
+            Mock Get-ChangeLog {
+                [pscustomobject]@{ entries = @([pscustomobject]@{ candidate = 'MmcssResponsiveness'; status = 'applied' }) }
+            }
+            Mock Get-WorkflowCandidateSupport {
+                if ($Name -eq 'PowerAc') { return [pscustomobject]@{ supported = $false; reason = 'No built-in plan.' } }
+                return [pscustomobject]@{ supported = $true; reason = 'Supported.' }
+            }
+            Mock Test-CandidateApplied { return ($Name -in @('MmcssResponsiveness', 'VisualEffects')) }
+            Mock Test-IsAdministrator { return $true }
+
+            $items = @(Get-UxRomTweakDeploymentStatus -Root $TestDrive)
+
+            @($items).Count | Should -Be 5
+            ($items | Where-Object candidate -eq 'MmcssResponsiveness').statusCode | Should -Be 'Applied'
+            ($items | Where-Object candidate -eq 'VisualEffects').statusCode | Should -Be 'AlreadyConfigured'
+            ($items | Where-Object candidate -eq 'NtfsLastAccess').statusCode | Should -Be 'Advanced'
+            ($items | Where-Object candidate -eq 'FastStartupDiagnostic').statusCode | Should -Be 'Advanced'
+            ($items | Where-Object candidate -eq 'PowerAc').statusCode | Should -Be 'Unavailable'
+        }
+
+        It 'routes a READY dashboard choice into the measured layer deployment path' {
+            $script:Action = 'Menu'
+            $script:DataRoot = $TestDrive
+            $script:dashboardMenuCalls = 0
+            Mock Show-ZBookPerfMenu {
+                $script:dashboardMenuCalls++
+                if ($script:dashboardMenuCalls -eq 1) { return 'Tweak:VisualEffects' }
+                return 'Q'
+            }
+            Mock Invoke-UxRomDeploymentCandidate { }
+
+            Invoke-ZBookPerfMain
+
+            Should -Invoke Invoke-UxRomDeploymentCandidate -Times 1 -ParameterFilter { $CandidateName -eq 'VisualEffects' }
         }
 
         It 'does not scatter a read-only run behind a layer that has no eligible tweak' {
@@ -2347,6 +2421,7 @@ Describe 'EXP-047 ZBookPerf' {
                 [pscustomobject]@{ supported = $true; reason = 'supported' }
             }
             Mock Get-LayerWorkflowState { return (New-LayerWorkflowState) }
+            Mock Test-CandidateApplied { return $false }
             Mock Invoke-Enhancement { }
             Mock Invoke-Measurement { throw 'A dry run must not collect an apply baseline.' }
             Mock Write-Host { }
@@ -2366,6 +2441,7 @@ Describe 'EXP-047 ZBookPerf' {
                 [pscustomobject]@{ supported = $true; reason = 'supported' }
             }
             Mock Get-LayerWorkflowState { return $state }
+            Mock Test-CandidateApplied { return $false }
             Mock Get-ChangeLog { return $script:batchTestLog }
             Mock Invoke-Enhancement {
                 $entry = [pscustomobject]@{
@@ -2408,6 +2484,7 @@ Describe 'EXP-047 ZBookPerf' {
             $state = New-LayerWorkflowState
             Mock Get-WorkflowCandidateSupport { [pscustomobject]@{ supported = $true; reason = 'supported' } }
             Mock Get-LayerWorkflowState { return $state }
+            Mock Test-CandidateApplied { return $false }
             Mock Get-ChangeLog { [pscustomobject]@{ entries = @() } }
             Mock Invoke-Enhancement { }
             Mock Invoke-Measurement { [pscustomobject]@{ evidencePath = Join-Path $TestDrive ([guid]::NewGuid().ToString() + '.json') } }
