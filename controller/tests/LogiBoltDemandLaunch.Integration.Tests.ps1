@@ -1,12 +1,24 @@
 $provider = Join-Path $PSScriptRoot '..\providers\LogiBoltDemandLaunch.ps1'
 Describe 'LogiBoltDemandLaunch integration' -Tag 'WindowsIntegration' {
-    It 'keeps the Run key unchanged during Check and Apply WhatIf' -Skip:(-not $env:LACKSAN_RUN_WINDOWS_INTEGRATION) {
-        $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-        $before = if(Test-Path $path){ (Get-Item $path).GetValueNames() | Sort-Object | ForEach-Object { $k=Get-Item $path; [pscustomobject]@{Name=$_;Kind=$k.GetValueKind($_).ToString();Data=[string]$k.GetValue($_,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)} } | ConvertTo-Json -Compress } else { 'absent' }
-        & $provider -Action Check | Out-Null
-        $state = Join-Path $TestDrive 'state.json'; $log = Join-Path $TestDrive 'events.jsonl'
-        try { & $provider -Action Apply -StatePath $state -LogPath $log -WhatIf | Out-Null } catch { }
-        $after = if(Test-Path $path){ (Get-Item $path).GetValueNames() | Sort-Object | ForEach-Object { $k=Get-Item $path; [pscustomobject]@{Name=$_;Kind=$k.GetValueKind($_).ToString();Data=[string]$k.GetValue($_,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)} } | ConvertTo-Json -Compress } else { 'absent' }
-        $after | Should -BeExactly $before
-    }
+ function Snapshot-Run {
+  $path='HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+  if(!(Test-Path $path)){return 'absent'}
+  $k=Get-Item $path
+  @($k.GetValueNames()|Sort-Object|ForEach-Object{[pscustomobject]@{Name=$_;Kind=$k.GetValueKind($_).ToString();Data=[string]$k.GetValue($_,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)}})|ConvertTo-Json -Compress
+ }
+ function Snapshot-Protected {
+  $services=foreach($n in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','TermService','Tailscale'){$x=Get-CimInstance Win32_Service -Filter "Name='$n'" -ErrorAction SilentlyContinue;if($x){[pscustomobject]@{Name=$x.Name;State=$x.State;StartMode=$x.StartMode;PathName=$x.PathName}}}
+  $drivers=@(Get-CimInstance Win32_SystemDriver -ErrorAction SilentlyContinue|Where-Object{$_.Name-match'(?i)logi|logitech'-or$_.PathName-match'(?i)logi|logitech'}|Sort-Object Name|Select-Object Name,State,StartMode,PathName)
+  $devices=@(Get-PnpDevice -ErrorAction SilentlyContinue|Where-Object{$_.FriendlyName-match'(?i)logi|logitech'-or$_.Manufacturer-match'(?i)logi|logitech'}|Sort-Object InstanceId|Select-Object InstanceId,Status,Class,FriendlyName)
+  [ordered]@{Services=@($services);Drivers=$drivers;Devices=$devices}|ConvertTo-Json -Compress -Depth 10
+ }
+ It 'keeps Run and protected state unchanged during Check DryRun and Apply WhatIf' -Skip:(-not $env:LACKSAN_RUN_WINDOWS_INTEGRATION) {
+  $beforeRun=Snapshot-Run;$beforeProtected=Snapshot-Protected
+  $state=Join-Path $TestDrive 'state.json';$log=Join-Path $TestDrive 'events.jsonl'
+  & $provider -Action Check -StatePath $state -LogPath $log | Out-Null
+  try { & $provider -Action DryRun -StatePath $state -LogPath $log | Out-Null } catch { }
+  try { & $provider -Action Apply -StatePath $state -LogPath $log -WhatIf | Out-Null } catch { }
+  (Snapshot-Run)|Should -BeExactly $beforeRun
+  (Snapshot-Protected)|Should -BeExactly $beforeProtected
+ }
 }
