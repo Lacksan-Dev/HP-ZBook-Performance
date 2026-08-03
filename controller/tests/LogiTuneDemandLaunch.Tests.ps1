@@ -1,28 +1,16 @@
-$provider = Join-Path $PSScriptRoot '..\providers\LogiTuneDemandLaunch.ps1'
-Describe 'LogiTuneDemandLaunch contract' {
-    BeforeAll { $text = Get-Content -LiteralPath $provider -Raw }
-    It 'parses as PowerShell' { [scriptblock]::Create($text) | Should -Not -BeNullOrEmpty }
-    It 'exposes the full reversible lifecycle' {
-        foreach($action in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){ $text | Should -Match "'$action'" }
-    }
-    It 'uses ShouldProcess and supports WhatIf' { $text | Should -Match 'SupportsShouldProcess'; $text | Should -Match 'ShouldProcess'; $text | Should -Match 'WhatIfPreference' }
-    It 'captures exact registry and executable identity' {
-        foreach($token in 'RegistryValueOptions','GetValueKind','Get-AuthenticodeSignature','Get-FileHash','Thumbprint','KeySddl'){ $text | Should -Match $token }
-    }
-    It 'matches only bounded Logi Tune identities' {
-        foreach($token in 'LogiTune','LogiTuneAgent','LogiTuneApp','Exactly one eligible Logi Tune'){ $text | Should -Match $token }
-        $text | Should -Match 'updat\|uninstall\|repair\|firmware\|dfu\|pair'
-    }
-    It 'refuses enterprise ownership and ambiguous candidates' {
-        foreach($token in 'DomainJoined','MdmEnrollments','PolicyManager','ConfigMgr','Exactly one eligible'){ $text | Should -Match $token }
-    }
-    It 'preserves audio video devices protected applications and Windows controls' {
-        foreach($token in 'PreserveAudioVideoDevices','omnissa','windows app','remote desktop','tailscale','defender','windows update','recovery'){ $text | Should -Match $token }
-    }
-    It 'limits application to one current-user Run value' {
-        $text | Should -Match 'Remove-ItemProperty'
-        $text | Should -Not -Match 'Remove-AppxPackage|Uninstall-Package|pnputil|sc\.exe\s+delete|Remove-Service|Disable-WindowsOptionalFeature|Set-Service'
-    }
-    It 'retains failed evidence in structured JSONL' { $text | Should -Match 'ConvertTo-Json -Compress'; $text | Should -Match "'failure' 'fail'" }
-    It 'implements idempotent apply and rollback overwrite refusal' { $text | Should -Match "'idempotent'"; $text | Should -Match 'Rollback overwrite refused' }
+$provider=Join-Path $PSScriptRoot '..\providers\LogiTuneDemandLaunch.ps1'
+Describe 'EXP-052 Logi Tune demand-launch provider contract' {
+ BeforeAll {$text=Get-Content -LiteralPath $provider -Raw}
+ It 'parses as PowerShell' {$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($provider,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0}
+ It 'implements the full reversible lifecycle' {foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
+ It 'targets one exact current-user Logi Tune Run registration' {$text|Should -Match 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';foreach($t in 'LogiTune','LogiTuneAgent','LogiTuneApp','Exactly one eligible Logi Tune'){$text|Should -Match $t}}
+ It 'requires explicit background startup intent and refuses updater pairing and firmware commands' {$text|Should -Match 'IsNullOrWhiteSpace\(\$args\)';foreach($t in 'background','minimi','startup','tray','silent','autostart','updat\|uninstall\|repair\|firmware\|dfu\|pair','Arguments=\$c\[0\]\.Arguments'){$text|Should -Match $t}}
+ It 'requires HP Windows 11 signed Logitech identity and unmanaged ownership' {foreach($t in 'Windows 11','Hewlett-Packard','Get-AuthenticodeSignature','Get-FileHash','ValidLogitechPublisher','DomainJoined','MdmEnrollments','OmadmAccounts','ConfigMgr','Enterprise-management ownership detected'){$text|Should -Match $t}}
+ It 'captures exact registry executable ACL machine user and boot state' {foreach($t in 'DoNotExpandEnvironmentNames','GetValueKind','Kind=','Data=','Sha256','FileVersion','ProductName','CompanyName','Thumbprint','KeyOwner','KeySddl','capturedBootTime','userSid'){$text|Should -Match $t}}
+ It 'preserves security updates remote access and Logitech device-critical state' {foreach($t in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','TermService','Tailscale','Win32_SystemDriver','Get-PnpDevice','LogitechDrivers','LogitechDevices','PreserveUpdater','PreserveDrivers','PreserveAudioVideoDevices'){$text|Should -Match $t}}
+ It 'supports structured logging WhatIf idempotence and terminating failure retention' {foreach($t in 'SupportsShouldProcess','WhatIfPreference','ConvertTo-Json -Compress','idempotent',"'failure' 'fail'",'ErrorActionPreference','needs-evidence'){$text|Should -Match ([regex]::Escape($t))}}
+ It 'requires later-boot persistence verification' {$text|Should -Match 'A later boot is required';$text|Should -Match 'Reboot persistence failed'}
+ It 'implements collision-safe exact rollback' {foreach($t in 'Rollback overwrite refused','Enum]::Parse','RegistryValueKind','SetValue','Exact rollback verification failed','restoredExactOriginal'){$text|Should -Match ([regex]::Escape($t))}}
+ It 'limits production mutation to the selected Run value' {$text|Should -Match 'Remove-ItemProperty';$text|Should -Not -Match 'Remove-AppxPackage|Uninstall-Package|Remove-Package|Set-Service|Stop-Service|Remove-Service|Disable-PnpDevice|Remove-PnpDevice|pnputil|Disable-ScheduledTask|Unregister-ScheduledTask|Set-MpPreference|Disable-WindowsOptionalFeature'}
+ It 'keeps Experimental evidence pending' {$text|Should -Match 'needs-evidence';$text|Should -Not -Match 'status:stable|Stable='}
 }
