@@ -7,9 +7,11 @@ This repository develops measurable, reversible Windows responsiveness experimen
 **Lacksan UX-ROM** is the user-facing model name of `ZBookPerf.ps1`, the
 EXP-047 performance-layer controller and reversible experiment harness. The
 filename remains stable for existing download commands and automation. It runs
-on Windows PowerShell 5.1, records counters and optional Windows Performance
-Recorder (WPR) traces, shows compact console charts, and journals every applied
-candidate in `C:\ProgramData\ZBookPerf\changes.json`.
+on Windows PowerShell 5.1, records bounded counters, shows compact console
+charts, and journals every applied candidate in
+`C:\ProgramData\ZBookPerf\changes.json`. Optional Windows Performance Recorder
+(WPR) collection now uses its memory-mode default. UX-ROM deletes the temporary
+ETL before the test returns and never creates a retained trace CSV.
 
 UX means **user experience**. ROM means
 [**read-only memory**](https://www.ibm.com/think/topics/primary-storage) in
@@ -70,6 +72,29 @@ original-state journal entries, and a batch rollback record. It is an explicit
 cumulative interaction experiment, not proof that every included control is a
 performance gain.
 
+### Test-result privacy and storage
+
+Completed UX-ROM tests do not remain in `C:\ProgramData\ZBookPerf`. UX-ROM sends
+a small sanitized summary to the Lacksan Updates site, then removes the local
+baseline, after-measurement, detailed profile files, and session pointer even if
+the website handoff fails. The public summary can include aggregate medians,
+the HP model, Windows build, power context, test decision, and plain-language
+limitations. It excludes ETL, CSV, raw samples, process lists, command lines,
+file paths, credentials, and customer content.
+
+Publishing uses an authenticated GitHub CLI session to send a bounded
+`repository_dispatch` event to the private website repository. If `gh` is not
+installed or authenticated, UX-ROM says the post was not queued but still
+honors local zero retention. The website validates and escapes every accepted
+field, creates an idempotent reader-friendly update, and deploys it through the
+existing Azure Static Web Apps workflow.
+
+Original-state and rollback records are safety state, not test results, so
+`changes.json`, `latest-synergy-batch.json`, `layer-workflow.json`, and the
+structured event log remain. An unfinished multi-step or reboot experiment may
+temporarily retain its current baseline until it is measured or reverted; a
+completed test does not.
+
 Useful non-interactive examples:
 
 ```powershell
@@ -85,7 +110,7 @@ Useful non-interactive examples:
 # Open or resume the persisted sequential layer workflow
 .\ZBookPerf.ps1 -Action LayerWorkflow
 
-# Counter-only 30-second baseline; does not change Windows settings
+# Counter-only 30-second baseline; publishes a diagnostic summary and removes the local result
 .\ZBookPerf.ps1 -Action Analyze -DurationSeconds 30 -NoTrace
 
 # Inventory Layer 10 controls and capture five Explorer readiness runs
@@ -112,10 +137,10 @@ Useful non-interactive examples:
 # Show the exact proposed MMCSS change without applying it
 .\ZBookPerf.ps1 -Action Enhance -Candidate MmcssResponsiveness -LabTier2Confirmed -WhatIf
 
-# Apply one Tier 1 visual-effects experiment
-.\ZBookPerf.ps1 -Action Enhance -Candidate VisualEffects
+# Apply through the layer workflow so UX-ROM captures the required baseline itself
+.\ZBookPerf.ps1 -Action LayerWorkflow
 
-# Repeat the measurement and show a side-by-side comparison
+# Complete an active layer experiment, publish the comparison, and erase its local results
 .\ZBookPerf.ps1 -Action Remeasure -DurationSeconds 30
 
 # Restore the most recently applied ZBookPerf entry
@@ -123,8 +148,9 @@ Useful non-interactive examples:
 ```
 
 The per-layer workflow captures a fresh baseline immediately before each
-change. Direct maintenance-menu or command-line use still requires `Analyze` first;
-ZBookPerf refuses an application without preserved baseline evidence. A
+change. Use the layer workflow or the apply-all batch for a complete measured
+change. A standalone `Analyze` run is now a completed diagnostic publication,
+not a persistent authorization token for a later change. A
 machine-wide candidate asks one recovery confirmation instead of requiring a
 typed command-line flag. Selecting the explicitly labeled Fast Startup
 diagnostic also records diagnostic intent; non-interactive runs still require

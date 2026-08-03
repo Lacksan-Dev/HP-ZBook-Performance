@@ -4,6 +4,12 @@ Describe 'EXP-047 ZBookPerf' {
         . $scriptPath
     }
 
+    BeforeEach {
+        Mock Invoke-UxRomBlogDispatch {
+            [pscustomobject]@{ status = 'queued'; repository = 'test/site'; runId = $Payload.runId; reason = 'queued for test' }
+        }
+    }
+
     Context 'static contract' {
         It 'parses without PowerShell syntax errors' {
             $tokens = $null
@@ -326,6 +332,61 @@ Describe 'EXP-047 ZBookPerf' {
             $trace.status | Should -Be 'busy'
             $trace.existingRecordingPreserved | Should -BeTrue
             $trace.reason | Should -Not -Match 'RemoteException'
+        }
+
+        It 'starts WPR in memory mode without the unbounded filemode switch' {
+            Mock Test-IsAdministrator { return $true }
+            Mock Get-Command {
+                [pscustomobject]@{ Name = 'wpr.exe'; Source = 'C:\Windows\System32\wpr.exe' }
+            } -ParameterFilter { $Name -eq 'wpr.exe' }
+            Mock Get-WprRecordingState {
+                [pscustomobject]@{ available = $true; state = 'idle'; raw = 'WPR is not recording' }
+            }
+            Mock Invoke-NativeCommand {
+                [pscustomobject]@{ ExitCode = 0; Output = '' }
+            }
+
+            $trace = Start-WprCapture -Root $TestDrive -Stamp 'memory-mode-test'
+            try {
+                $trace.status | Should -Be 'recording'
+                Split-Path $trace.temporaryWorkspace -Leaf | Should -Match '^UXROM-Trace-'
+                Should -Invoke Invoke-NativeCommand -Times 1 -ParameterFilter {
+                    $FilePath -eq 'wpr.exe' -and
+                    '-start' -in $Arguments -and
+                    '-filemode' -notin $Arguments
+                }
+            } finally {
+                if ($trace.temporaryWorkspace -and (Test-Path -LiteralPath $trace.temporaryWorkspace)) {
+                    Remove-Item -LiteralPath $trace.temporaryWorkspace -Recurse -Force
+                }
+            }
+        }
+
+        It 'deletes the temporary WPR artifact immediately after collection' {
+            $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+            $workspace = Join-Path $temporaryRoot ("UXROM-Trace-$PID-" + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+            $etlPath = Join-Path $workspace 'bounded.etl'
+            Set-Content -LiteralPath $etlPath -Value ('x' * 64) -NoNewline
+            $trace = [pscustomobject][ordered]@{
+                status = 'recording'; temporaryWorkspace = $workspace; etlPath = $etlPath
+                csvPath = $null; summaryPath = $null; capturedBytes = 0; retainedBytes = 0
+                deletedAfterCollection = $false; reason = $null
+            }
+            Mock Invoke-NativeCommand {
+                [pscustomobject]@{ ExitCode = 0; Output = '' }
+            }
+
+            $result = Stop-WprCapture -Trace $trace
+
+            $result.status | Should -Be 'captured-and-removed'
+            $result.capturedBytes | Should -BeGreaterThan 0
+            $result.retainedBytes | Should -Be 0
+            $result.deletedAfterCollection | Should -BeTrue
+            Test-Path -LiteralPath $workspace | Should -BeFalse
+            Should -Invoke Invoke-NativeCommand -Times 1 -ParameterFilter {
+                $FilePath -eq 'wpr.exe' -and '-stop' -in $Arguments -and '-skipPdbGen' -in $Arguments
+            }
         }
 
         It 'detects when the legacy High performance candidate is unavailable' {
@@ -2195,6 +2256,9 @@ Describe 'EXP-047 ZBookPerf' {
             Mock Invoke-Measurement {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'baseline.json') }
             }
+            Mock Publish-UxRomObservationResult {
+                [pscustomobject]@{ status = 'queued'; runId = '11111111-2222-4333-8444-555555555555'; reason = 'queued for test' }
+            }
             Mock Invoke-ShellProfile {
                 [pscustomobject]@{ evidencePath = (Join-Path $TestDrive 'shell.json') }
             }
@@ -2242,6 +2306,7 @@ Describe 'EXP-047 ZBookPerf' {
             Should -Invoke Invoke-ShellProfile -Times 1
             Should -Invoke Invoke-WorkloadProfile -Times 1
             Should -Invoke Invoke-DependencyProfile -Times 1
+            Should -Invoke Publish-UxRomObservationResult -Times 1
         }
 
         It 'routes the public full-diagnostics action to the single diagnostic entry point' {
@@ -2317,6 +2382,9 @@ Describe 'EXP-047 ZBookPerf' {
                 }
             }
             Mock Show-MeasurementComparison { }
+            Mock Publish-UxRomPairedResult {
+                [pscustomobject]@{ status = 'queued'; runId = $RunId; reason = 'queued for test' }
+            }
             Mock Save-LayerWorkflowState { }
             Mock Write-StructuredEvent { }
             Mock Write-Host { }
@@ -2327,9 +2395,147 @@ Describe 'EXP-047 ZBookPerf' {
             $batch.entryIds.Count | Should -Be 3
             $batch.candidates | Should -Be @('MmcssResponsiveness', 'PowerAc', 'VisualEffects')
             $batch.status | Should -Be 'active'
-            $batch.decision | Should -Be 'AppliedAsRequestedNoStandalonePerformanceClaim'
+            $batch.decision | Should -Be 'ExperimentalMeasurementNoPerformanceClaim'
+            $batch.localEvidenceRetained | Should -BeFalse
+            $batch.baselineEvidencePath | Should -BeNullOrEmpty
+            $batch.afterEvidencePath | Should -BeNullOrEmpty
             Should -Invoke Invoke-Enhancement -Times 3
             Should -Invoke Invoke-Measurement -Times 2
+            Should -Invoke Publish-UxRomPairedResult -Times 1 -ParameterFilter { $ChangesApplied -eq 3 }
+        }
+
+        It 'labels an already-applied synergy test as no controlled change' {
+            $state = New-LayerWorkflowState
+            Mock Get-WorkflowCandidateSupport { [pscustomobject]@{ supported = $true; reason = 'supported' } }
+            Mock Get-LayerWorkflowState { return $state }
+            Mock Get-ChangeLog { [pscustomobject]@{ entries = @() } }
+            Mock Invoke-Enhancement { }
+            Mock Invoke-Measurement { [pscustomobject]@{ evidencePath = Join-Path $TestDrive ([guid]::NewGuid().ToString() + '.json') } }
+            Mock Show-MeasurementComparison { }
+            Mock Publish-UxRomPairedResult { [pscustomobject]@{ status = 'queued'; runId = $RunId; reason = 'queued for test' } }
+            Mock Save-LayerWorkflowState { }
+            Mock Write-StructuredEvent { }
+            Mock Write-Host { }
+            $runtime = @{ Seconds = 5; Interval = 1; SkipTrace = $true }
+
+            $batch = Invoke-AllEligibleTweaks -Root $TestDrive -Runtime $runtime -Tier2Confirmed
+
+            $batch.entryIds.Count | Should -Be 0
+            $batch.status | Should -Be 'measured-no-change'
+            $batch.decision | Should -Be 'NoControlledChange'
+            Should -Invoke Publish-UxRomPairedResult -Times 1 -ParameterFilter { $ChangesApplied -eq 0 }
+        }
+    }
+
+    Context 'zero-retention result publication' {
+        It 'publishes only a sanitized paired summary and removes both local result files' {
+            $measurementRoot = Join-Path $TestDrive 'measurements'
+            New-Item -ItemType Directory -Path $measurementRoot -Force | Out-Null
+            $baselinePath = Join-Path $measurementRoot 'baseline.json'
+            $afterPath = Join-Path $measurementRoot 'after.json'
+            $sessionPath = Join-Path $TestDrive 'session.json'
+            Set-Content -LiteralPath $baselinePath -Value '{"private":"baseline"}'
+            Set-Content -LiteralPath $afterPath -Value '{"private":"after"}'
+            Set-Content -LiteralPath $sessionPath -Value '{}'
+            $environment = [pscustomobject]@{
+                capturedUtc = '2026-08-04T01:00:00Z'
+                computer = [pscustomobject]@{ model = 'HP ZBook Firefly 14 inch G8' }
+                windows = [pscustomobject]@{ build = '26200' }
+                power = [pscustomobject]@{
+                    activeScheme = 'Power Scheme GUID: test (Balanced)'
+                    systemPowerStatus = [pscustomobject]@{ acLineStatus = 'Online'; batterySaverOn = $false }
+                }
+            }
+            $summary = [pscustomobject]@{ metrics = [pscustomobject]@{
+                cpuMedianPercent = 10; dpcMedianPercent = 0.1; interruptMedianPercent = 0.2
+                diskLatencyMedianMs = 1; memoryCommittedMedianPercent = 50; maximumThermalZoneCelsius = 40
+            } }
+            $baseline = [pscustomobject]@{
+                environment = $environment; summary = $summary; samples = @(1, 2); actualDurationSeconds = 5
+                trace = [pscustomobject]@{ status = 'captured-and-removed' }; evidencePath = $baselinePath
+            }
+            $after = [pscustomobject]@{
+                environment = $environment; summary = $summary; samples = @(1, 2); actualDurationSeconds = 5
+                trace = [pscustomobject]@{ status = 'captured-and-removed' }; evidencePath = $afterPath
+                privateProcessList = @('secret-customer-process.exe')
+            }
+            $script:capturedBlogPayload = $null
+            Mock Invoke-UxRomBlogDispatch {
+                $script:capturedBlogPayload = $Payload
+                [pscustomobject]@{ status = 'queued'; repository = 'test/site'; runId = $Payload.runId; reason = 'queued for test' }
+            }
+            Mock Write-Host { }
+
+            $result = Publish-UxRomPairedResult -Root $TestDrive -RunId '11111111-2222-4333-8444-555555555555' -TestType 'test' -Baseline $baseline -After $after -Candidates @('VisualEffects') -ChangesApplied 1
+
+            $result.status | Should -Be 'queued'
+            Test-Path -LiteralPath $baselinePath | Should -BeFalse
+            Test-Path -LiteralPath $afterPath | Should -BeFalse
+            Test-Path -LiteralPath $sessionPath | Should -BeFalse
+            $script:capturedBlogPayload.results.trace.retainedBytes | Should -Be 0
+            $script:capturedBlogPayload.test.candidates | Should -Be @('Reduced visual effects')
+            ($script:capturedBlogPayload | ConvertTo-Json -Depth 14) | Should -Not -Match 'secret-customer-process'
+        }
+
+        It 'removes local result files even when payload construction fails' {
+            $measurementRoot = Join-Path $TestDrive 'measurements'
+            New-Item -ItemType Directory -Path $measurementRoot -Force | Out-Null
+            $baselinePath = Join-Path $measurementRoot 'invalid-baseline.json'
+            $afterPath = Join-Path $measurementRoot 'invalid-after.json'
+            Set-Content -LiteralPath $baselinePath -Value '{}'
+            Set-Content -LiteralPath $afterPath -Value '{}'
+            $invalidBaseline = [pscustomobject]@{ evidencePath = $baselinePath }
+            $invalidAfter = [pscustomobject]@{ evidencePath = $afterPath }
+
+            {
+                Publish-UxRomPairedResult -Root $TestDrive -RunId '11111111-2222-4333-8444-555555555555' -TestType 'invalid-test' -Baseline $invalidBaseline -After $invalidAfter
+            } | Should -Throw
+
+            Test-Path -LiteralPath $baselinePath | Should -BeFalse
+            Test-Path -LiteralPath $afterPath | Should -BeFalse
+        }
+
+        It 'publishes an individual profile without deleting an unrelated active session' {
+            $measurementRoot = Join-Path $TestDrive 'measurements'
+            New-Item -ItemType Directory -Path $measurementRoot -Force | Out-Null
+            $profilePath = Join-Path $measurementRoot 'thermal-profile.json'
+            $sessionPath = Join-Path $TestDrive 'session.json'
+            Set-Content -LiteralPath $profilePath -Value '{"private":"profile"}'
+            Set-Content -LiteralPath $sessionPath -Value '{"active":true}'
+            $profile = [pscustomobject]@{ evidencePath = $profilePath }
+            Mock Get-WindowsEnvironment {
+                [pscustomobject]@{
+                    capturedUtc = '2026-08-04T01:00:00Z'
+                    computer = [pscustomobject]@{ model = 'HP ZBook Firefly 14 inch G8' }
+                    windows = [pscustomobject]@{ build = '26200' }
+                    power = [pscustomobject]@{
+                        activeScheme = 'Power Scheme GUID: test (Balanced)'
+                        systemPowerStatus = [pscustomobject]@{ acLineStatus = 'Online'; batterySaverOn = $false }
+                    }
+                }
+            }
+
+            $result = Publish-UxRomProfileObservation -Root $TestDrive -Profile $profile -ProfileName 'ThermalProfile'
+
+            $result.status | Should -Be 'queued'
+            Test-Path -LiteralPath $profilePath | Should -BeFalse
+            Test-Path -LiteralPath $sessionPath | Should -BeTrue
+            Should -Invoke Invoke-UxRomBlogDispatch -Times 1 -ParameterFilter {
+                $Payload.test.candidates -contains 'Physical and thermal health profile'
+            }
+        }
+
+        It 'parses the exact-target elevated legacy cleanup utility' {
+            $cleanupPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'controller\maintenance\Clear-UxRomLocalResults.ps1'
+            $tokens = $null
+            $errors = $null
+            [void][Management.Automation.Language.Parser]::ParseFile($cleanupPath, [ref]$tokens, [ref]$errors)
+            $errors.Count | Should -Be 0
+            $source = Get-Content -LiteralPath $cleanupPath -Raw
+            $source | Should -Match 'Join-Path \$root ''traces'''
+            $source | Should -Match 'Join-Path \$root ''measurements'''
+            $source | Should -Match 'preservedSafetyState'
+            $source | Should -Not -Match "Remove-Item.+changes\.json"
         }
     }
 

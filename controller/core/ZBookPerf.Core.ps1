@@ -148,8 +148,12 @@ $ErrorActionPreference = 'Stop'
 $script:ExperimentId = 'EXP-047'
 $script:SchemaVersion = 1
 $script:ProductName = 'Lacksan UX-ROM'
-$script:ProductVersion = '2026.08.01.1'
+$script:ProductVersion = '2026.08.04.1'
 $script:LayerWorkflowSchemaVersion = 1
+$script:BlogRepository = 'Lacksan-Dev/lacksan-website'
+$script:BlogDispatchEvent = 'uxrom_test_result'
+$script:TraceWorkspacePrefix = 'UXROM-Trace-'
+$script:StorageCleanupRoots = @{}
 $script:SplashShown = $false
 $script:LoadedFrom = if ([string]::IsNullOrWhiteSpace([string]$PSCommandPath)) {
     'in-memory content'
@@ -258,11 +262,82 @@ function Test-IsAdministrator {
 function Ensure-DataDirectories {
     param([string]$Root)
 
-    foreach ($path in @($Root, (Join-Path $Root 'traces'), (Join-Path $Root 'measurements'))) {
+    foreach ($path in @($Root, (Join-Path $Root 'measurements'))) {
         if (-not (Test-Path -LiteralPath $path)) {
             New-Item -ItemType Directory -Path $path -Force | Out-Null
         }
     }
+    $normalizedRoot = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    if (-not $script:StorageCleanupRoots.ContainsKey($normalizedRoot)) {
+        Remove-UxRomLegacyTraceArtifacts -Root $Root | Out-Null
+        Remove-UxRomOrphanedTraceWorkspaces | Out-Null
+        $script:StorageCleanupRoots[$normalizedRoot] = $true
+    }
+}
+
+function Test-UxRomChildPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Parent,
+        [Parameter(Mandatory = $true)][string]$Child
+    )
+    $parentPath = [IO.Path]::GetFullPath($Parent).TrimEnd('\') + '\'
+    $childPath = [IO.Path]::GetFullPath($Child)
+    return $childPath.StartsWith($parentPath, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Remove-UxRomOwnedDirectoryFiles {
+    param(
+        [Parameter(Mandatory = $true)][string]$Directory,
+        [Parameter(Mandatory = $true)][string]$ExpectedParent
+    )
+    if (-not (Test-Path -LiteralPath $Directory -PathType Container)) {
+        return [pscustomobject]@{ fileCount = 0; bytes = 0; succeeded = $true; error = $null }
+    }
+    if (-not (Test-UxRomChildPath -Parent $ExpectedParent -Child $Directory)) {
+        throw "Refusing cleanup outside the UX-ROM-owned parent: $Directory"
+    }
+    $files = @(Get-ChildItem -LiteralPath $Directory -Recurse -File -Force -ErrorAction Stop)
+    [int64]$bytes = 0
+    try {
+        foreach ($file in $files) {
+            if (-not (Test-UxRomChildPath -Parent $Directory -Child $file.FullName)) {
+                throw "Refusing cleanup outside the UX-ROM-owned directory: $($file.FullName)"
+            }
+            $bytes += [int64]$file.Length
+            Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
+        }
+        return [pscustomobject]@{ fileCount = $files.Count; bytes = $bytes; succeeded = $true; error = $null }
+    } catch {
+        return [pscustomobject]@{ fileCount = 0; bytes = 0; succeeded = $false; error = $_.Exception.Message }
+    }
+}
+
+function Remove-UxRomLegacyTraceArtifacts {
+    param([string]$Root)
+    $traceRoot = Join-Path $Root 'traces'
+    $result = Remove-UxRomOwnedDirectoryFiles -Directory $traceRoot -ExpectedParent $Root
+    if (-not $result.succeeded) {
+        Write-Warning "UX-ROM could not remove its older trace files. Reopen the controller as administrator. $($result.error)"
+    } elseif ($result.fileCount -gt 0) {
+        Write-Host ("Removed {0:N2} GB of older UX-ROM trace data. Raw traces are no longer retained." -f ($result.bytes / 1GB)) -ForegroundColor Green
+    }
+    return $result
+}
+
+function Remove-UxRomOrphanedTraceWorkspaces {
+    $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    $removed = 0
+    foreach ($directory in @(Get-ChildItem -LiteralPath $temporaryRoot -Directory -Filter "$($script:TraceWorkspacePrefix)*" -ErrorAction SilentlyContinue)) {
+        if ($directory.Name -notmatch '^UXROM-Trace-(\d+)-[a-f0-9]{32}$') { continue }
+        $ownerProcessId = [int]$Matches[1]
+        if ($ownerProcessId -eq $PID -or (Get-Process -Id $ownerProcessId -ErrorAction SilentlyContinue)) { continue }
+        $result = Remove-UxRomOwnedDirectoryFiles -Directory $directory.FullName -ExpectedParent $temporaryRoot
+        if ($result.succeeded) {
+            Remove-Item -LiteralPath $directory.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            $removed += $result.fileCount
+        }
+    }
+    return $removed
 }
 
 function Write-StructuredEvent {
@@ -672,10 +747,10 @@ function Show-MeasurementSummary {
     Write-Host 'Screening findings' -ForegroundColor Yellow
     $Measurement.summary.findings | Format-Table classification, evidence, nextCandidate -Wrap -AutoSize | Out-Host
     Write-Host "Evidence: $($Measurement.evidencePath)" -ForegroundColor DarkGray
-    if ($Measurement.trace.status -ne 'captured') {
+    if ($Measurement.trace.status -notin @('captured', 'captured-and-removed')) {
         Write-Host "ETW trace: $($Measurement.trace.status) - $($Measurement.trace.reason)" -ForegroundColor DarkYellow
     } else {
-        Write-Host "ETW trace: $($Measurement.trace.etlPath)" -ForegroundColor DarkGray
+        Write-Host 'ETW trace: captured temporarily and deleted; retained trace size is 0 bytes.' -ForegroundColor DarkGray
     }
 }
 
@@ -2743,6 +2818,10 @@ function Start-WprCapture {
         csvPath = $null
         summaryPath = $null
         existingRecordingPreserved = $false
+        temporaryWorkspace = $null
+        capturedBytes = 0
+        retainedBytes = 0
+        deletedAfterCollection = $false
     }
     if ($Skip) {
         $trace.status = 'skipped'
@@ -2773,8 +2852,23 @@ function Start-WprCapture {
         return [pscustomobject]$trace
     }
 
-    $start = Invoke-NativeCommand -FilePath 'wpr.exe' -Arguments @('-start', 'GeneralProfile', '-start', 'CPU', '-start', 'DiskIO', '-filemode') -AllowFailure
+    $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    $workspace = Join-Path $temporaryRoot ("$($script:TraceWorkspacePrefix)$PID-$([guid]::NewGuid().ToString('N'))")
+    if (-not (Test-UxRomChildPath -Parent $temporaryRoot -Child $workspace)) {
+        throw "Refusing a trace workspace outside the Windows temporary directory: $workspace"
+    }
+    New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+    $trace.temporaryWorkspace = $workspace
+    $trace.etlPath = Join-Path $workspace "$Stamp.etl"
+
+    # WPR defaults to memory mode. File mode is intentionally not used because Microsoft
+    # documents it as unbounded disk output; UX-ROM only needs a bounded temporary trace.
+    $start = Invoke-NativeCommand -FilePath 'wpr.exe' -Arguments @('-start', 'GeneralProfile', '-start', 'CPU', '-start', 'DiskIO') -AllowFailure
     if ($start.ExitCode -ne 0) {
+        Remove-UxRomOwnedDirectoryFiles -Directory $workspace -ExpectedParent $temporaryRoot | Out-Null
+        Remove-Item -LiteralPath $workspace -Recurse -Force -ErrorAction SilentlyContinue
+        $trace.temporaryWorkspace = $null
+        $trace.etlPath = $null
         if ($start.Output -match '(?i)0xc5583001|profiles are already running') {
             $trace.status = 'busy'
             $trace.reason = Get-WprBusyGuidance
@@ -2786,7 +2880,6 @@ function Start-WprCapture {
         return [pscustomobject]$trace
     }
     $trace.status = 'recording'
-    $trace.etlPath = Join-Path (Join-Path $Root 'traces') "$Stamp.etl"
     return [pscustomobject]$trace
 }
 
@@ -2794,23 +2887,315 @@ function Stop-WprCapture {
     param([object]$Trace)
 
     if ($Trace.status -ne 'recording') { return $Trace }
-    $stop = Invoke-NativeCommand -FilePath 'wpr.exe' -Arguments @('-stop', $Trace.etlPath) -AllowFailure
-    if ($stop.ExitCode -ne 0) {
-        [void](Invoke-NativeCommand -FilePath 'wpr.exe' -Arguments @('-cancel') -AllowFailure)
-        $Trace.status = 'failed-to-stop'
-        $Trace.reason = $stop.Output
-        return $Trace
-    }
-    $Trace.status = 'captured'
-    if (Get-Command 'tracerpt.exe' -ErrorAction SilentlyContinue) {
-        $Trace.csvPath = [IO.Path]::ChangeExtension($Trace.etlPath, '.csv')
-        $Trace.summaryPath = [IO.Path]::ChangeExtension($Trace.etlPath, '.summary.txt')
-        $conversion = Invoke-NativeCommand -FilePath 'tracerpt.exe' -Arguments @($Trace.etlPath, '-of', 'CSV', '-o', $Trace.csvPath, '-summary', $Trace.summaryPath, '-y') -AllowFailure
-        if ($conversion.ExitCode -ne 0) {
-            $Trace.reason = "ETL captured; tracerpt conversion failed: $($conversion.Output)"
+    $workspace = [string]$Trace.temporaryWorkspace
+    $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    $cleanupError = $null
+    try {
+        $stop = Invoke-NativeCommand -FilePath 'wpr.exe' -Arguments @('-stop', $Trace.etlPath, 'Bounded UX-ROM performance observation', '-skipPdbGen') -AllowFailure
+        if ($stop.ExitCode -ne 0) {
+            [void](Invoke-NativeCommand -FilePath 'wpr.exe' -Arguments @('-cancel') -AllowFailure)
+            $Trace.status = 'failed-to-stop'
+            $Trace.reason = $stop.Output
+        } else {
+            if (Test-Path -LiteralPath $Trace.etlPath -PathType Leaf) {
+                $Trace.capturedBytes = [int64](Get-Item -LiteralPath $Trace.etlPath).Length
+            }
+            $Trace.status = 'captured-and-removed'
+            $Trace.reason = 'The bounded WPR trace was used only during collection and then deleted. No ETL or CSV was retained.'
         }
+    } finally {
+        try {
+            $cleanup = Remove-UxRomOwnedDirectoryFiles -Directory $workspace -ExpectedParent $temporaryRoot
+            if (-not $cleanup.succeeded) { throw $cleanup.error }
+            Remove-Item -LiteralPath $workspace -Recurse -Force -ErrorAction Stop
+        } catch {
+            $cleanupError = $_.Exception.Message
+        }
+        $Trace.etlPath = $null
+        $Trace.csvPath = $null
+        $Trace.summaryPath = $null
+        $Trace.temporaryWorkspace = $null
+        $Trace.retainedBytes = 0
+        $Trace.deletedAfterCollection = ($null -eq $cleanupError)
+    }
+    if ($cleanupError) {
+        $Trace.status = 'cleanup-failed'
+        $Trace.reason = "UX-ROM could not honor zero trace retention: $cleanupError"
+        throw $Trace.reason
     }
     return $Trace
+}
+
+function Get-UxRomBlogCandidateName {
+    param([string]$Name)
+    switch ($Name) {
+        'PowerAc' { return 'AC processor policy' }
+        'MmcssResponsiveness' { return 'MMCSS responsiveness' }
+        'NtfsLastAccess' { return 'NTFS last-access policy' }
+        'VisualEffects' { return 'Reduced visual effects' }
+        'FastStartupDiagnostic' { return 'Fast Startup diagnostic isolation' }
+        'SystemBaseline' { return 'System performance baseline' }
+        'FullDiagnostics' { return 'Full system diagnostics' }
+        'ThermalProfile' { return 'Physical and thermal health profile' }
+        'HardwareProfile' { return 'Hardware and storage-path profile' }
+        'FirmwareProfile' { return 'Firmware boundary profile' }
+        'DriverProfile' { return 'Driver and OEM ownership profile' }
+        'KernelProfile' { return 'Kernel-pressure profile' }
+        'PowerProfile' { return 'Power-policy profile' }
+        'SecurityProfile' { return 'Security-activity profile' }
+        'ShellProfile' { return 'Shell-readiness profile' }
+        'WorkloadProfile' { return 'Application workload profile' }
+        'DependencyProfile' { return 'Data and network dependency profile' }
+        default { return 'UX-ROM performance control' }
+    }
+}
+
+function ConvertTo-UxRomBlogMetricSnapshot {
+    param([AllowNull()][object]$Measurement)
+    if ($null -eq $Measurement) { return [pscustomobject][ordered]@{} }
+    $metrics = $Measurement.summary.metrics
+    return [pscustomobject][ordered]@{
+        cpuMedianPercent = $metrics.cpuMedianPercent
+        dpcMedianPercent = $metrics.dpcMedianPercent
+        interruptMedianPercent = $metrics.interruptMedianPercent
+        diskLatencyMedianMs = $metrics.diskLatencyMedianMs
+        memoryCommittedMedianPercent = $metrics.memoryCommittedMedianPercent
+        maximumThermalZoneCelsius = $metrics.maximumThermalZoneCelsius
+    }
+}
+
+function Get-UxRomBlogEnvironment {
+    param([Parameter(Mandatory = $true)][object]$Measurement)
+    $activeScheme = [string]$Measurement.environment.power.activeScheme
+    $powerPlan = if ($activeScheme -match '\(([^)]+)\)\s*$') { $Matches[1] } else { 'Not recorded' }
+    $powerSource = switch ([string]$Measurement.environment.power.systemPowerStatus.acLineStatus) {
+        'Online' { 'AC' }
+        'Offline' { 'Battery' }
+        default { 'Not recorded' }
+    }
+    return [pscustomobject][ordered]@{
+        model = [string]$Measurement.environment.computer.model
+        windowsBuild = [string]$Measurement.environment.windows.build
+        powerSource = $powerSource
+        powerPlan = $powerPlan
+        batterySaver = [bool]$Measurement.environment.power.systemPowerStatus.batterySaverOn
+    }
+}
+
+function New-UxRomBlogPayload {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunId,
+        [Parameter(Mandatory = $true)][string]$TestType,
+        [AllowNull()][object]$Baseline,
+        [Parameter(Mandatory = $true)][object]$After,
+        [string[]]$Candidates = @(),
+        [int]$ChangesApplied = 0,
+        [Parameter(Mandatory = $true)][ValidateSet('NoControlledChange', 'ExperimentalMeasurementNoPerformanceClaim', 'ObservationOnly', 'ValidatedImprovement', 'Regressed')][string]$Decision,
+        [string[]]$Limitations = @()
+    )
+    $candidateNames = @($Candidates | ForEach-Object { Get-UxRomBlogCandidateName -Name $_ } | Select-Object -Unique)
+    $capturedUtc = if ($After.environment.capturedUtc) { [string]$After.environment.capturedUtc } else { [DateTime]::UtcNow.ToString('o') }
+    return [pscustomobject][ordered]@{
+        schemaVersion = 1
+        runId = $RunId
+        capturedUtc = $capturedUtc
+        product = [pscustomobject][ordered]@{
+            name = $script:ProductName
+            version = $script:ProductVersion
+            experimentId = $script:ExperimentId
+        }
+        test = [pscustomobject][ordered]@{
+            type = $TestType
+            changesApplied = $ChangesApplied
+            candidates = @($candidateNames)
+            sampleCount = @($After.samples).Count
+            durationSeconds = $After.actualDurationSeconds
+        }
+        environment = Get-UxRomBlogEnvironment -Measurement $After
+        results = [pscustomobject][ordered]@{
+            decision = $Decision
+            before = ConvertTo-UxRomBlogMetricSnapshot -Measurement $Baseline
+            after = ConvertTo-UxRomBlogMetricSnapshot -Measurement $After
+            limitations = @($Limitations)
+            trace = [pscustomobject][ordered]@{
+                status = [string]$After.trace.status
+                retainedBytes = 0
+            }
+        }
+    }
+}
+
+function Invoke-UxRomBlogDispatch {
+    param([Parameter(Mandatory = $true)][object]$Payload)
+    $command = Get-Command 'gh.exe' -ErrorAction SilentlyContinue
+    if (-not $command) {
+        return [pscustomobject][ordered]@{
+            status = 'unavailable'
+            repository = $script:BlogRepository
+            runId = $Payload.runId
+            reason = 'GitHub CLI is not installed. The sanitized result was shown in the console but could not be sent to the blog.'
+        }
+    }
+    $request = [pscustomobject][ordered]@{
+        event_type = $script:BlogDispatchEvent
+        client_payload = $Payload
+    } | ConvertTo-Json -Depth 14 -Compress
+    $startInfo = New-Object Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $command.Source
+    $startInfo.Arguments = "api repos/$($script:BlogRepository)/dispatches --method POST --input - --silent"
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $startInfo
+    try {
+        [void]$process.Start()
+        $process.StandardInput.Write($request)
+        $process.StandardInput.Close()
+        if (-not $process.WaitForExit(30000)) {
+            try { $process.Kill() } catch { }
+            return [pscustomobject][ordered]@{ status = 'failed'; repository = $script:BlogRepository; runId = $Payload.runId; reason = 'GitHub publication timed out after 30 seconds.' }
+        }
+        $errorText = $process.StandardError.ReadToEnd().Trim()
+        if ($process.ExitCode -ne 0) {
+            if ($errorText.Length -gt 300) { $errorText = $errorText.Substring(0, 300) }
+            return [pscustomobject][ordered]@{ status = 'failed'; repository = $script:BlogRepository; runId = $Payload.runId; reason = "GitHub rejected the sanitized publication request: $errorText" }
+        }
+        return [pscustomobject][ordered]@{
+            status = 'queued'
+            repository = $script:BlogRepository
+            runId = $Payload.runId
+            reason = 'The sanitized result was accepted for website rendering and Azure deployment.'
+        }
+    } catch {
+        return [pscustomobject][ordered]@{ status = 'failed'; repository = $script:BlogRepository; runId = $Payload.runId; reason = $_.Exception.Message }
+    } finally {
+        $process.Dispose()
+    }
+}
+
+function Remove-UxRomLocalResultFiles {
+    param(
+        [string]$Root,
+        [string[]]$Paths = @(),
+        [switch]$ClearSession
+    )
+    $measurementRoot = Join-Path $Root 'measurements'
+    $removed = 0
+    foreach ($path in @($Paths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)) {
+        if (-not (Test-UxRomChildPath -Parent $measurementRoot -Child $path)) {
+            throw "Refusing to remove a result outside the UX-ROM measurement directory: $path"
+        }
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+            $removed++
+        }
+    }
+    if ($ClearSession) {
+        $sessionPath = Join-Path $Root 'session.json'
+        if (Test-Path -LiteralPath $sessionPath -PathType Leaf) {
+            Remove-Item -LiteralPath $sessionPath -Force -ErrorAction Stop
+            $removed++
+        }
+    }
+    return $removed
+}
+
+function Publish-UxRomPairedResult {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][string]$RunId,
+        [Parameter(Mandatory = $true)][string]$TestType,
+        [Parameter(Mandatory = $true)][object]$Baseline,
+        [Parameter(Mandatory = $true)][object]$After,
+        [string[]]$Candidates = @(),
+        [int]$ChangesApplied = 0
+    )
+    $decision = if ($ChangesApplied -eq 0) { 'NoControlledChange' } else { 'ExperimentalMeasurementNoPerformanceClaim' }
+    $limitations = if ($ChangesApplied -eq 0) {
+        @('No selected setting changed during this run.', 'The short samples can include changing background activity.', 'No repeated customer-visible workflow timing was recorded.')
+    } else {
+        @('This is one short paired comparison, not a repeated performance validation.', 'Background activity can change aggregate counters.', 'A customer-visible workflow and rollback validation are still required before a speed claim.')
+    }
+    try {
+        $payload = New-UxRomBlogPayload -RunId $RunId -TestType $TestType -Baseline $Baseline -After $After -Candidates $Candidates -ChangesApplied $ChangesApplied -Decision $decision -Limitations $limitations
+        $publication = Invoke-UxRomBlogDispatch -Payload $payload
+        Write-Host $publication.reason -ForegroundColor $(if ($publication.status -eq 'queued') { 'Green' } else { 'DarkYellow' })
+        return $publication
+    } finally {
+        [void](Remove-UxRomLocalResultFiles -Root $Root -Paths @($Baseline.evidencePath, $After.evidencePath) -ClearSession)
+    }
+}
+
+function Publish-UxRomObservationResult {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][string]$TestType,
+        [Parameter(Mandatory = $true)][object]$Measurement,
+        [string[]]$Candidates = @(),
+        [string[]]$AdditionalPaths = @(),
+        [switch]$ClearSession
+    )
+    $runId = [guid]::NewGuid().ToString()
+    try {
+        $payload = New-UxRomBlogPayload -RunId $runId -TestType $TestType -Baseline $null -After $Measurement -Candidates $Candidates -Decision ObservationOnly -Limitations @('This was a read-only diagnostic pass; no Windows setting changed.', 'A single diagnostic window cannot prove a performance improvement.', 'Raw inventory, process details, file paths, ETL, and CSV data were not published.')
+        $publication = Invoke-UxRomBlogDispatch -Payload $payload
+        Write-Host $publication.reason -ForegroundColor $(if ($publication.status -eq 'queued') { 'Green' } else { 'DarkYellow' })
+        return $publication
+    } finally {
+        [void](Remove-UxRomLocalResultFiles -Root $Root -Paths (@($Measurement.evidencePath) + @($AdditionalPaths)) -ClearSession:$ClearSession)
+    }
+}
+
+function Publish-UxRomProfileObservation {
+    param(
+        [string]$Root,
+        [Parameter(Mandatory = $true)][AllowNull()][object]$Profile,
+        [Parameter(Mandatory = $true)][string]$ProfileName
+    )
+    if ($null -eq $Profile) { return $null }
+    $environment = Get-WindowsEnvironment
+    $emptyMetrics = [pscustomobject][ordered]@{
+        cpuMedianPercent = $null
+        dpcMedianPercent = $null
+        interruptMedianPercent = $null
+        diskLatencyMedianMs = $null
+        memoryCommittedMedianPercent = $null
+        maximumThermalZoneCelsius = $null
+    }
+    $measurement = [pscustomobject][ordered]@{
+        environment = $environment
+        summary = [pscustomobject]@{ metrics = $emptyMetrics }
+        samples = @()
+        actualDurationSeconds = 0
+        trace = [pscustomobject]@{ status = 'not-collected' }
+        evidencePath = [string]$Profile.evidencePath
+    }
+    return Publish-UxRomObservationResult -Root $Root -TestType $ProfileName -Measurement $measurement -Candidates @($ProfileName)
+}
+
+function Get-UxRomMeasurementSession {
+    param([string]$Root)
+    $sessionPath = Join-Path $Root 'session.json'
+    if (-not (Test-Path -LiteralPath $sessionPath -PathType Leaf)) {
+        throw 'No measurement session exists. Run a baseline first.'
+    }
+    $session = Get-Content -LiteralPath $sessionPath -Raw | ConvertFrom-Json
+    if (-not $session.baselinePath -or -not (Test-Path -LiteralPath $session.baselinePath -PathType Leaf)) {
+        throw 'The baseline for this measurement session is unavailable.'
+    }
+    $baseline = Get-Content -LiteralPath $session.baselinePath -Raw | ConvertFrom-Json
+    $after = $null
+    if ($session.afterPath -and (Test-Path -LiteralPath $session.afterPath -PathType Leaf)) {
+        $after = Get-Content -LiteralPath $session.afterPath -Raw | ConvertFrom-Json
+    }
+    return [pscustomobject][ordered]@{
+        session = $session
+        baseline = $baseline
+        after = $after
+    }
 }
 
 function Invoke-Measurement {
@@ -2819,7 +3204,8 @@ function Invoke-Measurement {
         [int]$Seconds,
         [int]$Interval,
         [string]$Root,
-        [switch]$SkipTrace
+        [switch]$SkipTrace,
+        [switch]$DeferPublication
     )
 
     Ensure-DataDirectories -Root $Root
@@ -2859,6 +3245,8 @@ function Invoke-Measurement {
         samples = @($samples)
         summary = $summary
         evidencePath = $evidencePath
+        localEvidenceRetained = $true
+        blogPublication = $null
     }
     $measurement | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
 
@@ -2872,6 +3260,11 @@ function Invoke-Measurement {
     $session | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $sessionPath -Encoding UTF8
     Write-StructuredEvent -Root $Root -Level Information -Event 'measurement-complete' -Data @{ kind = $Kind; evidencePath = $evidencePath; traceStatus = $trace.status }
     Show-MeasurementSummary -Measurement $measurement
+    if ($Kind -eq 'baseline' -and -not $DeferPublication) {
+        $measurement.blogPublication = Publish-UxRomObservationResult -Root $Root -TestType 'system-baseline' -Measurement $measurement -Candidates @('SystemBaseline') -ClearSession
+        $measurement.localEvidenceRetained = $false
+        $measurement.evidencePath = $null
+    }
     return $measurement
 }
 
@@ -5575,7 +5968,7 @@ function Invoke-LayerAssessmentStep {
             $evidencePath = $profile.evidencePath
         }
         'Baseline' {
-            $measurement = Invoke-Measurement -Kind baseline -Seconds $Seconds -Interval $Interval -Root $Root -SkipTrace:$SkipTrace
+            $measurement = Invoke-Measurement -Kind baseline -Seconds $Seconds -Interval $Interval -Root $Root -SkipTrace:$SkipTrace -DeferPublication
             $evidencePath = $measurement.evidencePath
         }
         'ShellProfile' {
@@ -5655,7 +6048,7 @@ function Invoke-LayerEnhancementStep {
     }
 
     Write-Host "Capturing a fresh cumulative-state baseline before: $(Get-CandidateDisplayName -Name $candidate)" -ForegroundColor Cyan
-    [void](Invoke-Measurement -Kind baseline -Seconds $Seconds -Interval $Interval -Root $Root -SkipTrace:$SkipTrace)
+    [void](Invoke-Measurement -Kind baseline -Seconds $Seconds -Interval $Interval -Root $Root -SkipTrace:$SkipTrace -DeferPublication)
 
     $tier2Confirmed = $false
     if ($candidate -in $script:MachineCandidates) {
@@ -5713,8 +6106,21 @@ function Invoke-LayerRemeasureStep {
     }
     $measurement = Invoke-Measurement -Kind after -Seconds $Seconds -Interval $Interval -Root $Root -SkipTrace:$SkipTrace
     Show-MeasurementComparison -Root $Root
+    $session = Get-UxRomMeasurementSession -Root $Root
+    $runId = [guid]::NewGuid().ToString()
+    $publication = Publish-UxRomPairedResult `
+        -Root $Root `
+        -RunId $runId `
+        -TestType "layer-$($State.currentLayer)-experiment" `
+        -Baseline $session.baseline `
+        -After $session.after `
+        -Candidates @([string]$State.activeCandidate) `
+        -ChangesApplied 1
+    $measurement.localEvidenceRetained = $false
+    $measurement.evidencePath = $null
+    $measurement.blogPublication = $publication
     $State.phase = 'review-required'
-    Add-LayerWorkflowHistory -State $State -Action 'candidate-measured' -Layer ([int]$State.currentLayer) -Candidate ([string]$State.activeCandidate) -EvidencePath $measurement.evidencePath -Reason 'Review before keep or revert.'
+    Add-LayerWorkflowHistory -State $State -Action 'candidate-measured' -Layer ([int]$State.currentLayer) -Candidate ([string]$State.activeCandidate) -EvidencePath "blog:$runId" -Reason "Review before keep or revert. Publication: $($publication.status)."
     Save-LayerWorkflowState -Root $Root -State $State
 }
 
@@ -6096,7 +6502,8 @@ function Invoke-FullSystemDiagnostics {
         -Seconds $Runtime.Seconds `
         -Interval $Runtime.Interval `
         -Root $Root `
-        -SkipTrace:$Runtime.SkipTrace
+        -SkipTrace:$Runtime.SkipTrace `
+        -DeferPublication
     $shell = Invoke-ShellProfile `
         -Root $Root `
         -RunCount $Runtime.ShellRuns `
@@ -6142,10 +6549,34 @@ function Invoke-FullSystemDiagnostics {
         coveredLayers = @(1, 2, 3, 4, 5, 6, 7, 10, 11, 12)
         integrationGaps = @(8, 9)
         statement = 'No Windows setting was changed. A missing layer integration is not a clean bill of health.'
+        localEvidenceRetained = $true
+        blogPublication = $null
     }
     $manifest | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
-    Write-StructuredEvent -Root $Root -Level Information -Event 'full-diagnostics-complete' -Data @{ evidencePath = $manifestPath; observationOnly = $true }
-    Write-Host "Full diagnostic manifest: $manifestPath" -ForegroundColor Green
+    $profilePaths = @(
+        $thermal.evidencePath
+        $hardware.evidencePath
+        $firmware.evidencePath
+        $drivers.evidencePath
+        $kernel.evidencePath
+        $power.evidencePath
+        $security.evidencePath
+        $shell.evidencePath
+        $workload.evidencePath
+        $dependencies.evidencePath
+        $manifestPath
+    )
+    $publication = Publish-UxRomObservationResult `
+        -Root $Root `
+        -TestType 'full-system-diagnostics' `
+        -Measurement $baseline `
+        -Candidates @('FullDiagnostics') `
+        -AdditionalPaths $profilePaths `
+        -ClearSession
+    $manifest.localEvidenceRetained = $false
+    $manifest.blogPublication = $publication
+    Write-StructuredEvent -Root $Root -Level Information -Event 'full-diagnostics-complete' -Data @{ publicationStatus = $publication.status; runId = $publication.runId; observationOnly = $true; localEvidenceRetained = $false }
+    Write-Host "Full diagnostic result: blog handoff $($publication.status); local test files removed." -ForegroundColor Green
     Write-Host 'No Windows setting was changed.' -ForegroundColor DarkYellow
     return $manifest
 }
@@ -6228,8 +6659,10 @@ function Invoke-AllEligibleTweaks {
         }
     }
 
-    $baseline = Invoke-Measurement -Kind baseline -Seconds $Runtime.Seconds -Interval $Runtime.Interval -Root $Root -SkipTrace:$Runtime.SkipTrace
+    $baseline = Invoke-Measurement -Kind baseline -Seconds $Runtime.Seconds -Interval $Runtime.Interval -Root $Root -SkipTrace:$Runtime.SkipTrace -DeferPublication
     $entryIds = New-Object System.Collections.ArrayList
+    $appliedCandidates = New-Object System.Collections.ArrayList
+    $after = $null
     try {
         foreach ($item in $eligible) {
             $beforeLog = Get-ChangeLog -Root $Root
@@ -6240,6 +6673,7 @@ function Invoke-AllEligibleTweaks {
                 $entry = @($afterLog.entries)[-1]
                 if ($entry.status -ne 'applied') { throw "Batch verification failed for '$($item.candidate)'." }
                 [void]$entryIds.Add([string]$entry.id)
+                [void]$appliedCandidates.Add([string]$item.candidate)
             }
         }
         $after = Invoke-Measurement -Kind after -Seconds $Runtime.Seconds -Interval $Runtime.Interval -Root $Root -SkipTrace:$Runtime.SkipTrace
@@ -6248,29 +6682,54 @@ function Invoke-AllEligibleTweaks {
         for ($index = 0; $index -lt $entryIds.Count; $index++) {
             Invoke-RevertChanges -Root $Root -Confirm:$false
         }
+        $failedPaths = @($baseline.evidencePath)
+        if ($after) { $failedPaths += $after.evidencePath }
+        [void](Remove-UxRomLocalResultFiles -Root $Root -Paths $failedPaths -ClearSession)
         throw
     }
 
+    $batchId = [guid]::NewGuid().ToString()
+    $publication = Publish-UxRomPairedResult `
+        -Root $Root `
+        -RunId $batchId `
+        -TestType 'synergy-batch' `
+        -Baseline $baseline `
+        -After $after `
+        -Candidates @($eligible.candidate) `
+        -ChangesApplied $entryIds.Count
     $batch = [pscustomobject][ordered]@{
         schemaVersion = 1
         product = $script:ProductName
-        batchId = [guid]::NewGuid().ToString()
-        status = 'active'
+        batchId = $batchId
+        status = if ($entryIds.Count -gt 0) { 'active' } else { 'measured-no-change' }
         appliedUtc = [DateTime]::UtcNow.ToString('o')
         entryIds = @($entryIds)
         candidates = @($eligible.candidate)
-        baselineEvidencePath = $baseline.evidencePath
-        afterEvidencePath = $after.evidencePath
+        baselineEvidencePath = $null
+        afterEvidencePath = $null
+        localEvidenceRetained = $false
+        blogPublication = $publication
         rebootRequired = $false
-        decision = 'AppliedAsRequestedNoStandalonePerformanceClaim'
+        decision = if ($entryIds.Count -gt 0) { 'ExperimentalMeasurementNoPerformanceClaim' } else { 'NoControlledChange' }
     }
     $batch | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Get-SynergyBatchPath -Root $Root) -Encoding UTF8
     foreach ($item in $eligible) {
-        Add-LayerWorkflowHistory -State $workflowState -Action 'candidate-kept' -Layer $item.layer -Candidate $item.candidate -EvidencePath $after.evidencePath -Reason "Retained as part of synergy batch $($batch.batchId); no standalone gain claim."
+        $wasApplied = $item.candidate -in @($appliedCandidates)
+        $action = if ($wasApplied) { 'candidate-kept' } else { 'candidate-already-applied' }
+        $reason = if ($wasApplied) {
+            "Retained as part of synergy batch $batchId; no standalone gain claim."
+        } else {
+            "No new journal entry was needed in synergy batch $batchId; the setting already matched the requested state."
+        }
+        Add-LayerWorkflowHistory -State $workflowState -Action $action -Layer $item.layer -Candidate $item.candidate -EvidencePath "blog:$batchId" -Reason $reason
     }
     Save-LayerWorkflowState -Root $Root -State $workflowState
-    Write-StructuredEvent -Root $Root -Level Information -Event 'synergy-batch-applied' -Data @{ batchId = $batch.batchId; entryIds = @($entryIds); afterEvidencePath = $after.evidencePath }
-    Write-Host "Applied and verified $($entryIds.Count) change(s). Batch rollback is available from the main menu." -ForegroundColor Green
+    Write-StructuredEvent -Root $Root -Level Information -Event 'synergy-batch-applied' -Data @{ batchId = $batchId; entryIds = @($entryIds); publicationStatus = $publication.status; localEvidenceRetained = $false }
+    if ($entryIds.Count -gt 0) {
+        Write-Host "Applied and verified $($entryIds.Count) change(s). Batch rollback is available from the main menu." -ForegroundColor Green
+    } else {
+        Write-Host 'No new change was required; all eligible settings already matched. The comparison was published without claiming a gain.' -ForegroundColor Green
+    }
     Write-Host 'This is a cumulative configuration experiment, not a claim that each item improved performance.' -ForegroundColor DarkYellow
     return $batch
 }
@@ -6385,8 +6844,23 @@ function Invoke-ContextAwareRemeasure {
         Invoke-LayerRemeasureStep -Root $Root -State $state -Seconds $Seconds -Interval $Interval -SkipTrace:$SkipTrace
         return
     }
-    [void](Invoke-Measurement -Kind after -Seconds $Seconds -Interval $Interval -Root $Root -SkipTrace:$SkipTrace)
+    $after = Invoke-Measurement -Kind after -Seconds $Seconds -Interval $Interval -Root $Root -SkipTrace:$SkipTrace
     Show-MeasurementComparison -Root $Root
+    $session = Get-UxRomMeasurementSession -Root $Root
+    $runId = [guid]::NewGuid().ToString()
+    $activeEntries = @((Get-ChangeLog -Root $Root).entries | Where-Object { $_.status -eq 'applied' })
+    $latestCandidate = if ($activeEntries.Count -gt 0) { [string]$activeEntries[-1].candidate } else { $null }
+    $publication = Publish-UxRomPairedResult `
+        -Root $Root `
+        -RunId $runId `
+        -TestType 'manual-remeasurement' `
+        -Baseline $session.baseline `
+        -After $session.after `
+        -Candidates @($latestCandidate | Where-Object { $_ }) `
+        -ChangesApplied $(if ($latestCandidate) { 1 } else { 0 })
+    $after.localEvidenceRetained = $false
+    $after.evidencePath = $null
+    $after.blogPublication = $publication
 }
 
 function Invoke-ContextAwareRevert {
@@ -6777,77 +7251,87 @@ function Invoke-ZBookPerfMain {
             }
             'Watch' { Invoke-LiveWatch -Interval $SampleIntervalSeconds -MaximumSamples $WatchMaxSamples }
             'ThermalProfile' {
-                [void](Invoke-ThermalProfile `
+                $profile = Invoke-ThermalProfile `
                     -Root $DataRoot `
                     -Seconds $DurationSeconds `
                     -IntervalSeconds $SampleIntervalSeconds `
-                    -CalibrationIterations $ThermalCalibrationIterations)
+                    -CalibrationIterations $ThermalCalibrationIterations
+                [void](Publish-UxRomProfileObservation -Root $DataRoot -Profile $profile -ProfileName 'ThermalProfile')
             }
             'HardwareProfile' {
-                [void](Invoke-HardwareProfile `
+                $profile = Invoke-HardwareProfile `
                     -Root $DataRoot `
                     -Seconds $DurationSeconds `
                     -IntervalSeconds $SampleIntervalSeconds `
-                    -CalibrationIterations $HardwareCalibrationIterations)
+                    -CalibrationIterations $HardwareCalibrationIterations
+                [void](Publish-UxRomProfileObservation -Root $DataRoot -Profile $profile -ProfileName 'HardwareProfile')
             }
             'FirmwareProfile' {
-                [void](Invoke-FirmwareProfile `
+                $profile = Invoke-FirmwareProfile `
                     -Root $DataRoot `
-                    -CalibrationIterations $FirmwareCalibrationIterations)
+                    -CalibrationIterations $FirmwareCalibrationIterations
+                [void](Publish-UxRomProfileObservation -Root $DataRoot -Profile $profile -ProfileName 'FirmwareProfile')
             }
             'DriverProfile' {
-                [void](Invoke-DriverProfile `
+                $profile = Invoke-DriverProfile `
                     -Root $DataRoot `
                     -CalibrationIterations $DriverCalibrationIterations `
-                    -DeviceLimit $DriverDeviceLimit)
+                    -DeviceLimit $DriverDeviceLimit
+                [void](Publish-UxRomProfileObservation -Root $DataRoot -Profile $profile -ProfileName 'DriverProfile')
             }
             'KernelProfile' {
-                [void](Invoke-KernelProfile `
+                $profile = Invoke-KernelProfile `
                     -Root $DataRoot `
                     -BlockCount $KernelBlockCount `
                     -SamplesPerBlock $KernelSamplesPerBlock `
                     -SampleIntervalSeconds $KernelSampleIntervalSeconds `
-                    -CalibrationIterations $KernelCalibrationIterations)
+                    -CalibrationIterations $KernelCalibrationIterations
+                [void](Publish-UxRomProfileObservation -Root $DataRoot -Profile $profile -ProfileName 'KernelProfile')
             }
             'PowerProfile' {
-                [void](Invoke-PowerProfile `
+                $profile = Invoke-PowerProfile `
                     -Root $DataRoot `
                     -SampleCount $PowerProfileSampleCount `
                     -SampleIntervalMilliseconds $PowerProfileSampleIntervalMilliseconds `
                     -CalibrationIterations $PowerProfileCalibrationIterations `
-                    -CallbackTimeoutMilliseconds $PowerProfileCallbackTimeoutMilliseconds)
+                    -CallbackTimeoutMilliseconds $PowerProfileCallbackTimeoutMilliseconds
+                [void](Publish-UxRomProfileObservation -Root $DataRoot -Profile $profile -ProfileName 'PowerProfile')
             }
             'SecurityProfile' {
-                [void](Invoke-SecurityProfile `
+                $profile = Invoke-SecurityProfile `
                     -Root $DataRoot `
                     -Seconds $DurationSeconds `
                     -IntervalMilliseconds $SecurityProfileSampleIntervalMilliseconds `
-                    -CalibrationIterations $SecurityProfileCalibrationIterations)
+                    -CalibrationIterations $SecurityProfileCalibrationIterations
+                [void](Publish-UxRomProfileObservation -Root $DataRoot -Profile $profile -ProfileName 'SecurityProfile')
             }
             'ShellProfile' {
-                [void](Invoke-ShellProfile `
+                $profile = Invoke-ShellProfile `
                     -Root $DataRoot `
                     -RunCount $ShellRunCount `
                     -WarmupRunCount $ShellWarmupRunCount `
                     -TimeoutMilliseconds $ShellTimeoutMilliseconds `
-                    -ProbeCalibrationIterations $ShellProbeCalibrationIterations)
+                    -ProbeCalibrationIterations $ShellProbeCalibrationIterations
+                [void](Publish-UxRomProfileObservation -Root $DataRoot -Profile $profile -ProfileName 'ShellProfile')
             }
             'WorkloadProfile' {
-                [void](Invoke-WorkloadProfile `
+                $profile = Invoke-WorkloadProfile `
                     -Root $DataRoot `
                     -ProcessNames $WorkloadProcessName `
                     -Seconds $DurationSeconds `
                     -IntervalMilliseconds $WorkloadSampleIntervalMilliseconds `
-                    -CalibrationIterations $WorkloadCalibrationIterations)
+                    -CalibrationIterations $WorkloadCalibrationIterations
+                [void](Publish-UxRomProfileObservation -Root $DataRoot -Profile $profile -ProfileName 'WorkloadProfile')
             }
             'DependencyProfile' {
-                [void](Invoke-DependencyProfile `
+                $profile = Invoke-DependencyProfile `
                     -Root $DataRoot `
                     -Paths $DependencyPath `
                     -Endpoints $DependencyEndpoint `
                     -ProbeRunCount $DependencyProbeRunCount `
                     -TimeoutMilliseconds $DependencyTimeoutMilliseconds `
-                    -CalibrationIterations $DependencyCalibrationIterations)
+                    -CalibrationIterations $DependencyCalibrationIterations
+                [void](Publish-UxRomProfileObservation -Root $DataRoot -Profile $profile -ProfileName 'DependencyProfile')
             }
             'Enhance' {
                 $selectedCandidate = $EnhancementCandidate
