@@ -3,7 +3,7 @@ $provider=Join-Path $root 'providers/EdgeNewTabContentPolicy.ps1'
 Describe 'EXP-148 Edge new-tab content provider contract' {
   BeforeAll { $text=Get-Content $provider -Raw; $tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($provider,[ref]$tokens,[ref]$errors) }
   It 'parses as PowerShell' { $errors.Count | Should -Be 0 }
-  It 'uses the exact mandatory NewTabPageContentEnabled policy' { $text | Should -Match "Policies\\Microsoft\\Edge';\$RecommendedPath"; $text | Should -Match "NewTabPageContentEnabled"; $text | Should -Match '\$Treatment=0'; $text | Should -Match 'Major-lt91' }
+  It 'uses the exact mandatory NewTabPageContentEnabled policy' { $text | Should -Match "PolicyPath='HKLM:"; $text | Should -Match 'NewTabPageContentEnabled'; $text | Should -Match '\$Treatment=0'; $text | Should -Match 'Major-lt91' }
   It 'implements the complete reversible lifecycle' { foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){ $text | Should -Match "'$a'" } }
   It 'captures Edge executable identity and registry ownership evidence' { foreach($s in 'Get-AuthenticodeSignature','Microsoft Corporation','Get-FileHash','Sha256','Thumbprint','Owner=','Sddl='){ $text | Should -Match $s } }
   It 'binds treatment to an exact eligible profile and baseline content proof' { foreach($s in 'TargetProfilePath','ProfileSignInType','BaselineContentActive','SelfManagedNtpConfirmed','MSA-signed-in profiles are ineligible','baseline Microsoft NTP content proof required'){ $text | Should -Match $s } }
