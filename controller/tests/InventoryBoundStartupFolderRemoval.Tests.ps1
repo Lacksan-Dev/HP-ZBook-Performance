@@ -1,0 +1,17 @@
+$provider=Join-Path $PSScriptRoot '..\providers\InventoryBoundStartupFolderRemoval.ps1'
+Describe 'EXP-146 inventory-bound Startup-folder provider contract' {
+ BeforeAll {$text=Get-Content -LiteralPath $provider -Raw}
+ It 'parses as PowerShell' {$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($provider,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0}
+ It 'implements the complete reversible lifecycle' {foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
+ It 'binds one EXP-143 priority StartupFolder selection and inventory hash' {foreach($x in "experiment-ne'EXP-143'","classification-ne'priority-target'","surface-ne'StartupFolder'",'inventoryHash','SelectionPath'){$text|Should -Match ([regex]::Escape($x))}}
+ It 'allows only current-user and common Startup folder surfaces' {$text|Should -Match "GetFolderPath\('Startup'\)";$text|Should -Match "GetFolderPath\('CommonStartup'\)";$text|Should -Match 'outside approved Startup folders'}
+ It 'captures exact file bytes hash metadata ACL shortcut and startup snapshot' {foreach($x in 'bytesBase64','Sha256','CreationTimeUtc','LastWriteTimeUtc','LastAccessTimeUtc','Attributes','AclSddl','TargetPath','Arguments','WorkingDirectory','IconLocation','Description','WindowStyle','startupSnapshot'){$text|Should -Match $x}}
+ It 'requires HP Windows 11 unmanaged ownership and signed priority publisher identity' {foreach($x in 'Windows 11 required','HP platform required','enterprise management ownership detected','Get-AuthenticodeSignature','Microsoft Corporation','Logitech'){$text|Should -Match $x}}
+ It 'refuses protected and argument-bearing startup identities' {foreach($x in 'Protected startup identity refused','Shortcut arguments require separate qualification','omnissa','windows app','remote desktop','tailscale','defender','credential','recovery','driver','firmware'){$text|Should -Match $x}}
+ It 'limits application to deletion of the selected Startup registration' {$text|Should -Match 'Remove-Item -LiteralPath \$live.Path -Force';$text|Should -Not -Match 'Remove-AppxPackage|Uninstall-Package|Set-Service|Stop-Service|Remove-Service|Disable-PnpDevice|Remove-PnpDevice|pnputil|Disable-ScheduledTask|Unregister-ScheduledTask|Set-MpPreference|Set-NetFirewall'}
+ It 'preserves security updates remote access and unrelated startup state' {foreach($x in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','TermService','Tailscale','RemainingMatches','Protected security update or remote-access state drift detected'){$text|Should -Match $x}}
+ It 'supports dry run WhatIf structured logging idempotence and terminating failure evidence' {foreach($x in 'dry-run','WhatIfPreference','ConvertTo-Json -Compress','idempotent',"'failure' 'failure'",'ErrorActionPreference','needs-evidence'){$text|Should -Match ([regex]::Escape($x))}}
+ It 'requires a later boot for persistence verification' {$text|Should -Match 'Later boot required';$text|Should -Match 'Treatment failed reboot persistence'}
+ It 'refuses conflicting rollback and restores exact captured content' {foreach($x in 'Rollback conflicting-path overwrite refused','WriteAllBytes','SetSecurityDescriptorSddlForm','Set-Acl','Exact rollback verification failed','restoredExactOriginal'){$text|Should -Match $x}}
+ It 'retains Experimental evidence state without Stable assignment' {$text|Should -Match 'needs-evidence';$text|Should -Not -Match 'status:stable|Stable='}
+}
