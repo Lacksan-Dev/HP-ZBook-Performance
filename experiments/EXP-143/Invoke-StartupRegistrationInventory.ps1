@@ -51,7 +51,15 @@ foreach ($folder in $startupFolders) {
                 if ($target) { $command = ('"{0}" {1}' -f $target,$arguments).Trim() }
             } catch { }
         }
-        Add-Record $records 'StartupFolder' $_.FullName $command @{ length=$_.Length; target=$target; arguments=$arguments }
+        # Capture byte-exact local restore evidence now, while the inventory remains read only.
+        $fileBytes = [IO.File]::ReadAllBytes($_.FullName)
+        $fileSha = [Security.Cryptography.SHA256]::Create()
+        try { $fileHash = ([BitConverter]::ToString($fileSha.ComputeHash($fileBytes))).Replace('-','') } finally { $fileSha.Dispose() }
+        Add-Record $records 'StartupFolder' $_.FullName $command @{
+            length=$_.Length; sha256=$fileHash; contentBase64=[Convert]::ToBase64String($fileBytes)
+            attributes=[string]$_.Attributes; creationTimeUtc=$_.CreationTimeUtc.ToString('o'); lastWriteTimeUtc=$_.LastWriteTimeUtc.ToString('o')
+            target=$target; arguments=$arguments
+        }
     }
 }
 
@@ -118,7 +126,7 @@ $duplicates = @($normalized | Group-Object command | Where-Object { $_.Name -and
 } | Sort-Object command)
 
 # Hash only stable registration evidence. Runtime metadata is logged separately so repeated unchanged inventories produce the same SHA-256.
-$stableBundle = [pscustomobject]@{ experiment='EXP-143'; schemaVersion=4; mode='read-only'; registrations=$normalized; duplicates=$duplicates }
+$stableBundle = [pscustomobject]@{ experiment='EXP-143'; schemaVersion=5; mode='read-only'; registrations=$normalized; duplicates=$duplicates }
 $stableJson = $stableBundle | ConvertTo-Json -Depth 12
 $stableBytes = [Text.Encoding]::UTF8.GetBytes($stableJson)
 $sha = [Security.Cryptography.SHA256]::Create()
