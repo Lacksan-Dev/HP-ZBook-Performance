@@ -9,10 +9,10 @@ $ErrorActionPreference = 'Stop'
 function Get-Classification {
     param([string]$Text)
     $t = $Text.ToLowerInvariant()
-    if ($t -match 'omnissa|windows app|remote desktop|tailscale|defender|securityhealth|credential|bitlocker|recovery|windows update|edgeupdate|driver|hid|bluetooth|accessib|firmware|management|mdm|intune|configmgr') {
+    if ($t -match 'omnissa|vmware[- ]?view|horizon|windows app|remote desktop|mstsc|msrdc|tailscale|defender|securityhealth|credential|bitlocker|recovery|windows update|edgeupdate|driver|hid|bluetooth|accessib|narrator|magnify|firmware|management|mdm|intune|configmgr|sccm') {
         return @{ Class='protected'; Reason='protected startup allowlist or platform/device-critical component' }
     }
-    if ($t -match 'teams|office|microsoft 365|logi|logitech|lghub|g hub|telemetry|updat') {
+    if ($t -match 'teams|msteams|office|microsoft 365|microsoft365|officeclicktorun|officehub|logi|logitech|lghub|g hub|telemetry|updat') {
         return @{ Class='priority-target'; Reason='EXP-002 priority user-application startup candidate' }
     }
     return @{ Class='review-required'; Reason='non-allowlisted registration requires application-purpose review' }
@@ -20,7 +20,10 @@ function Get-Classification {
 
 function Add-Record {
     param([System.Collections.Generic.List[object]]$List,[string]$Surface,[string]$Identity,[string]$Command,[object]$State)
-    $c = Get-Classification "$Identity $Command"
+    # Classification uses registration metadata as well as identity/command. Packaged StartupTasks often expose
+    # useful product/publisher/display-name evidence only in manifest metadata while executable identity is sparse.
+    $stateText = if ($null -eq $State) { '' } else { $State | ConvertTo-Json -Compress -Depth 8 }
+    $c = Get-Classification "$Identity $Command $stateText"
     $List.Add([pscustomobject]@{
         surface=$Surface; identity=$Identity; command=$Command; originalState=$State
         classification=$c.Class; classificationReason=$c.Reason; evidenceStatus='needs-evidence'
@@ -78,9 +81,7 @@ Get-AppxPackage -ErrorAction SilentlyContinue | Sort-Object PackageFamilyName,Pa
         $extensions = @($manifest.SelectNodes("//*[local-name()='Extension' and @Category='windows.startupTask']"))
         foreach ($extension in $extensions) {
             $startupTasks = @($extension.SelectNodes(".//*[local-name()='StartupTask']"))
-            if ($startupTasks.Count -eq 0) {
-                $startupTasks = @($extension)
-            }
+            if ($startupTasks.Count -eq 0) { $startupTasks = @($extension) }
             foreach ($startupTask in $startupTasks) {
                 $taskId = [string]$startupTask.TaskId
                 if ([string]::IsNullOrWhiteSpace($taskId)) { $taskId = [string]$extension.StartupTask.TaskId }
@@ -90,18 +91,10 @@ Get-AppxPackage -ErrorAction SilentlyContinue | Sort-Object PackageFamilyName,Pa
                 $commandText = ($command -join ' ').Trim()
                 $identity = "$($package.PackageFamilyName)::$taskId"
                 Add-Record $records 'StartupTask' $identity $commandText @{
-                    packageName=$package.Name
-                    packageFamilyName=$package.PackageFamilyName
-                    packageFullName=$package.PackageFullName
-                    publisher=$package.Publisher
-                    version=[string]$package.Version
-                    taskId=$taskId
-                    enabledByDefault=[string]$startupTask.Enabled
-                    displayName=[string]$startupTask.DisplayName
-                    executable=$executable
-                    entryPoint=$entryPoint
-                    runtimeState='needs-evidence'
-                    source='AppxManifest'
+                    packageName=$package.Name; packageFamilyName=$package.PackageFamilyName; packageFullName=$package.PackageFullName
+                    publisher=$package.Publisher; version=[string]$package.Version; taskId=$taskId
+                    enabledByDefault=[string]$startupTask.Enabled; displayName=[string]$startupTask.DisplayName
+                    executable=$executable; entryPoint=$entryPoint; runtimeState='needs-evidence'; source='AppxManifest'
                 }
             }
         }
@@ -125,18 +118,13 @@ $duplicates = @($normalized | Group-Object command | Where-Object { $_.Name -and
 } | Sort-Object command)
 
 # Hash only stable registration evidence. Runtime metadata is logged separately so repeated unchanged inventories produce the same SHA-256.
-$stableBundle = [pscustomobject]@{ experiment='EXP-143'; schemaVersion=3; mode='read-only'; registrations=$normalized; duplicates=$duplicates }
+$stableBundle = [pscustomobject]@{ experiment='EXP-143'; schemaVersion=4; mode='read-only'; registrations=$normalized; duplicates=$duplicates }
 $stableJson = $stableBundle | ConvertTo-Json -Depth 12
 $stableBytes = [Text.Encoding]::UTF8.GetBytes($stableJson)
 $sha = [Security.Cryptography.SHA256]::Create()
 try { $hash = ([BitConverter]::ToString($sha.ComputeHash($stableBytes))).Replace('-','') } finally { $sha.Dispose() }
 
-$run = [pscustomobject]@{
-    timestampUtc=(Get-Date).ToUniversalTime().ToString('o')
-    windowsBuild=[Environment]::OSVersion.Version.ToString()
-    computerName=$env:COMPUTERNAME
-    snapshotSha256=$hash
-}
+$run = [pscustomobject]@{ timestampUtc=(Get-Date).ToUniversalTime().ToString('o'); windowsBuild=[Environment]::OSVersion.Version.ToString(); computerName=$env:COMPUTERNAME; snapshotSha256=$hash }
 $bundle = [pscustomobject]@{ evidence=$stableBundle; run=$run }
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
