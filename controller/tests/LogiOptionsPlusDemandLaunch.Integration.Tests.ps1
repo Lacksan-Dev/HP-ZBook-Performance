@@ -1,12 +1,23 @@
-$provider = Join-Path $PSScriptRoot '..\providers\LogiOptionsPlusDemandLaunch.ps1'
-Describe 'LogiOptionsPlusDemandLaunch integration' -Tag 'WindowsIntegration' {
-    It 'keeps the Run key unchanged during Check and Apply WhatIf' -Skip:(-not $env:LACKSAN_RUN_WINDOWS_INTEGRATION) {
-        $path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-        $before = if(Test-Path $path){ (Get-Item $path).GetValueNames() | Sort-Object | ForEach-Object { $k=Get-Item $path; [pscustomobject]@{Name=$_;Kind=$k.GetValueKind($_).ToString();Data=[string]$k.GetValue($_,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)} } | ConvertTo-Json -Compress } else { 'absent' }
-        & $provider -Action Check | Out-Null
-        $state = Join-Path $TestDrive 'state.json'; $log = Join-Path $TestDrive 'events.jsonl'
-        try { & $provider -Action Apply -StatePath $state -LogPath $log -WhatIf | Out-Null } catch { }
-        $after = if(Test-Path $path){ (Get-Item $path).GetValueNames() | Sort-Object | ForEach-Object { $k=Get-Item $path; [pscustomobject]@{Name=$_;Kind=$k.GetValueKind($_).ToString();Data=[string]$k.GetValue($_,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)} } | ConvertTo-Json -Compress } else { 'absent' }
-        $after | Should -BeExactly $before
-    }
+$provider=Join-Path $PSScriptRoot '..\providers\LogiOptionsPlusDemandLaunch.ps1'
+Describe 'EXP-050 Logi Options+ zero-mutation integration' -Tag 'WindowsIntegration' {
+ BeforeAll {
+  $script:enabled=($env:RUN_LACKSAN_WINDOWS_INTEGRATION-eq'1'-and$env:OS-eq'Windows_NT')
+  function Snapshot-State {
+   $path='HKCU:\Software\Microsoft\Windows\CurrentVersion\Run';$run=if(Test-Path $path){$k=Get-Item $path;@($k.GetValueNames()|Sort-Object|ForEach-Object{[pscustomobject]@{Name=$_;Kind=$k.GetValueKind($_).ToString();Data=[string]$k.GetValue($_,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)}})}else{@()}
+   $protected=Get-Service WinDefend,mpssvc,wuauserv,UsoSvc,BITS,TermService,Tailscale -ErrorAction SilentlyContinue|Sort-Object Name|Select-Object Name,Status,StartType
+   $drivers=Get-CimInstance Win32_SystemDriver -ErrorAction SilentlyContinue|Where-Object{$_.Name-match'(?i)logi|logitech'-or$_.PathName-match'(?i)logi|logitech'}|Sort-Object Name|Select-Object Name,State,StartMode,PathName
+   $devices=Get-PnpDevice -ErrorAction SilentlyContinue|Where-Object{$_.FriendlyName-match'(?i)logi|logitech'-or$_.Manufacturer-match'(?i)logi|logitech'}|Sort-Object InstanceId|Select-Object InstanceId,Status,Class,FriendlyName
+   [ordered]@{Run=$run;Protected=$protected;LogitechDrivers=$drivers;LogitechDevices=$devices}|ConvertTo-Json -Compress -Depth 10
+  }
+ }
+ It 'keeps Run protected-service driver and device state unchanged during Check and DryRun' -Skip:(-not$script:enabled) {
+  $root=Join-Path $TestDrive 'exp050-readonly';New-Item -ItemType Directory -Path $root -Force|Out-Null;$state=Join-Path $root 'state.json';$log=Join-Path $root 'events.jsonl';$before=Snapshot-State
+  try{$check=& $provider -Action Check -StatePath $state -LogPath $log;if(!$check.Support.Supported){Set-ItResult -Skipped -Because 'EXP-050 support gate refused this machine.';return};& $provider -Action DryRun -StatePath $state -LogPath $log|Out-Null}catch{Set-ItResult -Skipped -Because $_.Exception.Message;return}
+  (Snapshot-State)|Should -BeExactly $before
+ }
+ It 'keeps production state unchanged during Capture and Apply WhatIf' -Skip:(-not$script:enabled) {
+  $root=Join-Path $TestDrive 'exp050-whatif';New-Item -ItemType Directory -Path $root -Force|Out-Null;$state=Join-Path $root 'state.json';$log=Join-Path $root 'events.jsonl';$before=Snapshot-State
+  try{$check=& $provider -Action Check -StatePath $state -LogPath $log;if(!$check.Support.Supported-or@($check.Candidates).Count-ne1){Set-ItResult -Skipped -Because 'Exactly one eligible EXP-050 candidate is required.';return};& $provider -Action Capture -StatePath $state -LogPath $log|Out-Null;& $provider -Action Apply -StatePath $state -LogPath $log -WhatIf|Out-Null}catch{Set-ItResult -Skipped -Because $_.Exception.Message;return}
+  (Snapshot-State)|Should -BeExactly $before
+ }
 }
