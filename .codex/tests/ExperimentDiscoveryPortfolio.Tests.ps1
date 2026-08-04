@@ -4,11 +4,11 @@ BeforeAll {
     $runbookPath = Join-Path $repoRoot '.codex\portfolio-agent.md'
     $runnerPath = Join-Path $repoRoot '.codex\scripts\Invoke-PortfolioValidation.ps1'
     $queuePath = Join-Path $repoRoot 'portfolio\validation-queue.json'
-    $harnessPath = Join-Path $repoRoot 'experiments\EXP-065\Invoke-Exp065LabHarness.ps1'
+    $exp065HarnessPath = Join-Path $repoRoot 'experiments\EXP-065\Invoke-Exp065LabHarness.ps1'
+    $exp095HarnessPath = Join-Path $repoRoot 'experiments\EXP-095\Invoke-Exp095LabHarness.ps1'
     $agent = Get-Content -LiteralPath $agentPath -Raw
     $runbook = Get-Content -LiteralPath $runbookPath -Raw
     $runner = Get-Content -LiteralPath $runnerPath -Raw
-    $harness = Get-Content -LiteralPath $harnessPath -Raw
     $queue = Get-Content -LiteralPath $queuePath -Raw | ConvertFrom-Json
 }
 
@@ -28,76 +28,64 @@ Describe 'Experiment Discovery and Portfolio Codex agent' {
         }
     }
 
-    It 'codifies evidence, merge, release, and note boundaries' {
-        $agent | Should -Match 'needs-evidence'
-        $agent | Should -Match 'Missing checks are not passing checks'
-        $agent | Should -Match 'no sensitive data'
-        $agent | Should -Match 'exact rollback'
-        $agent | Should -Match 'never assign Stable'
-        $agent | Should -Match 'Do not post inventory-only commentary'
-    }
-
-    It 'makes the guarded runner the only physical mutation entry point' {
-        $agent | Should -Match ([regex]::Escape('.codex/scripts/Invoke-PortfolioValidation.ps1 -Action Auto -AllowAutomaticReboot'))
-        $agent | Should -Match 'only authorized machine-mutation entry point'
-        $agent | Should -Match 'Never run a provider or change Windows directly'
+    It 'codifies evidence, merge, release, and physical-mutation boundaries' {
+        foreach ($token in @('needs-evidence','Missing checks are not passing checks','no sensitive data','exact rollback','never assign Stable','Do not post inventory-only commentary','only authorized machine-mutation entry point','Never run a provider or change Windows directly')) {
+            $agent | Should -Match ([regex]::Escape($token))
+        }
     }
 }
 
 Describe 'Portfolio runbook and queue' {
-    It 'defines focused issue and Experimental merge gates' {
-        foreach ($token in @(
-            'one candidate and one changed variable','five matched baseline','five matched treatment',
-            'original-state capture','sensitive-data gate','Never assign `Stable`'
-        )) {
+    It 'defines focused Experimental verification gates' {
+        foreach ($token in @('one candidate and one changed variable','five matched baseline','five matched treatment','original-state capture','sensitive-data gate','Never assign `Stable`')) {
             $runbook | Should -Match ([regex]::Escape($token))
         }
     }
 
-    It 'contains one reviewed Experimental ready candidate' {
+    It 'accepts multiple reviewed ready candidates in deterministic priority order' {
         $queue.schemaVersion | Should -Be 1
-        @($queue.items).Count | Should -Be 1
-        $item = @($queue.items)[0]
-        $item.experiment | Should -Be 'EXP-065'
-        $item.track | Should -Be 'service-candidate'
-        $item.state | Should -Be 'ready'
-        $item.releaseState | Should -Be 'Experimental'
-        $item.runsPerArm | Should -Be 5
-        @($item.verification).Count | Should -BeGreaterThan 0
-        $item.rollback | Should -Not -BeNullOrEmpty
+        $items = @($queue.items)
+        $items.Count | Should -BeGreaterThan 1
+        @($items | Group-Object experiment | Where-Object Count -gt 1).Count | Should -Be 0
+        $ordered = @($items | Sort-Object priority,experiment)
+        @($items | ForEach-Object experiment) -join ',' | Should -Be (@($ordered | ForEach-Object experiment) -join ',')
+        $items[0].experiment | Should -Be 'EXP-065'
+        $items[1].experiment | Should -Be 'EXP-095'
+        [int]$items[0].priority | Should -BeLessThan ([int]$items[1].priority)
+        foreach ($item in $items) {
+            $item.track | Should -Be 'service-candidate'
+            $item.state | Should -Be 'ready'
+            $item.releaseState | Should -Be 'Experimental'
+            $item.runsPerArm | Should -Be 5
+            @($item.verification).Count | Should -BeGreaterThan 0
+            $item.rollback | Should -Not -BeNullOrEmpty
+            Test-Path -LiteralPath (Join-Path $repoRoot ($item.harnessPath.Replace('/','\'))) | Should -BeTrue
+        }
     }
 
-    It 'declares every protected startup, network, and security scope' {
-        $declared = @($queue.items[0].protectedScopes)
-        foreach ($scope in @(
-            'WindowsSecurity','WindowsUpdate','EdgeUpdate','Credentials','Recovery',
-            'EnterpriseManagement','DeviceCriticalDrivers','Networking','Omnissa',
-            'WindowsApp','RemoteDesktop','Tailscale'
-        )) {
-            $declared | Should -Contain $scope
+    It 'declares every protected startup, network, and security scope on every candidate' {
+        $required = @('WindowsSecurity','WindowsUpdate','EdgeUpdate','Credentials','Recovery','EnterpriseManagement','DeviceCriticalDrivers','Networking','Omnissa','WindowsApp','RemoteDesktop','Tailscale')
+        foreach ($item in @($queue.items)) {
+            $declared = @($item.protectedScopes)
+            foreach ($scope in $required) { $declared | Should -Contain $scope }
         }
     }
 }
 
 Describe 'Guarded HP laptop validation runner' {
     It 'parses under Windows PowerShell syntax' {
-        $tokens = $null
-        $errors = $null
+        $tokens = $null; $errors = $null
         [Management.Automation.Language.Parser]::ParseFile($runnerPath,[ref]$tokens,[ref]$errors) | Out-Null
         @($errors).Count | Should -Be 0
     }
 
-    It 'enforces the machine and harness safety gates' {
-        foreach ($token in @(
-            'Test-IsElevated','GetSystemPowerStatus','GetLastInputInfo','Test-PendingReboot',
-            'SESSIONNAME','msiexec','single candidate','RequiredProtectedScopes',
-            'Register-ScheduledTask','VerifyReboot','Rollback'
-        )) {
+    It 'enforces one active run while selecting the highest-priority ready candidate' {
+        foreach ($token in @('active-cycle.json','Sort-Object priority,experiment','Start-ReadyValidation -Item $ready[0]','Test-IsElevated','GetSystemPowerStatus','GetLastInputInfo','Test-PendingReboot','SESSIONNAME','msiexec','RequiredProtectedScopes','Register-ScheduledTask','VerifyReboot','Rollback')) {
             $runner | Should -Match ([regex]::Escape($token))
         }
     }
 
-    It 'keeps raw evidence local and writes only a bounded Experimental export' {
+    It 'keeps raw evidence local and writes only bounded Experimental evidence' {
         $runner | Should -Match "retention = 'machine-local-only'"
         $runner | Should -Match "releaseState = 'Experimental'"
         $runner | Should -Match 'identifiersCommitted = \$false'
@@ -105,11 +93,13 @@ Describe 'Guarded HP laptop validation runner' {
         $runner | Should -Match 'evidence\\physical'
     }
 
-    It 'can inspect the queue without creating machine-local state' {
+    It 'inspects all ready candidates without creating machine-local state' {
         $testData = Join-Path $TestDrive 'portfolio-validation'
         $result = & $runnerPath -Action Inspect -QueuePath $queuePath -DataRoot $testData
         $result.mutationPerformed | Should -BeFalse
         @($result.readyExperiments) | Should -Contain 'EXP-065'
+        @($result.readyExperiments) | Should -Contain 'EXP-095'
+        @($result.readyExperiments)[0] | Should -Be 'EXP-065'
         Test-Path -LiteralPath $testData | Should -BeFalse
     }
 
@@ -166,21 +156,26 @@ Describe 'Guarded HP laptop validation runner' {
     }
 }
 
-Describe 'EXP-065 queued reboot harness' {
-    It 'parses and exposes the complete guarded lifecycle' {
-        $tokens = $null
-        $errors = $null
-        [Management.Automation.Language.Parser]::ParseFile($harnessPath,[ref]$tokens,[ref]$errors) | Out-Null
-        @($errors).Count | Should -Be 0
-        foreach ($token in @('Start','Continue','Status','Stop','Capture','DryRun','VerifyReboot','Rollback')) {
-            $harness | Should -Match ([regex]::Escape($token))
+Describe 'Queued reboot harness contracts' {
+    It 'keeps EXP-065 and EXP-095 parseable with complete guarded lifecycles' {
+        foreach ($harnessPath in @($exp065HarnessPath,$exp095HarnessPath)) {
+            $tokens = $null; $errors = $null
+            [Management.Automation.Language.Parser]::ParseFile($harnessPath,[ref]$tokens,[ref]$errors) | Out-Null
+            @($errors).Count | Should -Be 0
+            $harness = Get-Content -LiteralPath $harnessPath -Raw
+            foreach ($token in @('Start','Continue','Status','Stop','Capture','DryRun','VerifyReboot','Rollback','Register-ScheduledTask')) {
+                $harness | Should -Match ([regex]::Escape($token))
+            }
         }
     }
 
-    It 'runs dry-run after capture and before registering the reboot sequence' {
+    It 'runs EXP-095 support detection and dry run before registering reboot continuation' {
+        $harness = Get-Content -LiteralPath $exp095HarnessPath -Raw
         $start = [regex]::Match($harness,"'Start'\s*\{(?<body>.+?)\}\s*'Continue'",[Text.RegularExpressions.RegexOptions]::Singleline).Groups['body'].Value
-        $start.IndexOf("Controller 'Capture'") | Should -BeGreaterThan -1
-        $start.IndexOf("Controller 'Apply' `$dir -DryRun") | Should -BeGreaterThan $start.IndexOf("Controller 'Capture'")
-        $start.IndexOf('Register-ResumeTask') | Should -BeGreaterThan $start.IndexOf("Controller 'Apply' `$dir -DryRun")
+        $start.IndexOf('InvokePhase Preflight') | Should -BeGreaterThan -1
+        $start.IndexOf('RegisterResume') | Should -BeGreaterThan $start.IndexOf('InvokePhase Preflight')
+        $validation = Get-Content -LiteralPath (Join-Path $repoRoot 'validation\Invoke-EXP095Validation.ps1') -Raw
+        $validation | Should -Match ([regex]::Escape("'Preflight'{& `$provider -Action Check"))
+        $validation | Should -Match ([regex]::Escape('& $provider -Action DryRun'))
     }
 }

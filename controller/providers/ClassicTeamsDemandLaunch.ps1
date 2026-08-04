@@ -1,258 +1,35 @@
-[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+[CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact='High')]
 param(
-    [ValidateSet('Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback')]
-    [string]$Action = 'Check',
-    [string]$StatePath,
-    [string]$LogPath
+ [ValidateSet('Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback')][string]$Action='Check',
+ [string]$StatePath="$env:LOCALAPPDATA\Lacksan\EXP-049-state.json",
+ [string]$LogPath="$env:LOCALAPPDATA\Lacksan\EXP-049.jsonl"
 )
 Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-$experiment = 'EXP-049'
-$provider = 'classic-teams-demand-launch'
-$runPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-$valueName = 'com.squirrel.Teams.Teams'
-$protectedPattern = '(?i)omnissa|vmware horizon|windows app|remote desktop|mstsc|tailscale|securityhealth|defender|credential|bitlocker|firewall|windows update|recovery|intune|sccm|configmgr|mdm|ms-teams\.exe'
-
-function Write-StructuredLog([string]$Event,[string]$Result,[object]$Data) {
-    if ([string]::IsNullOrWhiteSpace($LogPath)) { return }
-    $parent = Split-Path -Parent $LogPath
-    if ($parent -and !(Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    [ordered]@{
-        schemaVersion = 1
-        timestampUtc = (Get-Date).ToUniversalTime().ToString('o')
-        experiment = $experiment
-        provider = $provider
-        action = $Action
-        event = $Event
-        result = $Result
-        machine = $env:COMPUTERNAME
-        userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-        data = $Data
-    } | ConvertTo-Json -Compress -Depth 16 | Add-Content -LiteralPath $LogPath -Encoding UTF8
-}
-
-function Get-TextHash([string]$Text) {
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try { ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text)) | ForEach-Object { $_.ToString('x2') }) -join '' }
-    finally { $sha.Dispose() }
-}
-
-function Get-ManagementState {
-    $computer = Get-CimInstance Win32_ComputerSystem
-    $signals = [ordered]@{
-        DomainJoined = [bool]$computer.PartOfDomain
-        MdmEnrollments = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Enrollments' -ErrorAction SilentlyContinue).Count
-        PolicyManager = Test-Path 'HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device'
-        ConfigMgr = [bool](Get-Service CcmExec -ErrorAction SilentlyContinue)
-        RunPolicy = (Test-Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run') -or (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run')
-    }
-    [pscustomobject]@{ Managed = ($signals.DomainJoined -or $signals.MdmEnrollments -gt 0 -or $signals.PolicyManager -or $signals.ConfigMgr -or $signals.RunPolicy); Signals = $signals }
-}
-
-function Get-SupportState {
-    $os = Get-CimInstance Win32_OperatingSystem
-    $computer = Get-CimInstance Win32_ComputerSystem
-    $management = Get-ManagementState
-    [pscustomobject]@{
-        Supported = ($os.Caption -match 'Windows 11' -and $computer.Manufacturer -match '(?i)^HP$|Hewlett-Packard')
-        OS = $os.Caption
-        Build = $os.BuildNumber
-        Manufacturer = $computer.Manufacturer
-        Model = $computer.Model
-        Managed = $management.Managed
-        ManagementSignals = $management.Signals
-    }
-}
-
-function Get-ProtectedSnapshot {
-    $services = foreach ($name in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','Tailscale') {
-        $service = Get-Service $name -ErrorAction SilentlyContinue
-        if ($service) { [ordered]@{ Name = $service.Name; Status = $service.Status.ToString(); StartType = $service.StartType.ToString() } }
-    }
-    $newTeams = @(Get-AppxPackage -Name MSTeams -ErrorAction SilentlyContinue | ForEach-Object { [ordered]@{ Name = $_.Name; Version = $_.Version.ToString(); Status = $_.Status.ToString() } })
-    $normalized = [ordered]@{ Services = @($services); NewTeamsPackages = @($newTeams) } | ConvertTo-Json -Compress -Depth 8
-    [pscustomobject]@{ Hash = Get-TextHash $normalized; Snapshot = $normalized }
-}
-
-function Resolve-ClassicTeamsCommand([string]$Command) {
-    $expanded = [Environment]::ExpandEnvironmentVariables($Command).Trim()
-    $pattern = '^\s*"(?<update>[^"]+\\Update\.exe)"\s+--processStart\s+"?Teams\.exe"?\s+--process-start-args\s+"?--system-initiated"?\s*$'
-    if ($expanded -notmatch $pattern) { return $null }
-    $update = [IO.Path]::GetFullPath($matches.update)
-    if ($update -notmatch '(?i)\\Microsoft\\Teams\\Update\.exe$' -or $update -match $protectedPattern) { return $null }
-    $teams = Join-Path (Split-Path -Parent $update) 'current\Teams.exe'
-    [pscustomobject]@{ ExpandedCommand = $expanded; UpdatePath = $update; TeamsPath = $teams }
-}
-
-function Get-FileIdentity([string]$Path) {
-    if (!(Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
-    $item = Get-Item -LiteralPath $Path
-    $signature = Get-AuthenticodeSignature -LiteralPath $Path
-    $publisher = if ($signature.SignerCertificate) { $signature.SignerCertificate.Subject } else { $null }
-    [pscustomobject]@{
-        Path = $item.FullName
-        Sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
-        FileVersion = $item.VersionInfo.FileVersion
-        ProductName = $item.VersionInfo.ProductName
-        CompanyName = $item.VersionInfo.CompanyName
-        SignatureStatus = $signature.Status.ToString()
-        Publisher = $publisher
-        PublisherThumbprint = if ($signature.SignerCertificate) { $signature.SignerCertificate.Thumbprint } else { $null }
-        ValidMicrosoftPublisher = ($signature.Status -eq 'Valid' -and $publisher -match '(?i)Microsoft Corporation')
-    }
-}
-
-function Get-Candidates {
-    if (!(Test-Path -LiteralPath $runPath)) { return @() }
-    $key = Get-Item -LiteralPath $runPath
-    if (!($key.GetValueNames() -contains $valueName)) { return @() }
-    $data = [string]$key.GetValue($valueName,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-    if ($data -match $protectedPattern) { return @() }
-    $resolved = Resolve-ClassicTeamsCommand $data
-    if (!$resolved) { return @() }
-    $updateIdentity = Get-FileIdentity $resolved.UpdatePath
-    $teamsIdentity = Get-FileIdentity $resolved.TeamsPath
-    if (!$updateIdentity -or !$teamsIdentity -or !$updateIdentity.ValidMicrosoftPublisher -or !$teamsIdentity.ValidMicrosoftPublisher) { return @() }
-    $acl = Get-Acl -LiteralPath $runPath
-    @([pscustomobject]@{
-        Path = $runPath
-        Name = $valueName
-        Kind = $key.GetValueKind($valueName).ToString()
-        Data = $data
-        ExpandedCommand = $resolved.ExpandedCommand
-        Update = $updateIdentity
-        Teams = $teamsIdentity
-        KeyOwner = $acl.Owner
-        KeySddl = $acl.Sddl
-    })
-}
-
-function Assert-Eligible([object]$Support,[object[]]$Candidates) {
-    if (!$Support.Supported) { throw 'Provider requires an HP system running Windows 11.' }
-    if ($Support.Managed) { throw 'Enterprise-management or enforced Run policy signals are present; mutation is refused.' }
-    if ($Candidates.Count -eq 0) { throw 'No eligible exact classic Teams Squirrel Run registration was found.' }
-    if ($Candidates.Count -gt 1) { throw 'Multiple eligible classic Teams Run registrations were found.' }
-}
-
-function Save-State([object]$Support,[object[]]$Candidates) {
-    Assert-Eligible $Support $Candidates
-    if ([string]::IsNullOrWhiteSpace($StatePath)) { throw 'StatePath is required.' }
-    if (Test-Path -LiteralPath $StatePath) { throw 'State artifact already exists; overwrite refused.' }
-    $protected = Get-ProtectedSnapshot
-    $state = [ordered]@{
-        schemaVersion = 1
-        experiment = $experiment
-        provider = $provider
-        capturedUtc = (Get-Date).ToUniversalTime().ToString('o')
-        capturedBootTime = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
-        machine = $env:COMPUTERNAME
-        userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-        support = $Support
-        protectedScopeHash = $protected.Hash
-        entry = $Candidates[0]
-    }
-    $parent = Split-Path -Parent $StatePath
-    if ($parent -and !(Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    $state | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $StatePath -Encoding UTF8
-    $state
-}
-
-function Read-State {
-    if ([string]::IsNullOrWhiteSpace($StatePath) -or !(Test-Path -LiteralPath $StatePath)) { throw 'State artifact is missing.' }
-    $state = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json
-    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    if ($state.schemaVersion -ne 1 -or $state.experiment -ne $experiment -or $state.provider -ne $provider -or $state.machine -ne $env:COMPUTERNAME -or $state.userSid -ne $sid) { throw 'State identity validation failed.' }
-    $state
-}
-
-function Test-Removed([object]$State) {
-    if (!(Test-Path -LiteralPath $State.entry.Path)) { return $true }
-    !((Get-Item -LiteralPath $State.entry.Path).GetValueNames() -contains [string]$State.entry.Name)
-}
-
-function Assert-BinaryIdentity([object]$State) {
-    foreach ($name in 'Update','Teams') {
-        $expected = $State.entry.$name
-        $current = Get-FileIdentity ([string]$expected.Path)
-        if (!$current -or !$current.ValidMicrosoftPublisher -or $current.Sha256 -ne [string]$expected.Sha256 -or $current.PublisherThumbprint -ne [string]$expected.PublisherThumbprint) { throw "Classic Teams $name binary identity drift detected." }
-    }
-}
-
-function Test-Restored([object]$State) {
-    if (!(Test-Path -LiteralPath $State.entry.Path)) { return $false }
-    $key = Get-Item -LiteralPath $State.entry.Path
-    if (!($key.GetValueNames() -contains [string]$State.entry.Name)) { return $false }
-    $data = [string]$key.GetValue($State.entry.Name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-    $data -eq [string]$State.entry.Data -and $key.GetValueKind($State.entry.Name).ToString() -eq [string]$State.entry.Kind
-}
-
-try {
-    $support = Get-SupportState
-    Write-StructuredLog 'support-detection' $(if ($support.Supported) { 'pass' } else { 'unsupported' }) $support
-    switch ($Action) {
-        'Check' {
-            $candidates = Get-Candidates
-            Write-StructuredLog 'candidate-inventory' 'pass' @{ count = $candidates.Count; names = @($candidates.Name) }
-            [pscustomobject]@{ Support = $support; Candidates = $candidates; Profile = 'ClassicTeamsDemandLaunch' }
-        }
-        'Capture' {
-            $state = Save-State $support (Get-Candidates)
-            Write-StructuredLog 'capture' 'pass' @{ path = $state.entry.Path; name = $state.entry.Name }
-            $state
-        }
-        'DryRun' {
-            $candidates = Get-Candidates
-            Assert-Eligible $support $candidates
-            $result = [pscustomobject]@{ Profile = 'ClassicTeamsDemandLaunch'; WouldChange = $true; MutationCount = 1; Path = $candidates[0].Path; Name = $candidates[0].Name; PreserveClassicTeamsFiles = $true; PreserveNewTeamsStartupTask = $true; RebootPersistenceCheckRequired = $true; Rollback = 'Restore exact captured value name, kind, and unexpanded data.' }
-            Write-StructuredLog 'dry-run' 'pass' $result
-            $result
-        }
-        'Apply' {
-            $state = if (Test-Path -LiteralPath $StatePath) { Read-State } else { Save-State $support (Get-Candidates) }
-            if (Test-Removed $state) { Assert-BinaryIdentity $state; Write-StructuredLog 'apply' 'idempotent' @{ mutationCount = 0 }; return [pscustomobject]@{ Applied = $true; MutationCount = 0 } }
-            Assert-Eligible $support (Get-Candidates)
-            Assert-BinaryIdentity $state
-            if ((Get-ProtectedSnapshot).Hash -ne [string]$state.protectedScopeHash) { throw 'Protected-scope drift detected.' }
-            if ($WhatIfPreference) { Write-StructuredLog 'apply' 'whatif' @{ mutationCount = 0 }; return [pscustomobject]@{ Applied = $false; WhatIf = $true; MutationCount = 0 } }
-            if ($PSCmdlet.ShouldProcess("$($state.entry.Path)::$($state.entry.Name)",'Remove exact classic Teams Run registration')) { Remove-ItemProperty -LiteralPath $state.entry.Path -Name $state.entry.Name }
-            if (!(Test-Removed $state)) { throw 'Apply verification failed.' }
-            Assert-BinaryIdentity $state
-            Write-StructuredLog 'apply' 'pass' @{ mutationCount = 1 }
-            [pscustomobject]@{ Applied = $true; MutationCount = 1 }
-        }
-        'Verify' {
-            $state = Read-State
-            if (!(Test-Removed $state)) { throw 'Immediate removal verification failed.' }
-            Assert-BinaryIdentity $state
-            Write-StructuredLog 'verify' 'pass' @{ removed = $true; binariesPreserved = $true }
-            $true
-        }
-        'VerifyReboot' {
-            $state = Read-State
-            $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
-            if ($boot -le [datetime]$state.capturedBootTime) { throw 'A later boot is required for reboot-persistence verification.' }
-            if (!(Test-Removed $state)) { throw 'Reboot-persistence verification failed.' }
-            Assert-BinaryIdentity $state
-            Write-StructuredLog 'verify-reboot' 'pass' @{ bootTime = $boot.ToString('o'); removed = $true }
-            $true
-        }
-        'Rollback' {
-            $state = Read-State
-            if (!(Test-Removed $state)) { if (Test-Restored $state) { Write-StructuredLog 'rollback' 'idempotent' @{ mutationCount = 0 }; return [pscustomobject]@{ RolledBack = $true; MutationCount = 0 } }; throw 'Rollback overwrite refused because the destination value exists.' }
-            if ($support.Managed) { throw 'Enterprise-management ownership appeared; rollback refused.' }
-            Assert-BinaryIdentity $state
-            if ((Get-ProtectedSnapshot).Hash -ne [string]$state.protectedScopeHash) { throw 'Rollback protected-scope drift detected.' }
-            if ($WhatIfPreference) { Write-StructuredLog 'rollback' 'whatif' @{ mutationCount = 0 }; return [pscustomobject]@{ RolledBack = $false; WhatIf = $true; MutationCount = 0 } }
-            if ($PSCmdlet.ShouldProcess("$($state.entry.Path)::$($state.entry.Name)",'Restore exact classic Teams Run registration')) {
-                if (!(Test-Path -LiteralPath $state.entry.Path)) { New-Item -Path $state.entry.Path -Force | Out-Null }
-                (Get-Item -LiteralPath $state.entry.Path).SetValue([string]$state.entry.Name,[string]$state.entry.Data,[Microsoft.Win32.RegistryValueKind]::$($state.entry.Kind))
-            }
-            if (!(Test-Restored $state)) { throw 'Exact rollback verification failed.' }
-            Write-StructuredLog 'rollback' 'pass' @{ mutationCount = 1; restoredExactOriginal = $true }
-            [pscustomobject]@{ RolledBack = $true; MutationCount = 1 }
-        }
-    }
-} catch {
-    Write-StructuredLog 'failure' 'fail' @{ stage = $Action; message = $_.Exception.Message; type = $_.Exception.GetType().FullName; statePath = $StatePath }
-    throw
-}
+$ErrorActionPreference='Stop'
+$experiment='EXP-049';$provider='classic-teams-demand-launch'
+$runPath='HKCU:\Software\Microsoft\Windows\CurrentVersion\Run';$valueName='com.squirrel.Teams.Teams'
+$protected='(?i)omnissa|vmware horizon|windows app|remote desktop|mstsc|msrdc|tailscale|securityhealth|defender|credential|bitlocker|firewall|windows update|recovery|accessibility|narrator|magnify|intune|sccm|configmgr|mdm|ms-teams\.exe'
+function Write-Log([string]$Event,[string]$Result,[object]$Data){$p=Split-Path -Parent $LogPath;if($p-and!(Test-Path -LiteralPath $p)){New-Item -ItemType Directory -Path $p -Force|Out-Null};[ordered]@{schemaVersion=2;timestampUtc=(Get-Date).ToUniversalTime().ToString('o');experiment=$experiment;provider=$provider;action=$Action;event=$Event;result=$Result;machine=$env:COMPUTERNAME;userSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;data=$Data}|ConvertTo-Json -Compress -Depth 20|Add-Content -LiteralPath $LogPath -Encoding UTF8}
+function Get-Hash([string]$Text){$s=[Security.Cryptography.SHA256]::Create();try{($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($Text))|ForEach-Object{$_.ToString('x2')})-join''}finally{$s.Dispose()}}
+function Get-ManagementState{$c=Get-CimInstance Win32_ComputerSystem;$en=@(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Enrollments' -ErrorAction SilentlyContinue|Where-Object{$_.PSChildName-match'^[0-9A-Fa-f-]{36}$'}).Count;$om=@(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Provisioning\OMADM\Accounts' -ErrorAction SilentlyContinue|Where-Object{$_.PSChildName-match'^[0-9A-Fa-f-]{36}$'}).Count;$x=[ordered]@{DomainJoined=[bool]$c.PartOfDomain;MdmEnrollments=$en;OmadmAccounts=$om;PolicyManager=Test-Path 'HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device';ConfigMgr=[bool](Get-Service CcmExec -ErrorAction SilentlyContinue);RunPolicy=(Test-Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run')-or(Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run')};[pscustomobject]@{Managed=($x.DomainJoined-or$en-gt0-or$om-gt0-or$x.PolicyManager-or$x.ConfigMgr-or$x.RunPolicy);Signals=$x}}
+function Get-SupportState{$o=Get-CimInstance Win32_OperatingSystem;$c=Get-CimInstance Win32_ComputerSystem;$m=Get-ManagementState;[pscustomobject]@{Supported=($o.Caption-match'Windows 11'-and$c.Manufacturer-match'(?i)^HP$|Hewlett-Packard');OS=$o.Caption;Build=$o.BuildNumber;Manufacturer=$c.Manufacturer;Model=$c.Model;Managed=$m.Managed;ManagementSignals=$m.Signals;EvidenceStatus='needs-evidence'}}
+function Get-ProtectedSnapshot{$services=foreach($n in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','TermService','Tailscale'){$x=Get-CimInstance Win32_Service -Filter "Name='$n'" -ErrorAction SilentlyContinue;if($x){[ordered]@{Name=$x.Name;State=$x.State;StartMode=$x.StartMode;PathName=$x.PathName}}};$newTeams=@(Get-AppxPackage -Name MSTeams -ErrorAction SilentlyContinue|Sort-Object PackageFullName|Select-Object Name,PackageFullName,Version,Status);$j=[ordered]@{Services=@($services);NewTeamsPackages=$newTeams}|ConvertTo-Json -Compress -Depth 12;[pscustomobject]@{Hash=Get-Hash $j;Snapshot=$j}}
+function Resolve-ClassicTeamsCommand([string]$Command){$e=[Environment]::ExpandEnvironmentVariables($Command).Trim();if($e-match$protected){return $null};$pattern='^\s*"(?<update>[^"]+\\Update\.exe)"\s+--processStart\s+"?Teams\.exe"?\s+--process-start-args\s+"?--system-initiated"?\s*$';if($e-notmatch$pattern){return $null};try{$u=[IO.Path]::GetFullPath($matches.update)}catch{return $null};if($u-notmatch'(?i)\\Microsoft\\Teams\\Update\.exe$'){return $null};$t=Join-Path (Split-Path -Parent $u) 'current\Teams.exe';[pscustomobject]@{ExpandedCommand=$e;UpdatePath=$u;TeamsPath=$t}}
+function Get-FileIdentity([string]$Path){if(!(Test-Path -LiteralPath $Path -PathType Leaf)){return $null};$i=Get-Item -LiteralPath $Path;$s=Get-AuthenticodeSignature -LiteralPath $Path;$p=if($s.SignerCertificate){$s.SignerCertificate.Subject}else{$null};[pscustomobject]@{Path=$i.FullName;Sha256=(Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash;FileVersion=$i.VersionInfo.FileVersion;ProductName=$i.VersionInfo.ProductName;CompanyName=$i.VersionInfo.CompanyName;SignatureStatus=$s.Status.ToString();Publisher=$p;Thumbprint=if($s.SignerCertificate){$s.SignerCertificate.Thumbprint}else{$null};ValidMicrosoftPublisher=($s.Status-eq'Valid'-and$p-match'(?i)Microsoft Corporation')}}
+function Get-Candidates{if(!(Test-Path -LiteralPath $runPath)){return @()};$k=Get-Item -LiteralPath $runPath;if(!($k.GetValueNames()-contains$valueName)){return @()};$d=[string]$k.GetValue($valueName,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames);$r=Resolve-ClassicTeamsCommand $d;if(!$r){return @()};$u=Get-FileIdentity $r.UpdatePath;$t=Get-FileIdentity $r.TeamsPath;if(!$u-or!$t-or!$u.ValidMicrosoftPublisher-or!$t.ValidMicrosoftPublisher){return @()};$a=Get-Acl -LiteralPath $runPath;@([pscustomobject]@{Path=$runPath;Name=$valueName;Kind=$k.GetValueKind($valueName).ToString();Data=$d;ExpandedCommand=$r.ExpandedCommand;Update=$u;Teams=$t;KeyOwner=$a.Owner;KeySddl=$a.Sddl})}
+function Assert-Eligible($Support,[object[]]$Candidates){if(!$Support.Supported){throw'HP Windows 11 is required.'};if($Support.Managed){throw'Enterprise-management ownership detected.'};if($Candidates.Count-ne1){throw"Exactly one eligible classic Teams Squirrel Run registration is required; found $($Candidates.Count)."}}
+function Save-State($Support,[object[]]$Candidates){Assert-Eligible $Support $Candidates;if(Test-Path -LiteralPath $StatePath){throw'State overwrite refused.'};$p=Get-ProtectedSnapshot;$s=[ordered]@{schemaVersion=2;experiment=$experiment;provider=$provider;capturedUtc=(Get-Date).ToUniversalTime().ToString('o');capturedBootTime=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o');machine=$env:COMPUTERNAME;userSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;support=$Support;protectedScopeHash=$p.Hash;entry=$Candidates[0];evidenceStatus='needs-evidence'};$parent=Split-Path -Parent $StatePath;if($parent-and!(Test-Path -LiteralPath $parent)){New-Item -ItemType Directory -Path $parent -Force|Out-Null};$s|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $StatePath -Encoding UTF8;$s}
+function Read-State{if(!(Test-Path -LiteralPath $StatePath)){throw'State artifact is missing.'};$s=Get-Content -LiteralPath $StatePath -Raw|ConvertFrom-Json;$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;if($s.schemaVersion-ne2-or$s.experiment-ne$experiment-or$s.provider-ne$provider-or$s.machine-ne$env:COMPUTERNAME-or$s.userSid-ne$sid){throw'State identity validation failed.'};$s}
+function Test-Removed($State){if(!(Test-Path -LiteralPath $State.entry.Path)){return $true};!((Get-Item -LiteralPath $State.entry.Path).GetValueNames()-contains[string]$State.entry.Name)}
+function Assert-BinaryIdentity($State){foreach($n in 'Update','Teams'){$e=$State.entry.$n;$c=Get-FileIdentity([string]$e.Path);if(!$c-or!$c.ValidMicrosoftPublisher-or$c.Sha256-ne[string]$e.Sha256-or$c.Thumbprint-ne[string]$e.Thumbprint){throw"Classic Teams $n binary identity drift detected."}}}
+function Assert-Protected($State){if((Get-ProtectedSnapshot).Hash-ne[string]$State.protectedScopeHash){throw'Protected security update remote-access or new Teams state drift detected.'}}
+function Test-Restored($State){if(!(Test-Path -LiteralPath $State.entry.Path)){return $false};$k=Get-Item -LiteralPath $State.entry.Path;if(!($k.GetValueNames()-contains[string]$State.entry.Name)){return $false};$d=[string]$k.GetValue($State.entry.Name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames);$d-eq[string]$State.entry.Data-and$k.GetValueKind($State.entry.Name).ToString()-eq[string]$State.entry.Kind}
+try{$support=Get-SupportState;Write-Log 'support-detection' $(if($support.Supported){'pass'}else{'unsupported'}) $support;switch($Action){
+'Check'{$c=Get-Candidates;Write-Log 'candidate-inventory' 'pass' @{count=$c.Count;names=@($c.Name)};[pscustomobject]@{Support=$support;Candidates=$c;Profile='ClassicTeamsDemandLaunch';EvidenceStatus='needs-evidence'}}
+'Capture'{$s=Save-State $support (Get-Candidates);Write-Log 'capture' 'pass' @{path=$s.entry.Path;name=$s.entry.Name};$s}
+'DryRun'{$c=Get-Candidates;Assert-Eligible $support $c;$r=[pscustomobject]@{Profile='ClassicTeamsDemandLaunch';WouldChange=$true;MutationCount=1;Path=$c[0].Path;Name=$c[0].Name;PreserveClassicTeamsInstallation=$true;PreserveNewTeamsPackage=$true;PreserveServices=$true;PreserveScheduledTasks=$true;RebootPersistenceCheckRequired=$true;Rollback='Restore exact captured path, value name, kind, and unexpanded data.';EvidenceStatus='needs-evidence'};Write-Log 'dry-run' 'pass' $r;$r}
+'Apply'{$s=if(Test-Path -LiteralPath $StatePath){Read-State}else{Save-State $support (Get-Candidates)};if(Test-Removed $s){Assert-BinaryIdentity $s;Assert-Protected $s;Write-Log 'apply' 'idempotent' @{mutationCount=0};return[pscustomobject]@{Applied=$true;MutationCount=0}};Assert-Eligible $support (Get-Candidates);Assert-BinaryIdentity $s;Assert-Protected $s;if($WhatIfPreference){Write-Log 'apply' 'whatif' @{mutationCount=0};return[pscustomobject]@{Applied=$false;WhatIf=$true;MutationCount=0}};if($PSCmdlet.ShouldProcess("$($s.entry.Path)::$($s.entry.Name)",'Remove exact classic Teams Squirrel Run registration')){Remove-ItemProperty -LiteralPath $s.entry.Path -Name $s.entry.Name}else{return};if(!(Test-Removed $s)){throw'Apply verification failed.'};Assert-Protected $s;Write-Log 'apply' 'pass' @{mutationCount=1};[pscustomobject]@{Applied=$true;MutationCount=1}}
+'Verify'{$s=Read-State;if(!(Test-Removed $s)){throw'Immediate verification failed.'};Assert-BinaryIdentity $s;Assert-Protected $s;Write-Log 'verify' 'pass' @{removed=$true};$true}
+'VerifyReboot'{$s=Read-State;$b=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime();if($b-le[datetime]$s.capturedBootTime){throw'A later boot is required.'};if(!(Test-Removed $s)){throw'Reboot persistence failed.'};Assert-BinaryIdentity $s;Assert-Protected $s;Write-Log 'verify-reboot' 'pass' @{bootTime=$b.ToString('o');evidenceStatus='needs-evidence'};$true}
+'Rollback'{$s=Read-State;if(!(Test-Removed $s)){if(Test-Restored $s){Assert-BinaryIdentity $s;Assert-Protected $s;Write-Log 'rollback' 'idempotent' @{mutationCount=0};return[pscustomobject]@{RolledBack=$true;MutationCount=0}};throw'Rollback overwrite refused.'};if($support.Managed){throw'Management ownership appeared.'};Assert-BinaryIdentity $s;Assert-Protected $s;if($WhatIfPreference){Write-Log 'rollback' 'whatif' @{mutationCount=0};return[pscustomobject]@{RolledBack=$false;WhatIf=$true;MutationCount=0}};if($PSCmdlet.ShouldProcess("$($s.entry.Path)::$($s.entry.Name)",'Restore exact classic Teams Squirrel Run registration')){if(!(Test-Path -LiteralPath $s.entry.Path)){New-Item -Path $s.entry.Path -Force|Out-Null};$kind=[Enum]::Parse([Microsoft.Win32.RegistryValueKind],[string]$s.entry.Kind,$true);(Get-Item -LiteralPath $s.entry.Path).SetValue([string]$s.entry.Name,[string]$s.entry.Data,$kind)}else{return};if(!(Test-Restored $s)){throw'Exact rollback verification failed.'};Assert-Protected $s;Write-Log 'rollback' 'pass' @{mutationCount=1;restoredExactOriginal=$true};[pscustomobject]@{RolledBack=$true;MutationCount=1}}
+}}catch{Write-Log 'failure' 'fail' @{stage=$Action;message=$_.Exception.Message;evidenceStatus='needs-evidence'};throw}
