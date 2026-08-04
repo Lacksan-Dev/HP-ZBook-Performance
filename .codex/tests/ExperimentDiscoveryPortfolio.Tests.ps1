@@ -19,6 +19,15 @@ Describe 'Experiment Discovery and Portfolio Codex agent' {
         $agent | Should -Match '(?m)^developer_instructions\s*=\s*"""'
     }
 
+    It 'requires every portfolio input and all three independent lanes' {
+        foreach ($token in @(
+            'hourly-layer-cycle.json','open issues','open pull requests','checks and workflow results',
+            'evidence merged','startup responsiveness','Edge demand-launch','service candidates'
+        )) {
+            $agent | Should -Match ([regex]::Escape($token))
+        }
+    }
+
     It 'codifies evidence, merge, release, and physical-mutation boundaries' {
         foreach ($token in @('needs-evidence','Missing checks are not passing checks','no sensitive data','exact rollback','never assign Stable','Do not post inventory-only commentary','only authorized machine-mutation entry point','Never run a provider or change Windows directly')) {
             $agent | Should -Match ([regex]::Escape($token))
@@ -93,6 +102,58 @@ Describe 'Guarded HP laptop validation runner' {
         @($result.readyExperiments)[0] | Should -Be 'EXP-065'
         Test-Path -LiteralPath $testData | Should -BeFalse
     }
+
+    It 'exports only bounded aggregate evidence from identifier-bearing raw files' {
+        $dataRoot = Join-Path $TestDrive 'machine-data'
+        $evidenceRoot = Join-Path $dataRoot 'runs\EXP-065'
+        $runDirectory = Join-Path $evidenceRoot '20260804-000000'
+        $outputRoot = Join-Path $TestDrive 'published-evidence'
+        New-Item -ItemType Directory -Path $runDirectory -Force | Out-Null
+        [ordered]@{
+            schema = 1
+            experiment = 'EXP-065'
+            generatedUtc = '2026-08-04T00:00:00Z'
+            computer = 'DESKTOP-SECRET'
+            classification = 'inconclusive'
+            groups = [ordered]@{
+                Baseline = [ordered]@{ runs=5; cpuMedianPercent=[ordered]@{median=4.1;mad=0.2}; privatePath='C:\Users\secret' }
+                Treatment = [ordered]@{ runs=5; cpuMedianPercent=[ordered]@{median=3.8;mad=0.3}; userSid='S-1-5-21-secret' }
+            }
+        } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $runDirectory 'summary.json') -Encoding UTF8
+        @(
+            '{"action":"Capture","event":"state-captured","computer":"DESKTOP-SECRET","userSid":"S-1-5-21-secret"}',
+            '{"action":"Apply","event":"dry-run","path":"C:\\Users\\secret"}',
+            '{"action":"Apply","event":"applied"}',
+            '{"action":"Verify","event":"verified"}',
+            '{"action":"VerifyReboot","event":"reboot-verified"}',
+            '{"action":"Rollback","event":"rolled-back"}'
+        ) | Set-Content -LiteralPath (Join-Path $runDirectory 'controller-events.jsonl') -Encoding UTF8
+        New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
+        [ordered]@{
+            schemaVersion=1;experiment='EXP-065';issue=153;track='service-candidate';releaseState='Experimental'
+            harnessPath='experiments/EXP-065/Invoke-Exp065LabHarness.ps1';evidenceRoot=$evidenceRoot;sourceCommit='0123456789abcdef'
+            candidate='One bounded service startup-mode candidate.';benchmark='Five matched baseline and treatment boots.'
+            protectedScopes=@($queue.items[0].protectedScopes);startedUtc='2026-08-04T00:00:00Z';status='harness-active'
+        } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $dataRoot 'active-cycle.json') -Encoding UTF8
+
+        $result = & $runnerPath -Action Export -QueuePath $queuePath -DataRoot $dataRoot -EvidenceOutputRoot $outputRoot
+        $publishedPath = @(Get-ChildItem -LiteralPath $outputRoot -Filter 'summary.json' -File -Recurse)[0].FullName
+        $publishedText = Get-Content -LiteralPath $publishedPath -Raw
+        $published = $publishedText | ConvertFrom-Json
+        $result.evidenceStatus | Should -Be 'physical-lifecycle-recorded'
+        $published.releaseState | Should -Be 'Experimental'
+        $published.stableAssignment | Should -BeFalse
+        $published.performanceClaim | Should -BeFalse
+        $published.lifecycle.capture | Should -BeTrue
+        $published.lifecycle.dryRun | Should -BeTrue
+        $published.lifecycle.apply | Should -BeTrue
+        $published.lifecycle.verify | Should -BeTrue
+        $published.lifecycle.verifyReboot | Should -BeTrue
+        $published.lifecycle.rollback | Should -BeTrue
+        $published.rawEvidence.identifiersCommitted | Should -BeFalse
+        $publishedText | Should -Not -Match 'DESKTOP-SECRET|S-1-5-21-secret|C:\\\\Users\\\\secret|privatePath|userSid'
+        Test-Path -LiteralPath (Join-Path $dataRoot 'active-cycle.json') | Should -BeFalse
+    }
 }
 
 Describe 'Queued reboot harness contracts' {
@@ -106,5 +167,15 @@ Describe 'Queued reboot harness contracts' {
                 $harness | Should -Match ([regex]::Escape($token))
             }
         }
+    }
+
+    It 'runs EXP-095 support detection and dry run before registering reboot continuation' {
+        $harness = Get-Content -LiteralPath $exp095HarnessPath -Raw
+        $start = [regex]::Match($harness,"'Start'\s*\{(?<body>.+?)\}\s*'Continue'",[Text.RegularExpressions.RegexOptions]::Singleline).Groups['body'].Value
+        $start.IndexOf('InvokePhase Preflight') | Should -BeGreaterThan -1
+        $start.IndexOf('RegisterResume') | Should -BeGreaterThan $start.IndexOf('InvokePhase Preflight')
+        $validation = Get-Content -LiteralPath (Join-Path $repoRoot 'validation\Invoke-EXP095Validation.ps1') -Raw
+        $validation | Should -Match ([regex]::Escape("'Preflight'{& `$provider -Action Check"))
+        $validation | Should -Match ([regex]::Escape('& $provider -Action DryRun'))
     }
 }
