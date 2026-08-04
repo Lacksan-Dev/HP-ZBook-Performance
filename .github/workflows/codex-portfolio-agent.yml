@@ -17,6 +17,8 @@ on:
       - 'controller/tests/HpHotkeyUwpDelayedStart*.Tests.ps1'
       - 'controller/providers/ClassicTeamsDemandLaunch.ps1'
       - 'controller/tests/ClassicTeamsDemandLaunch.Tests.ps1'
+      - 'controller/providers/LogiBoltDemandLaunch.ps1'
+      - 'controller/tests/LogiBoltDemandLaunch*.Tests.ps1'
       - 'controller/providers/LogiTuneSigninTask.ps1'
       - 'controller/tests/LogiTuneSigninTask*.Tests.ps1'
       - 'controller/providers/InventoryBoundSigninTaskRemoval.ps1'
@@ -57,6 +59,8 @@ jobs:
             'controller/tests/HpHotkeyUwpDelayedStart.Tests.ps1',
             'controller/tests/HpHotkeyUwpDelayedStart.Integration.Tests.ps1',
             'controller/tests/ClassicTeamsDemandLaunch.Tests.ps1',
+            'controller/tests/LogiBoltDemandLaunch.Tests.ps1',
+            'controller/tests/LogiBoltDemandLaunch.Integration.Tests.ps1',
             'controller/tests/LogiTuneSigninTask.Tests.ps1',
             'controller/tests/LogiTuneSigninTask.Integration.Tests.ps1',
             'controller/tests/InventoryBoundSigninTaskRemoval.Tests.ps1',
