@@ -31,6 +31,8 @@ try {
     try {
         $activeCycle = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Lacksan\PortfolioValidation\active-cycle.json'
         if (-not (Test-Path -LiteralPath $activeCycle)) {
+            $branch = (& git -C $RepositoryRoot branch --show-current).Trim()
+            if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') { throw 'The laptop executor only updates the main branch.' }
             $dirty = @(& git -C $RepositoryRoot status --porcelain)
             if ($LASTEXITCODE -ne 0) { throw 'git status failed.' }
             if ($dirty.Count -gt 0) { throw 'Refusing to update a dirty laptop checkout.' }
