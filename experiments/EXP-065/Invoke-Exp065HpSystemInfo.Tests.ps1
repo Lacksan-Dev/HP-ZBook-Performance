@@ -6,6 +6,8 @@ Describe 'EXP-065 HP System Info controller contract' {
     $ast=[Management.Automation.Language.Parser]::ParseFile($scriptPath,[ref]$tokens,[ref]$errors)
     $trustFunction=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ExecutableTrustMode'},$true)
     Invoke-Expression $trustFunction.Extent.Text
+    $utcFunction=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'ConvertTo-UtcDateTime'},$true)
+    Invoke-Expression $utcFunction.Extent.Text
   }
   It 'supports ShouldProcess and explicit lifecycle actions' {
     $text | Should -Match 'SupportsShouldProcess=\$true'
@@ -81,6 +83,16 @@ Describe 'EXP-065 HP System Info controller contract' {
   It 'requires a later boot for persistence verification' {
     $text | Should -Match 'Later boot required for reboot persistence verification'
     $text | Should -Match 'Reboot persistence failed'
+  }
+  It 'compares reboot timestamps as UTC instants in non-UTC time zones' {
+    $zulu=ConvertTo-UtcDateTime '2026-08-04T16:52:37.5000000Z'
+    $japan=ConvertTo-UtcDateTime '2026-08-05T01:52:37.5000000+09:00'
+    $zulu.Kind | Should -Be ([DateTimeKind]::Utc)
+    $zulu.ToString('o') | Should -Be '2026-08-04T16:52:37.5000000Z'
+    $japan.Ticks | Should -Be $zulu.Ticks
+    $text | Should -Match '\$capturedBoot=ConvertTo-UtcDateTime'
+    $text | Should -Match '\$boot -le \$capturedBoot'
+    $text | Should -Not -Match '\$boot -le \[datetime\]\$state\.capturedBootUtc'
   }
   It 'provides structured JSONL logging and terminating failure retention' {
     $text | Should -Match 'schemaVersion=1'
