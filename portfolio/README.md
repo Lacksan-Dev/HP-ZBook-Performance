@@ -1,16 +1,16 @@
-# Codex three-hour experiment portfolio
+# Codex two-hour experiment portfolio
 
 The repository defines a project-scoped Codex custom agent at
-`.codex/agents/experiment-discovery-portfolio.toml`. Its complete three-hour method
+`.codex/agents/experiment-discovery-portfolio.toml`. Its complete two-hour method
 is `.codex/portfolio-agent.md`.
 
 ## Scheduled task
 
-Create a local-project scheduled task in the Codex desktop app with a three-hour
+Create a local-project scheduled task in the Codex desktop app with a two-hour
 cadence and this prompt:
 
 ```text
-Use the experiment_discovery_portfolio custom agent. Run exactly one three-hour portfolio cycle for this repository and follow .codex/portfolio-agent.md in full. Perform useful work, run the guarded laptop validation entry point once, and report only concrete actions and exact needs-evidence requests.
+Use the experiment_discovery_portfolio custom agent. Run exactly one two-hour portfolio cycle for this repository and follow .codex/portfolio-agent.md in full. Perform useful work, run the guarded laptop validation entry point once, and report only concrete actions and exact needs-evidence requests.
 ```
 
 The scheduled task must run against this local Git repository. The computer and
@@ -44,3 +44,17 @@ customer content.
 The Codex agent commits only the sanitized package on a focused evidence branch
 and opens or updates a pull request linked to the EXP issue. Physical evidence
 remains `Experimental`; the agent never assigns `Stable`.
+
+
+## Laptop executor
+
+Install the guarded laptop task from an elevated Windows PowerShell 5.1 console:
+
+    .\ZBookPerf.ps1 -Action InstallLaptopCycle -RepositoryRoot $PWD -LaptopCycleIntervalHours 2 -AllowAutomaticReboot
+
+Inspect it with `-Action LaptopCycleStatus` and remove it with
+`-Action RemoveLaptopCycle`. The task runs at logon and every two hours. It
+fast-forwards only a clean, inactive checkout to `origin/main`, then invokes the
+existing guarded validation runner. Reboot continuation remains owned by the
+experiment harness. Codex does not need to be a Windows startup application for
+physical validation; the Windows task is the startup component.
