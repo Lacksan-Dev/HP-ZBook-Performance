@@ -36,13 +36,13 @@ Describe 'Experiment Discovery and Portfolio Codex agent' {
         }
     }
 
-    It 'keeps the checked-in portfolio cadence aligned at three hours' {
-        $agent | Should -Match 'every three hours'
-        $agents | Should -Match 'every three hours'
-        $project | Should -Match 'every three hours'
-        $portfolioReadme | Should -Match 'three-hour\s+cadence'
-        $cursor.cadence | Should -Be 'three-hour'
-        foreach ($track in @($cursor.activeTracks)) { $track.cadence | Should -Be 'three-hour' }
+    It 'keeps the checked-in portfolio cadence aligned at two hours' {
+        $agent | Should -Match 'every two hours'
+        $agents | Should -Match 'every two hours'
+        $project | Should -Match 'every two hours'
+        $portfolioReadme | Should -Match 'two-hour\s+cadence'
+        $cursor.cadence | Should -Be 'two-hour'
+        foreach ($track in @($cursor.activeTracks)) { $track.cadence | Should -Be 'two-hour' }
     }
 
     It 'codifies evidence, merge, release, and physical-mutation boundaries' {
