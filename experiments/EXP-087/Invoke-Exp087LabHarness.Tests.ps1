@@ -1,6 +1,5 @@
-$sut=Join-Path $PSScriptRoot 'Invoke-Exp087LabHarness.ps1'
 Describe 'EXP-087 lab harness contract' {
- BeforeAll {$text=Get-Content -LiteralPath $sut -Raw}
+ BeforeAll {$sut=Join-Path $PSScriptRoot 'Invoke-Exp087LabHarness.ps1';$text=Get-Content -LiteralPath $sut -Raw}
  It 'defaults to five matched runs and 120-second sampling' {$text|Should -Match "RunsPerArm=5";$text|Should -Match "SampleSeconds=120"}
  It 'supports baseline treatment reboot continuation and duplicate-boot refusal' {$text|Should -Match "phase='Baseline'";$text|Should -Match "phase='Treatment'";$text|Should -Match 'Duplicate collection from same boot refused';$text|Should -Match 'VerifyReboot'}
  It 'delegates treatment and exact rollback to the hardened EXP-087 provider' {$text|Should -Match 'HpSupportSolutionsFrameworkManualDemandStart.ps1';$text|Should -Match "Provider 'Apply'";$text|Should -Match "Provider 'Rollback'";$text|Should -Match 'AcknowledgeHpWorkflowValidation'}
