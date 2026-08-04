@@ -120,6 +120,15 @@ Describe 'Guarded HP laptop validation runner' {
         Test-Path -LiteralPath $testData | Should -BeFalse
     }
 
+    It 'provides an explicit runner-owned recovery path that retains failures and never exports an incomplete run' {
+        $runner | Should -Match "ValidateSet\('Inspect','Auto','Export','Recover'\)"
+        $runner | Should -Match 'function Recover-ActiveValidation'
+        $runner | Should -Match ([regex]::Escape('& $harness -Action Stop'))
+        $runner | Should -Match "evidenceStatus = 'recovered-needs-rerun'"
+        $runner | Should -Match 'the incomplete run is not publishable evidence'
+        $runner | Should -Match 'retain the active cycle for inspection'
+    }
+
     It 'exports only bounded aggregate evidence from identifier-bearing raw files' {
         $dataRoot = Join-Path $TestDrive 'machine-data'
         $evidenceRoot = Join-Path $dataRoot 'runs\EXP-065'

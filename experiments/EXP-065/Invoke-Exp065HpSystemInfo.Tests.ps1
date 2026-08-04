@@ -90,11 +90,17 @@ Describe 'EXP-065 HP System Info controller contract' {
     $text | Should -Match "Write-Event 'failure' 'failed'"
     $text | Should -Match '\bthrow\b'
   }
-  It 'refuses service, dependency, management, and protected-state drift' {
+  It 'refuses service, dependency, management, and protected-configuration drift while allowing transient runtime state' {
     $text | Should -Match 'Service identity drift detected'
     $text | Should -Match 'Service dependency drift detected'
     $text | Should -Match 'Management state drift detected'
-    $text | Should -Match 'Protected security, update, or remote-access state drift detected'
+    $text | Should -Match 'Get-ProtectedConfiguration'
+    $text | Should -Match 'Protected security, update, or remote-access configuration drift detected'
+    $projection=[regex]::Match($text,'function Get-ProtectedConfiguration\(\$Rows\)\{(?<body>.+?)\}\r?\n').Groups['body'].Value
+    $projection | Should -Match 'Name='
+    $projection | Should -Match 'StartMode='
+    $projection | Should -Match 'PathName='
+    $projection | Should -Not -Match 'State='
   }
   It 'uses collision-safe exact rollback including absent DelayedAutoStart restoration' {
     $rollback=[regex]::Match($text,"'Rollback' \{(?<body>[\s\S]*?)\r?\n  \}\r?\n\} catch").Groups['body'].Value
