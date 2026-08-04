@@ -1,8 +1,9 @@
 $provider=Join-Path $PSScriptRoot '..\providers\LogiTuneSigninTask.ps1'
-Describe 'EXP-104 LogiTuneSigninTask provider contract' {
+Describe 'EXP-114 LogiTuneSigninTask provider contract' {
  BeforeAll{$text=Get-Content -LiteralPath $provider -Raw}
  It 'parses as valid PowerShell'{[scriptblock]::Create($text)|Should -Not -BeNullOrEmpty}
- It 'declares Experimental scope only'{ $text|Should -Match 'EXP-104';$text|Should -Match 'LogiTuneSigninTask';$text|Should -Not -Match 'status:stable|stage:stable|Stable=' }
+ It 'declares Experimental scope only'{ $text|Should -Match 'EXP-114';$text|Should -Match 'LogiTuneSigninTask';$text|Should -Not -Match 'status:stable|stage:stable|Stable=' }
+ It 'rejects the stale experiment identity'{ $text|Should -Not -Match 'EXP-104' }
  It 'implements the complete reversible lifecycle'{foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
  It 'requires HP Windows 11 elevation and management refusal'{foreach($t in 'Windows 11','Hewlett-Packard','Test-Elevated','DomainJoined','MdmEnrollments','PolicyManager','ConfigMgr','Enterprise-management ownership detected'){$text|Should -Match [regex]::Escape($t)}}
  It 'matches one Logitech signed Logi Tune logon task only'{foreach($t in 'LogonTrigger','LogiTuneAgent','LogiTuneApp','ValidPublisher','Exactly one eligible Logi Tune sign-in task'){$text|Should -Match [regex]::Escape($t)};$text|Should -Match 'firmware\|dfu\|driver\|uninstall\|repair\|pair'}
