@@ -6,10 +6,18 @@ BeforeAll {
     $queuePath = Join-Path $repoRoot 'portfolio\validation-queue.json'
     $exp065HarnessPath = Join-Path $repoRoot 'experiments\EXP-065\Invoke-Exp065LabHarness.ps1'
     $exp095HarnessPath = Join-Path $repoRoot 'experiments\EXP-095\Invoke-Exp095LabHarness.ps1'
+    $agentsPath = Join-Path $repoRoot 'AGENTS.md'
+    $projectPath = Join-Path $repoRoot 'PROJECT.md'
+    $portfolioReadmePath = Join-Path $repoRoot 'portfolio\README.md'
+    $cursorPath = Join-Path $repoRoot 'experiments\EXP-001\hourly-layer-cycle.json'
     $agent = Get-Content -LiteralPath $agentPath -Raw
     $runbook = Get-Content -LiteralPath $runbookPath -Raw
     $runner = Get-Content -LiteralPath $runnerPath -Raw
     $queue = Get-Content -LiteralPath $queuePath -Raw | ConvertFrom-Json
+    $agents = Get-Content -LiteralPath $agentsPath -Raw
+    $project = Get-Content -LiteralPath $projectPath -Raw
+    $portfolioReadme = Get-Content -LiteralPath $portfolioReadmePath -Raw
+    $cursor = Get-Content -LiteralPath $cursorPath -Raw | ConvertFrom-Json
 }
 
 Describe 'Experiment Discovery and Portfolio Codex agent' {
@@ -26,6 +34,15 @@ Describe 'Experiment Discovery and Portfolio Codex agent' {
         )) {
             $agent | Should -Match ([regex]::Escape($token))
         }
+    }
+
+    It 'keeps the checked-in portfolio cadence aligned at three hours' {
+        $agent | Should -Match 'every three hours'
+        $agents | Should -Match 'every three hours'
+        $project | Should -Match 'every three hours'
+        $portfolioReadme | Should -Match 'three-hour\s+cadence'
+        $cursor.cadence | Should -Be 'three-hour'
+        foreach ($track in @($cursor.activeTracks)) { $track.cadence | Should -Be 'three-hour' }
     }
 
     It 'codifies evidence, merge, release, and physical-mutation boundaries' {

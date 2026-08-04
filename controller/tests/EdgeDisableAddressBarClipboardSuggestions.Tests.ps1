@@ -1,7 +1,6 @@
-$provider=Join-Path $PSScriptRoot '..\providers\EdgeDisableAddressBarClipboardSuggestions.ps1'
 Describe 'EdgeDisableAddressBarClipboardSuggestions provider contract' {
- BeforeAll{$text=Get-Content -LiteralPath $provider -Raw}
- It 'keeps Experimental identity and required evidence state'{Test-Path $provider|Should -BeTrue;$text|Should -Match 'EXP-151';$text|Should -Match 'needs-evidence';$text|Should -Not -Match 'status:stable|Stable=';$text|Should -Not -Match "'blocked'|\"blocked\""}
+ BeforeAll{$script:providerPath=Join-Path $PSScriptRoot '..\providers\EdgeDisableAddressBarClipboardSuggestions.ps1';$text=Get-Content -LiteralPath $script:providerPath -Raw}
+ It 'keeps Experimental identity and required evidence state'{Test-Path $script:providerPath|Should -BeTrue;$text|Should -Match 'EXP-151';$text|Should -Match 'needs-evidence';$text|Should -Not -Match 'status:stable|Stable=';$text|Should -Not -Match '(?i)\bblocked\b'}
  It 'implements the complete reversible lifecycle'{foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
  It 'targets one recommended address-bar clipboard DWORD zero'{foreach($t in 'AddressBarClipboardSuggestEnabled','SOFTWARE\\Policies\\Microsoft\\Edge\\Recommended','DWord','Value=0','MutationCount=1'){$text|Should -Match $t};$text|Should -Not -Match 'Set-Service|Stop-Service|Disable-ScheduledTask|Remove-AppxPackage|Remove-Item .*User Data|Remove-Item .*Profile'}
  It 'requires HP Windows 11 elevation Microsoft-signed Edge 151 plus and a controlled non-MSA clipboard fixture'{foreach($t in 'Windows 11','Hewlett-Packard','Test-Elevated','Microsoft Corporation','Major-ge151','controlledProfile','microsoftAccountSignedIn','addressBarClipboardSuggestionsEligible','benignClipboardFixtureSha256','ProfileFixturePath'){$text|Should -Match ([regex]::Escape($t))}}

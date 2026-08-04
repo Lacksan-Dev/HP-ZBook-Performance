@@ -1,16 +1,16 @@
-# Codex hourly experiment portfolio
+# Codex three-hour experiment portfolio
 
 The repository defines a project-scoped Codex custom agent at
-`.codex/agents/experiment-discovery-portfolio.toml`. Its complete hourly method
+`.codex/agents/experiment-discovery-portfolio.toml`. Its complete three-hour method
 is `.codex/portfolio-agent.md`.
 
 ## Scheduled task
 
-Create a local-project scheduled task in the Codex desktop app with an hourly
+Create a local-project scheduled task in the Codex desktop app with a three-hour
 cadence and this prompt:
 
 ```text
-Use the experiment_discovery_portfolio custom agent. Run exactly one hourly portfolio cycle for this repository and follow .codex/portfolio-agent.md in full. Perform useful work, run the guarded laptop validation entry point once, and report only concrete actions and exact needs-evidence requests.
+Use the experiment_discovery_portfolio custom agent. Run exactly one three-hour portfolio cycle for this repository and follow .codex/portfolio-agent.md in full. Perform useful work, run the guarded laptop validation entry point once, and report only concrete actions and exact needs-evidence requests.
 ```
 
 The scheduled task must run against this local Git repository. The computer and
