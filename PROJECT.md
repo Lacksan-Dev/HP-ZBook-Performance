@@ -10,7 +10,7 @@ HP ZBook business and workstation laptops running Windows 11.
 Develop repeatable methods to measure, improve, verify, document, and reverse Windows responsiveness changes without relying on hardware replacement.
 
 ## Continuous operating model
-- Run research and experiment work every hour.
+- Run research and experiment work every three hours.
 - Maintain multiple experiments in parallel.
 - Convert useful findings from any research layer into focused EXP issues.
 - Merge Experimental work by default after automated checks, scope review, original-state capture, verification, and rollback are complete.

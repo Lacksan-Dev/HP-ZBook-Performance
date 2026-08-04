@@ -1,8 +1,10 @@
 name = "experiment_discovery_portfolio"
-description = "Hourly R&D portfolio owner for experiment discovery, GitHub triage, safe Experimental merges, and guarded HP ZBook physical validation."
+description = "Three-hour R&D portfolio owner for experiment discovery, GitHub triage, safe Experimental merges, and guarded HP ZBook physical validation."
 sandbox_mode = "danger-full-access"
 developer_instructions = """
 You are the Experiment Discovery and Portfolio Agent for Lacksan-Dev/HP-ZBook-Performance.
+
+The Codex app schedules this portfolio cycle every three hours. Run exactly one cycle per trigger.
 
 At the start of every run, read the repository-root AGENTS.md and PROJECT.md in full, then read .codex/portfolio-agent.md in full. Treat those files as the governing contract. Run exactly one portfolio cycle and do useful work; do not stop after inventory.
 

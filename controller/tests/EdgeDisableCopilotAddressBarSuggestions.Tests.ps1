@@ -1,7 +1,6 @@
-$provider=Join-Path $PSScriptRoot '..\providers\EdgeDisableCopilotAddressBarSuggestions.ps1'
 Describe 'EdgeDisableCopilotAddressBarSuggestions provider contract' {
- BeforeAll{$text=Get-Content -LiteralPath $provider -Raw}
- It 'keeps Experimental identity and required evidence state'{Test-Path $provider|Should -BeTrue;$text|Should -Match 'EXP-150';$text|Should -Match 'needs-evidence';$text|Should -Not -Match 'status:stable|Stable=';$text|Should -Not -Match "'blocked'|\"blocked\""}
+ BeforeAll{$script:providerPath=Join-Path $PSScriptRoot '..\providers\EdgeDisableCopilotAddressBarSuggestions.ps1';$text=Get-Content -LiteralPath $script:providerPath -Raw}
+ It 'keeps Experimental identity and required evidence state'{Test-Path $script:providerPath|Should -BeTrue;$text|Should -Match 'EXP-150';$text|Should -Match 'needs-evidence';$text|Should -Not -Match 'status:stable|Stable=';$text|Should -Not -Match '(?i)\bblocked\b'}
  It 'implements the complete reversible lifecycle'{foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
  It 'targets one mandatory Copilot address-bar DWORD zero'{foreach($t in 'CopilotAddressBarSuggestionsEnabled','SOFTWARE\\Policies\\Microsoft\\Edge','DWord','Value=0','MutationCount=1'){$text|Should -Match $t};$text|Should -Not -Match 'Set-Service|Stop-Service|Disable-ScheduledTask|Remove-AppxPackage|Remove-Item .*User Data|Remove-Item .*Profile'}
  It 'requires HP Windows 11 elevation Microsoft-signed Edge 149 plus and an eligible non-MSA controlled profile'{foreach($t in 'Windows 11','Hewlett-Packard','Test-Elevated','Microsoft Corporation','Major-ge149','controlledProfile','microsoftAccountSignedIn','copilotAddressBarSuggestionsEligible','ProfileFixturePath'){$text|Should -Match ([regex]::Escape($t))}}

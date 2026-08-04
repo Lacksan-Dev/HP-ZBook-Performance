@@ -1,35 +1,35 @@
 {
   "schemaVersion": 2,
-  "cadence": "hourly",
+  "cadence": "three-hour",
   "mode": "experiment-discovery-portfolio",
   "nextLayer": 8,
   "nextLayerName": "Boot, services, tasks, background permissions, and startup applications",
   "lastCompletedLayer": 7,
   "lastCompletedLayerName": "Security and isolation overhead without reducing protection",
   "lastCompletedAtUtc": "2026-07-31T16:02:00Z",
-  "sourceCommit": "1ccd7a6fc0ef7518004c100fa5ebeeafe157167f",
-  "outcome": "portfolio-implementation-merged",
+  "sourceCommit": "47ccafe12bf88d9f60100e7d0e9c583b42cb4054",
+  "outcome": "portfolio-configuration-updated",
   "evidencePath": "experiments/EXP-001/layer-evidence/layer-07-security-activity-profile-2026-07-31.md",
-  "reason": "Merged PR #416 after adding missing portfolio CI coverage, correcting Pester discovery scope, passing focused local tests, and passing the required repository check. EXP-155 now has consistent provider and evidence identity and remains Experimental pending physical validation. Recorded the independent-lane/runbook conflict on PR #418 instead of merging it. The guarded EXP-065 runner again required elevation, AC power, and 20 minutes of local idle time; no Windows mutation, reboot, or evidence export occurred.",
-  "lastPortfolioActionAtUtc": "2026-08-04T05:42:41Z",
+  "reason": "Aligned the checked-in portfolio cadence with the Codex app's every-three-hours schedule while keeping startup, Edge, and service lanes active. Reconciled merged EXP-150 and EXP-151 engineering by adding their missing CI coverage and correcting Pester discovery scope. The guarded EXP-065 runner ran first and now requires only elevation plus 20 minutes of local idle time; AC power was accepted and no Windows mutation, reboot, or evidence export occurred.",
+  "lastPortfolioActionAtUtc": "2026-08-04T06:41:49Z",
   "activeTracks": [
     {
       "experiment": "EXP-002",
       "name": "Startup registration minimization",
-      "cadence": "hourly",
+      "cadence": "three-hour",
       "protectedUserApps": ["Omnissa", "Windows App", "Remote Desktop", "Tailscale"],
       "priorityTargets": ["Microsoft Teams", "Microsoft Office", "Microsoft 365", "Logitech", "Logi Options+", "Logi Bolt", "Logi Tune", "G Hub"]
     },
     {
       "experiment": "EXP-003",
       "name": "Edge demand-launch responsiveness",
-      "cadence": "hourly",
+      "cadence": "three-hour",
       "startupFolderEntryAllowed": false
     },
     {
       "experiment": "EXP-004",
       "name": "Service suspension, demand-start, and replacement candidates",
-      "cadence": "hourly"
+      "cadence": "three-hour"
     }
   ],
   "portfolioRules": {

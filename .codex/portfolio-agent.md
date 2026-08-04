@@ -1,6 +1,6 @@
 # Experiment Discovery and Portfolio Agent runbook
 
-This file defines one hourly cycle for the project-scoped Codex agent named
+This file defines one three-hour cycle for the project-scoped Codex agent named
 `experiment_discovery_portfolio`. The cycle is an R&D control loop, not a status
 report generator.
 

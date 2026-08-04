@@ -1,7 +1,6 @@
-$provider=Join-Path $PSScriptRoot '..\providers\EdgeDisableCopilotAddressBarSuggestions.ps1'
 Describe 'EdgeDisableCopilotAddressBarSuggestions integration' -Tag 'WindowsIntegration' {
  BeforeAll{
-  if($env:RUN_LACKSAN_WINDOWS_INTEGRATION-ne'1'-or$env:OS-ne'Windows_NT'){Set-ItResult -Skipped -Because 'Opt-in Windows integration only.';return}
+  $script:providerPath=Join-Path $PSScriptRoot '..\providers\EdgeDisableCopilotAddressBarSuggestions.ps1'
   function Snapshot-State{
    $policy=foreach($path in 'HKLM:\SOFTWARE\Policies\Microsoft\Edge','HKLM:\SOFTWARE\Policies\Microsoft\Edge\Recommended'){if(Test-Path $path){$k=Get-Item $path;[pscustomobject]@{Path=$path;Values=@($k.GetValueNames()|Sort-Object|ForEach-Object{[pscustomobject]@{Name=$_;Kind=$k.GetValueKind($_).ToString();Data=$k.GetValue($_,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)}})}}else{[pscustomobject]@{Path=$path;Values=@()}}}
    $startup=foreach($path in @([Environment]::GetFolderPath('Startup'),[Environment]::GetFolderPath('CommonStartup'))|Where-Object{$_}|Select-Object -Unique){if(Test-Path $path){Get-ChildItem $path -File -ErrorAction SilentlyContinue|Sort-Object FullName|Select-Object FullName,Length,LastWriteTimeUtc}}
@@ -15,11 +14,11 @@ Describe 'EdgeDisableCopilotAddressBarSuggestions integration' -Tag 'WindowsInte
  It 'keeps policy startup service task driver and device state unchanged during read-only paths'{
   if($env:RUN_LACKSAN_WINDOWS_INTEGRATION-ne'1'-or$env:OS-ne'Windows_NT'){Set-ItResult -Skipped -Because 'Opt-in Windows integration only.';return}
   $before=Snapshot-State
-  & $provider -Action Check -ProfileFixturePath $TestDrive|Out-Null
+  & $script:providerPath -Action Check -ProfileFixturePath $TestDrive|Out-Null
   (Snapshot-State)|Should -BeExactly $before
-  try{& $provider -Action DryRun -ProfileFixturePath $TestDrive|Out-Null}catch{}
+  try{& $script:providerPath -Action DryRun -ProfileFixturePath $TestDrive|Out-Null}catch{}
   (Snapshot-State)|Should -BeExactly $before
-  try{& $provider -Action Apply -ProfileFixturePath $TestDrive -StatePath (Join-Path $TestDrive 'exp150-state.json') -WhatIf|Out-Null}catch{}
+  try{& $script:providerPath -Action Apply -ProfileFixturePath $TestDrive -StatePath (Join-Path $TestDrive 'exp150-state.json') -WhatIf|Out-Null}catch{}
   (Snapshot-State)|Should -BeExactly $before
  }
 }
