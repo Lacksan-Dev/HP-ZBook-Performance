@@ -1,7 +1,6 @@
-$provider=Join-Path $PSScriptRoot '..\providers\InventoryBoundStartupFolderRemoval.ps1'
 Describe 'EXP-155 inventory-bound Startup-folder provider contract' {
- BeforeAll {$text=Get-Content -LiteralPath $provider -Raw}
- It 'parses as PowerShell' {$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($provider,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0}
+ BeforeAll {$script:providerPath=Join-Path $PSScriptRoot '..\providers\InventoryBoundStartupFolderRemoval.ps1';$text=Get-Content -LiteralPath $script:providerPath -Raw}
+ It 'parses as PowerShell' {$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($script:providerPath,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0}
  It 'implements the complete reversible lifecycle' {foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
  It 'binds one EXP-143 priority StartupFolder selection and inventory hash' {foreach($x in "experiment-ne'EXP-143'","classification-ne'priority-target'","surface-ne'StartupFolder'",'inventoryHash','SelectionPath'){$text|Should -Match ([regex]::Escape($x))}}
  It 'allows only current-user and common Startup folder surfaces' {$text|Should -Match "GetFolderPath\('Startup'\)";$text|Should -Match "GetFolderPath\('CommonStartup'\)";$text|Should -Match 'outside approved Startup folders'}
