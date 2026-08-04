@@ -21,10 +21,15 @@ Describe 'EXP-065 HP System Info HSA zero-mutation integration' -Tag 'WindowsInt
   $after=Get-CimInstance Win32_Service -Filter "Name='HPSysInfoCap'"
   $after.StartMode|Should -Be $before.StartMode;$after.State|Should -Be $before.State
  }
- It 'simulates Apply with WhatIf after capture and leaves service unchanged' -Skip:(-not $script:enabled) {
+ It 'captures protected configuration and runtime separately then simulates Apply with WhatIf' -Skip:(-not $script:enabled) {
   $check=& $provider -Action Check -StatePath $script:state -LogPath $script:log
   if(!$check.Supported){Set-ItResult -Skipped -Because ($check.Reasons -join '; ');return}
   & $provider -Action Capture -StatePath $script:state -LogPath $script:log | Out-Null
+  $captured=Get-Content -LiteralPath $script:state -Raw|ConvertFrom-Json
+  @($captured.protected.Configuration).Count|Should -BeGreaterThan 0
+  @($captured.protected.Runtime).Count|Should -BeGreaterThan 0
+  foreach($row in @($captured.protected.Configuration)){$row.PSObject.Properties.Name|Should -Contain 'Name';$row.PSObject.Properties.Name|Should -Contain 'StartMode';$row.PSObject.Properties.Name|Should -Contain 'PathName';$row.PSObject.Properties.Name|Should -Not -Contain 'State'}
+  foreach($row in @($captured.protected.Runtime)){$row.PSObject.Properties.Name|Should -Contain 'Name';$row.PSObject.Properties.Name|Should -Contain 'State';$row.PSObject.Properties.Name|Should -Not -Contain 'StartMode'}
   $before=Get-CimInstance Win32_Service -Filter "Name='HPSysInfoCap'"
   & $provider -Action Apply -WhatIf -StatePath $script:state -LogPath $script:log | Out-Null
   $after=Get-CimInstance Win32_Service -Filter "Name='HPSysInfoCap'"
