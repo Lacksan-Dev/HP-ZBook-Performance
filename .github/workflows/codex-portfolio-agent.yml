@@ -12,6 +12,8 @@ on:
       - 'controller/tests/EXP-080.LogitechDownloadAssistantScheduledDemandLaunch*.Tests.ps1'
       - 'controller/providers/SetPointEventManagerDemandLaunch.ps1'
       - 'controller/tests/SetPointEventManagerDemandLaunch.Tests.ps1'
+      - 'controller/providers/HpHotkeyUwpDelayedStart.ps1'
+      - 'controller/tests/HpHotkeyUwpDelayedStart*.Tests.ps1'
       - 'controller/providers/ClassicTeamsDemandLaunch.ps1'
       - 'controller/tests/ClassicTeamsDemandLaunch.Tests.ps1'
       - '.github/workflows/codex-portfolio-agent.yml'
@@ -40,6 +42,8 @@ jobs:
             'experiments/EXP-065/Invoke-Exp065LabHarness.Tests.ps1',
             'controller/tests/EXP-080.LogitechDownloadAssistantScheduledDemandLaunch.Tests.ps1',
             'controller/tests/SetPointEventManagerDemandLaunch.Tests.ps1',
+            'controller/tests/HpHotkeyUwpDelayedStart.Tests.ps1',
+            'controller/tests/HpHotkeyUwpDelayedStart.Integration.Tests.ps1',
             'controller/tests/ClassicTeamsDemandLaunch.Tests.ps1'
           )
           $config.Run.Exit = $true
