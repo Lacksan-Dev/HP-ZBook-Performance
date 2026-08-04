@@ -27,18 +27,52 @@ function Get-PendingReboot {$paths=@('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVe
 function Get-ManagementState {$cs=Get-CimInstance Win32_ComputerSystem;$mdm=$false;$root='HKLM:\SOFTWARE\Microsoft\Enrollments';if(Test-Path -LiteralPath $root){foreach($k in Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue){try{$p=Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction Stop;if($p.ProviderID -or $p.UPN -or $p.DiscoveryServiceFullURL){$mdm=$true;break}}catch{}}};[pscustomobject]@{DomainJoined=[bool]$cs.PartOfDomain;MdmEnrollment=[bool]$mdm;ConfigMgr=[bool](Get-Service CcmExec -ErrorAction SilentlyContinue);Managed=([bool]$cs.PartOfDomain -or [bool]$mdm -or [bool](Get-Service CcmExec -ErrorAction SilentlyContinue))}}
 function Get-ProtectedState {$names=@('WinDefend','mpssvc','wuauserv','UsoSvc','BITS','TermService','Tailscale');$rows=@();foreach($name in $names){$s=Get-CimInstance Win32_Service -Filter "Name='$name'" -ErrorAction SilentlyContinue;if($s){$rows+=[pscustomobject]@{Name=$s.Name;StartMode=$s.StartMode;State=$s.State;PathName=$s.PathName}}};@($rows|Sort-Object Name)}
 function Same($A,$B){(($A|ConvertTo-Json -Compress -Depth 16) -eq ($B|ConvertTo-Json -Compress -Depth 16))}
+function Get-ExecutableTrustMode {
+  param(
+    [Parameter(Mandatory=$true)][string]$Executable,
+    [Parameter(Mandatory=$true)][bool]$SignatureValid,
+    [string]$SignatureSubject,
+    [string]$Company,
+    [string]$Product,
+    [string]$OriginalFilename,
+    [string]$WindowsRoot=$env:SystemRoot
+  )
+  $hpMetadata=($Company -match '(?i)^HP Inc\.?$|^Hewlett-Packard' -and $Product -match '(?i)^SysInfoCap$' -and $OriginalFilename -match '(?i)^SysInfoCap\.exe$')
+  if(-not $SignatureValid -or -not $hpMetadata){return $null}
+  $directHpPath=($Executable -match '(?i)\\(?:HP|Hewlett-Packard)\\')
+  $directHpSigner=($SignatureSubject -match '(?i)HP Inc|Hewlett-Packard')
+  if($directHpPath -and $directHpSigner){return 'direct-hp-publisher'}
+  $driverStoreRoot=[regex]::Escape((Join-Path $WindowsRoot 'System32\DriverStore\FileRepository'))
+  $hpDriverStorePath=($Executable -match ('(?i)^'+$driverStoreRoot+'\\hpcustomcapcomp\.inf_[a-z0-9_]+\\x64\\SysInfoCap\.exe$'))
+  $hardwarePublisherSigner=($SignatureSubject -match '(?i)^CN=Microsoft Windows Hardware Compatibility Publisher(?:,|$)')
+  if($hpDriverStorePath -and $hardwarePublisherSigner){return 'hp-driverstore-hardware-publisher'}
+  return $null
+}
 function Get-Candidate {
   $os=Get-CimInstance Win32_OperatingSystem;$cs=Get-CimInstance Win32_ComputerSystem;$management=Get-ManagementState
   $reasons=@();if($os.Caption -notmatch 'Windows 11'){$reasons+='Windows 11 required'};if($cs.Manufacturer -notmatch '(?i)^HP$|Hewlett-Packard'){$reasons+='HP platform required'};if(-not(Test-Elevation)){$reasons+='elevation required'};if(Get-PendingReboot){$reasons+='pending reboot detected'};if($management.Managed){$reasons+='enterprise management ownership detected'}
   $matches=@(Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue);if($matches.Count -ne 1){$reasons+='exactly one HPSysInfoCap service required';return [pscustomobject]@{Supported=$false;Reasons=$reasons;OS=$os.Caption;Build=$os.BuildNumber;Manufacturer=$cs.Manufacturer;Model=$cs.Model;Management=$management;Service=$null;Protected=Get-ProtectedState}}
   $svc=$matches[0];if($svc.DisplayName -notmatch '(?i)HP.*System Info.*HSA'){$reasons+='service display identity refused'}
   $exe=$null;try{$exe=Get-ExecutablePath $svc.PathName}catch{$reasons+=$_.Exception.Message}
-  if($exe){if((Split-Path -Leaf $exe) -notmatch '(?i)^SysInfoCap\.exe$'){$reasons+='service executable identity refused'};if($exe -notmatch '(?i)\\HP\\'){$reasons+='service executable path refused'};if(-not(Test-Path -LiteralPath $exe -PathType Leaf)){$reasons+='service executable missing'}}
-  $sig=$null;$hash=$null;$version=$null;if($exe -and (Test-Path -LiteralPath $exe -PathType Leaf)){$sig=Get-AuthenticodeSignature -LiteralPath $exe;if($sig.Status -ne 'Valid' -or -not $sig.SignerCertificate -or $sig.SignerCertificate.Subject -notmatch '(?i)HP Inc|Hewlett-Packard'){$reasons+='HP publisher signature refused'};$hash=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash;$version=(Get-Item -LiteralPath $exe).VersionInfo.FileVersion}
+  if($exe){if((Split-Path -Leaf $exe) -notmatch '(?i)^SysInfoCap\.exe$'){$reasons+='service executable identity refused'};if(-not(Test-Path -LiteralPath $exe -PathType Leaf)){$reasons+='service executable missing'}}
+  $sig=$null;$hash=$null;$version=$null;$company=$null;$product=$null;$originalFilename=$null;$trustMode=$null
+  if($exe -and (Test-Path -LiteralPath $exe -PathType Leaf)){
+    $file=Get-Item -LiteralPath $exe
+    $sig=Get-AuthenticodeSignature -LiteralPath $exe
+    $hash=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+    $version=$file.VersionInfo.FileVersion
+    $company=[string]$file.VersionInfo.CompanyName
+    $product=[string]$file.VersionInfo.ProductName
+    $originalFilename=[string]$file.VersionInfo.OriginalFilename
+    $signatureValid=($sig.Status -eq 'Valid' -and $sig.SignerCertificate)
+    $signatureSubject=if($sig.SignerCertificate){[string]$sig.SignerCertificate.Subject}else{$null}
+    $trustMode=Get-ExecutableTrustMode -Executable $exe -SignatureValid $signatureValid -SignatureSubject $signatureSubject -Company $company -Product $product -OriginalFilename $originalFilename
+    if(-not $trustMode){$reasons+='service executable trust identity refused'}
+  }
   $gs=Get-Service -Name $ServiceName -ErrorAction SilentlyContinue;$deps=@();$dependents=@();if($gs){$deps=@($gs.ServicesDependedOn|ForEach-Object Name|Sort-Object);$dependents=@($gs.DependentServices|ForEach-Object Name|Sort-Object)}
   foreach($name in @($deps+$dependents)){if($name -match '(?i)WinDefend|mpssvc|bfe|wuauserv|bits|cryptsvc|Tailscale|Omnissa|TermService|RasMan|NlaSvc|Dhcp|Dnscache'){$reasons+="Protected dependency refused: $name"}}
   if($svc.ServiceType -match '(?i)kernel|file system|driver'){$reasons+='driver-backed service refused'};if($svc.StartMode -eq 'Disabled'){$reasons+='Disabled baseline refused'}
-  $service=[pscustomobject]@{Name=$svc.Name;DisplayName=$svc.DisplayName;PathName=$svc.PathName;State=$svc.State;StartMode=$svc.StartMode;StartName=$svc.StartName;ServiceType=$svc.ServiceType;Executable=$exe;ExecutableVersion=$version;ExecutableHash=$hash;SignatureSubject=if($sig -and $sig.SignerCertificate){$sig.SignerCertificate.Subject}else{$null};SignatureThumbprint=if($sig -and $sig.SignerCertificate){$sig.SignerCertificate.Thumbprint}else{$null};DelayedAutoStart=(Get-RegistryValueState 'DelayedAutoStart');Dependencies=$deps;Dependents=$dependents}
+  $service=[pscustomobject]@{Name=$svc.Name;DisplayName=$svc.DisplayName;PathName=$svc.PathName;State=$svc.State;StartMode=$svc.StartMode;StartName=$svc.StartName;ServiceType=$svc.ServiceType;Executable=$exe;ExecutableVersion=$version;ExecutableHash=$hash;ExecutableCompanyName=$company;ExecutableProductName=$product;ExecutableOriginalFilename=$originalFilename;PublisherTrustMode=$trustMode;SignatureSubject=if($sig -and $sig.SignerCertificate){$sig.SignerCertificate.Subject}else{$null};SignatureThumbprint=if($sig -and $sig.SignerCertificate){$sig.SignerCertificate.Thumbprint}else{$null};DelayedAutoStart=(Get-RegistryValueState 'DelayedAutoStart');Dependencies=$deps;Dependents=$dependents}
   [pscustomobject]@{Supported=($reasons.Count -eq 0);Reasons=$reasons;OS=$os.Caption;Build=$os.BuildNumber;Manufacturer=$cs.Manufacturer;Model=$cs.Model;Management=$management;Service=$service;Protected=Get-ProtectedState;EvidenceStatus='needs-evidence'}
 }
 function Save-State($Support){if(Test-Path -LiteralPath $StatePath){throw 'State overwrite refused'};$dir=Split-Path -Parent $StatePath;if($dir -and -not(Test-Path -LiteralPath $dir)){New-Item -ItemType Directory -Path $dir -Force|Out-Null};$state=[ordered]@{schemaVersion=2;experiment=$Experiment;computer=$env:COMPUTERNAME;userSid=([System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value);capturedUtc=(Get-Date).ToUniversalTime().ToString('o');capturedBootUtc=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o');support=$Support;protected=$Support.Protected;evidenceStatus='needs-evidence'};$state|ConvertTo-Json -Depth 16|Set-Content -LiteralPath $StatePath -Encoding UTF8;Write-Event 'state-captured' 'pass' @{service=$Support.Service.Name;startMode=$Support.Service.StartMode;delayedAutoStart=$Support.Service.DelayedAutoStart;state=$Support.Service.State;hash=$Support.Service.ExecutableHash};$state}

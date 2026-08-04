@@ -1,6 +1,12 @@
-$scriptPath=Join-Path $PSScriptRoot 'Invoke-Exp065HpSystemInfo.ps1'
 Describe 'EXP-065 HP System Info controller contract' {
-  BeforeAll {$text=Get-Content -LiteralPath $scriptPath -Raw}
+  BeforeAll {
+    $scriptPath=Join-Path $PSScriptRoot 'Invoke-Exp065HpSystemInfo.ps1'
+    $text=Get-Content -LiteralPath $scriptPath -Raw
+    $tokens=$null;$errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseFile($scriptPath,[ref]$tokens,[ref]$errors)
+    $trustFunction=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ExecutableTrustMode'},$true)
+    Invoke-Expression $trustFunction.Extent.Text
+  }
   It 'supports ShouldProcess and explicit lifecycle actions' {
     $text | Should -Match 'SupportsShouldProcess=\$true'
     $text | Should -Match "'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'"
@@ -14,11 +20,31 @@ Describe 'EXP-065 HP System Info controller contract' {
     $text | Should -Match 'elevation required'
     $text | Should -Match 'enterprise management ownership detected'
   }
-  It 'requires SysInfoCap and valid HP publisher identity' {
+  It 'requires SysInfoCap and a narrow HP vendor or DriverStore trust identity' {
     $text | Should -Match 'SysInfoCap\\\.exe'
     $text | Should -Match 'Get-AuthenticodeSignature'
     $text | Should -Match 'HP Inc\|Hewlett-Packard'
     $text | Should -Match 'Get-FileHash'
+    $text | Should -Match 'hpcustomcapcomp\\\.inf_'
+    $text | Should -Match 'Microsoft Windows Hardware Compatibility Publisher'
+    $text | Should -Match 'ExecutableCompanyName'
+    $text | Should -Match 'ExecutableProductName'
+    $text | Should -Match 'ExecutableOriginalFilename'
+    $text | Should -Match 'hp-driverstore-hardware-publisher'
+    $text | Should -Match 'service executable trust identity refused'
+  }
+  It 'accepts the exact HP DriverStore package with HP metadata and the Windows hardware publisher' {
+    $mode=Get-ExecutableTrustMode -Executable 'C:\Windows\System32\DriverStore\FileRepository\hpcustomcapcomp.inf_amd64_deadbeef\x64\SysInfoCap.exe' -SignatureValid $true -SignatureSubject 'CN=Microsoft Windows Hardware Compatibility Publisher, O=Microsoft Corporation' -Company 'HP Inc.' -Product 'SysInfoCap' -OriginalFilename 'SysInfoCap.exe' -WindowsRoot 'C:\Windows'
+    $mode | Should -Be 'hp-driverstore-hardware-publisher'
+  }
+  It 'keeps the legacy direct HP publisher identity supported' {
+    $mode=Get-ExecutableTrustMode -Executable 'C:\Program Files\HP\SysInfoCap\SysInfoCap.exe' -SignatureValid $true -SignatureSubject 'CN=HP Inc., O=HP Inc.' -Company 'HP Inc.' -Product 'SysInfoCap' -OriginalFilename 'SysInfoCap.exe' -WindowsRoot 'C:\Windows'
+    $mode | Should -Be 'direct-hp-publisher'
+  }
+  It 'refuses generic Microsoft-signed DriverStore executables and metadata drift' {
+    Get-ExecutableTrustMode -Executable 'C:\Windows\System32\DriverStore\FileRepository\other.inf_amd64_deadbeef\x64\SysInfoCap.exe' -SignatureValid $true -SignatureSubject 'CN=Microsoft Windows Hardware Compatibility Publisher, O=Microsoft Corporation' -Company 'HP Inc.' -Product 'SysInfoCap' -OriginalFilename 'SysInfoCap.exe' -WindowsRoot 'C:\Windows' | Should -BeNullOrEmpty
+    Get-ExecutableTrustMode -Executable 'C:\Windows\System32\DriverStore\FileRepository\hpcustomcapcomp.inf_amd64_deadbeef\x64\SysInfoCap.exe' -SignatureValid $true -SignatureSubject 'CN=Microsoft Windows Hardware Compatibility Publisher, O=Microsoft Corporation' -Company 'Other Vendor' -Product 'SysInfoCap' -OriginalFilename 'SysInfoCap.exe' -WindowsRoot 'C:\Windows' | Should -BeNullOrEmpty
+    Get-ExecutableTrustMode -Executable 'C:\Windows\System32\DriverStore\FileRepository\hpcustomcapcomp.inf_amd64_deadbeef\x64\SysInfoCap.exe' -SignatureValid $false -SignatureSubject 'CN=Microsoft Windows Hardware Compatibility Publisher, O=Microsoft Corporation' -Company 'HP Inc.' -Product 'SysInfoCap' -OriginalFilename 'SysInfoCap.exe' -WindowsRoot 'C:\Windows' | Should -BeNullOrEmpty
   }
   It 'captures exact delayed-start registry existence type and data' {
     $text | Should -Match 'Get-RegistryValueState'
@@ -55,7 +81,7 @@ Describe 'EXP-065 HP System Info controller contract' {
     $text | Should -Match 'schemaVersion=1'
     $text | Should -Match 'ConvertTo-Json -Compress'
     $text | Should -Match 'events.jsonl'
-    $text | Should -Match "experiment=\$Experiment"
+    $text | Should -Match 'experiment=\$Experiment'
     $text | Should -Match "Write-Event 'failure' 'failed'"
     $text | Should -Match '\bthrow\b'
   }
@@ -66,7 +92,7 @@ Describe 'EXP-065 HP System Info controller contract' {
     $text | Should -Match 'Protected security, update, or remote-access state drift detected'
   }
   It 'uses collision-safe exact rollback including absent DelayedAutoStart restoration' {
-    $rollback=[regex]::Match($text,"'Rollback' \{(?<body>[\s\S]*?)\n  \}\n\} catch").Groups['body'].Value
+    $rollback=[regex]::Match($text,"'Rollback' \{(?<body>[\s\S]*?)\r?\n  \}\r?\n\} catch").Groups['body'].Value
     $rollback | Should -Match 'Rollback collision detected'
     $rollback | Should -Match 'Set-RegistryValueState'
     $rollback | Should -Match 'Exact rollback verification failed'
