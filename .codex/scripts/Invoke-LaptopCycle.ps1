@@ -3,11 +3,49 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$RepositoryRoot,
-    [switch]$AllowAutomaticReboot
+    [switch]$AllowAutomaticReboot,
+    [string]$ExpectedMachineUuid
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+
+function Get-LaptopTargetIdentity {
+    $computer = Get-CimInstance Win32_ComputerSystem
+    $product = Get-CimInstance Win32_ComputerSystemProduct
+    $enclosures = @(Get-CimInstance Win32_SystemEnclosure)
+    $battery = @(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue)
+    $chassisTypes = @($enclosures | ForEach-Object { @($_.ChassisTypes) } | ForEach-Object { [int]$_ })
+    [pscustomobject][ordered]@{
+        manufacturer = [string]$computer.Manufacturer
+        model = [string]$computer.Model
+        uuid = ([string]$product.UUID).Trim().ToUpperInvariant()
+        chassisTypes = $chassisTypes
+        hasBattery = ($battery.Count -gt 0)
+    }
+}
+
+function Assert-BoundZBookLaptop {
+    param([Parameter(Mandatory=$true)][string]$ExpectedUuid)
+    if ([string]::IsNullOrWhiteSpace($ExpectedUuid)) {
+        throw 'This laptop-cycle task predates machine binding. Reinstall it locally on the intended HP ZBook laptop before automatic validation can run.'
+    }
+    $identity = Get-LaptopTargetIdentity
+    $portableChassis = @(8,9,10,14,30,31,32)
+    if ($identity.manufacturer -notmatch '(?i)^HP$|Hewlett-Packard') { throw 'Automatic validation requires an HP system.' }
+    if ($identity.model -notmatch '(?i)\bZBook\b') { throw "Automatic validation requires an HP ZBook laptop. Detected model: $($identity.model)" }
+    if (-not $identity.hasBattery) { throw 'Automatic validation requires the intended battery-equipped HP ZBook laptop.' }
+    if (@($identity.chassisTypes | Where-Object { $_ -in $portableChassis }).Count -eq 0) {
+        throw "Automatic validation requires a portable laptop chassis. Detected chassis types: $($identity.chassisTypes -join ',')"
+    }
+    if ([string]::IsNullOrWhiteSpace($identity.uuid) -or $identity.uuid -match '^(0+|F+)(-(0+|F+))*$') {
+        throw 'Automatic validation requires a usable hardware UUID.'
+    }
+    if ($identity.uuid -ne $ExpectedUuid.Trim().ToUpperInvariant()) {
+        throw 'Automatic validation is bound to a different physical HP ZBook. Reinstall the laptop cycle on the intended validation laptop.'
+    }
+    return $identity
+}
 
 if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
     $RepositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
@@ -19,6 +57,11 @@ $logPath = Join-Path $logRoot 'cycle.log'
 
 if (-not (Test-Path -LiteralPath (Join-Path $RepositoryRoot '.git'))) { throw "Not a Git checkout: $RepositoryRoot" }
 if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw "Validation runner is missing: $runner" }
+
+# This assertion intentionally precedes repository updates and runner invocation. A task
+# copied to or installed on any other machine must fail closed before reaching reboot logic.
+$targetIdentity = Assert-BoundZBookLaptop -ExpectedUuid $ExpectedMachineUuid
+
 if (-not (Test-Path -LiteralPath $logRoot)) { New-Item -ItemType Directory -Path $logRoot -Force | Out-Null }
 
 $mutex = New-Object Threading.Mutex($false, 'Global\LacksanUxRomLaptopCycle')
@@ -29,6 +72,7 @@ try {
 
     Start-Transcript -LiteralPath $logPath -Append | Out-Null
     try {
+        Write-Output ("Bound laptop target verified: {0} ({1})" -f $targetIdentity.model, $targetIdentity.uuid)
         $activeCycle = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Lacksan\PortfolioValidation\active-cycle.json'
         if (-not (Test-Path -LiteralPath $activeCycle)) {
             $branch = (& git -C $RepositoryRoot branch --show-current).Trim()
