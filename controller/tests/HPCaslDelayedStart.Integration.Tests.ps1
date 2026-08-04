@@ -16,6 +16,12 @@ Describe 'HPCaslDelayedStart integration' -Tag 'WindowsIntegration' {
             [ordered]@{Services=$svc;Registry=$reg;Tasks=$tasks;Drivers=$drivers;Devices=$devices;ProtectedProcesses=$protected;SecurityServices=$security}|ConvertTo-Json -Compress -Depth 8
         }
     }
+    It 'keeps reboot-varying process IDs outside the provider protected configuration hash' {
+        $text = Get-Content -LiteralPath $provider -Raw
+        $text | Should -Match 'Hash=Get-Hash \$configuration'
+        $text | Should -Match 'Runtime=\$runtime'
+        $text | Should -Not -Match 'Select-Object ProcessName,Id'
+    }
     It 'keeps service, registry, task, driver, device, security, and protected-process state unchanged during read-only paths' {
         if($env:RUN_LACKSAN_WINDOWS_INTEGRATION -ne '1' -or $env:OS -ne 'Windows_NT'){ Set-ItResult -Skipped -Because 'Opt-in Windows integration only.'; return }
         $before=Snapshot-State

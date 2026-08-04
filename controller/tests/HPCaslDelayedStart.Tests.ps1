@@ -22,10 +22,18 @@ Describe 'HPCaslDelayedStart provider contract' {
         $text | Should -Not -Match 'Remove-Service|sc\.exe\s+delete|pnputil|Remove-PnpDevice|dism\.exe|Disable-WindowsOptionalFeature|winmgmt\s+/resetrepository|winmgmt\s+/salvagerepository'
     }
     It 'captures identity, package, dependencies, recovery, triggers, state, and rollback evidence' {
-        foreach($token in 'StartMode','DelayedAutoStart','State','PathName','ServiceAccount','Dependencies','Dependents','RecoveryActions','Triggers','Packages','Sha256','FileVersion','SignatureStatus','Publisher','Thumbprint','capturedBootTime','protectedScopeHash','dependencyHash','BIOS') { $text | Should -Match $token }
+        foreach($token in 'StartMode','DelayedAutoStart','State','PathName','ServiceAccount','Dependencies','Dependents','RecoveryActions','Triggers','Packages','Sha256','FileVersion','SignatureStatus','Publisher','Thumbprint','capturedBootTime','protectedScopeHash','protectedRuntime','dependencyHash','BIOS') { $text | Should -Match $token }
+    }
+    It 'hashes protected configuration separately from reboot-varying runtime observations' {
+        $text | Should -Match 'Configuration=\$configuration'
+        $text | Should -Match 'Runtime=\$runtime'
+        $text | Should -Match 'Hash=Get-Hash \$configuration'
+        $text | Should -Match 'protectedRuntime'
+        $text | Should -Not -Match 'Select-Object ProcessName,Id'
+        $text | Should -Match 'Protected-scope configuration drift detected after reboot'
     }
     It 'refuses unsafe, managed, ambiguous, unsigned, trigger-sensitive, recovery-sensitive, and package-ambiguous states' {
-        foreach($token in 'Enterprise-management ownership detected','Exactly one hpqcaslwmiex identity is required','Valid HP publisher signature is required','Trigger-sensitive service state detected','Recovery-sensitive service state detected','Exactly one associated HP CASL package identity is required','Dependency drift detected','Package identity drift detected','Protected-scope drift detected') { $text | Should -Match [regex]::Escape($token) }
+        foreach($token in 'Enterprise-management ownership detected','Exactly one hpqcaslwmiex identity is required','Valid HP publisher signature is required','Trigger-sensitive service state detected','Recovery-sensitive service state detected','Exactly one associated HP CASL package identity is required','Dependency drift detected','Package identity drift detected','Protected-scope configuration drift detected') { $text | Should -Match [regex]::Escape($token) }
     }
     It 'preserves protected Windows and remote-access scope' {
         foreach($token in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','Tailscale','omnissa','windows app','remote desktop','bitlocker','credential','recovery','intune','sccm','mdm','vpn','ndis') { $text | Should -Match $token }
