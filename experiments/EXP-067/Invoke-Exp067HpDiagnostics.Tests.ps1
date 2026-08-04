@@ -1,6 +1,8 @@
-$scriptPath=Join-Path $PSScriptRoot 'Invoke-Exp067HpDiagnostics.ps1'
 Describe 'EXP-067 HP Diagnostics HSA controller contract' {
-  BeforeAll {$text=Get-Content -LiteralPath $scriptPath -Raw}
+  BeforeAll {
+    $script:scriptPath=Join-Path $PSScriptRoot 'Invoke-Exp067HpDiagnostics.ps1'
+    $script:text=Get-Content -LiteralPath $script:scriptPath -Raw
+  }
   It 'supports ShouldProcess and explicit lifecycle actions' {
     $text | Should -Match 'SupportsShouldProcess=\$true'
     $text | Should -Match "'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'"
