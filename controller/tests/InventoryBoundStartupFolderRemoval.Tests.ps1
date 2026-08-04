@@ -1,7 +1,6 @@
-$provider=Join-Path $PSScriptRoot '..\providers\InventoryBoundStartupFolderRemoval.ps1'
-Describe 'EXP-146 inventory-bound Startup-folder provider contract' {
- BeforeAll {$text=Get-Content -LiteralPath $provider -Raw}
- It 'parses as PowerShell' {$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($provider,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0}
+Describe 'EXP-155 inventory-bound Startup-folder provider contract' {
+ BeforeAll {$script:providerPath=Join-Path $PSScriptRoot '..\providers\InventoryBoundStartupFolderRemoval.ps1';$text=Get-Content -LiteralPath $script:providerPath -Raw}
+ It 'parses as PowerShell' {$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($script:providerPath,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0}
  It 'implements the complete reversible lifecycle' {foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
  It 'binds one EXP-143 priority StartupFolder selection and inventory hash' {foreach($x in "experiment-ne'EXP-143'","classification-ne'priority-target'","surface-ne'StartupFolder'",'inventoryHash','SelectionPath'){$text|Should -Match ([regex]::Escape($x))}}
  It 'allows only current-user and common Startup folder surfaces' {$text|Should -Match "GetFolderPath\('Startup'\)";$text|Should -Match "GetFolderPath\('CommonStartup'\)";$text|Should -Match 'outside approved Startup folders'}
@@ -14,4 +13,5 @@ Describe 'EXP-146 inventory-bound Startup-folder provider contract' {
  It 'requires a later boot for persistence verification' {$text|Should -Match 'Later boot required';$text|Should -Match 'Treatment failed reboot persistence'}
  It 'refuses conflicting rollback and restores exact captured content' {foreach($x in 'Rollback conflicting-path overwrite refused','WriteAllBytes','SetSecurityDescriptorSddlForm','Set-Acl','Exact rollback verification failed','restoredExactOriginal'){$text|Should -Match $x}}
  It 'retains Experimental evidence state without Stable assignment' {$text|Should -Match 'needs-evidence';$text|Should -Not -Match 'status:stable|Stable='}
+ It 'uses current experiment identity only' {$text|Should -Match 'EXP-155';$text|Should -Not -Match 'EXP-146'}
 }
