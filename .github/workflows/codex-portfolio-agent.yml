@@ -19,6 +19,8 @@ on:
       - 'controller/tests/ClassicTeamsDemandLaunch.Tests.ps1'
       - 'controller/providers/LogiTuneSigninTask.ps1'
       - 'controller/tests/LogiTuneSigninTask*.Tests.ps1'
+      - 'controller/providers/InventoryBoundSigninTaskRemoval.ps1'
+      - 'controller/tests/InventoryBoundSigninTaskRemoval*.Tests.ps1'
       - 'controller/tests/EXP-154.StartupTaskRollbackGate*.Tests.ps1'
       - '.github/workflows/codex-portfolio-agent.yml'
   workflow_dispatch:
@@ -51,6 +53,8 @@ jobs:
             'controller/tests/ClassicTeamsDemandLaunch.Tests.ps1',
             'controller/tests/LogiTuneSigninTask.Tests.ps1',
             'controller/tests/LogiTuneSigninTask.Integration.Tests.ps1',
+            'controller/tests/InventoryBoundSigninTaskRemoval.Tests.ps1',
+            'controller/tests/InventoryBoundSigninTaskRemoval.Integration.Tests.ps1',
             'controller/tests/EXP-154.StartupTaskRollbackGate.Tests.ps1',
             'controller/tests/EXP-154.StartupTaskRollbackGate.Integration.Tests.ps1'
           )

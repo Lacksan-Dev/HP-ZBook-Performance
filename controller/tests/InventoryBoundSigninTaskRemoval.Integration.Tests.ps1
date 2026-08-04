@@ -1,0 +1,23 @@
+Describe 'EXP-156 inventory-bound sign-in task zero-mutation integration' -Tag 'WindowsIntegration' {
+ BeforeAll {
+  $script:providerPath=Join-Path $PSScriptRoot '..\providers\InventoryBoundSigninTaskRemoval.ps1'
+  function Snapshot-State {
+   $tasks=Get-ScheduledTask -ErrorAction SilentlyContinue|Sort-Object TaskPath,TaskName|ForEach-Object{[pscustomobject]@{TaskPath=$_.TaskPath;TaskName=$_.TaskName;Enabled=$_.Settings.Enabled;State=$_.State.ToString();XmlHash=try{$x=Export-ScheduledTask -TaskName $_.TaskName -TaskPath $_.TaskPath;$s=[Security.Cryptography.SHA256]::Create();try{($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($x))|ForEach-Object{$_.ToString('x2')})-join''}finally{$s.Dispose()}}catch{'error'}}}
+   $services=Get-CimInstance Win32_Service|Sort-Object Name|Select-Object Name,State,StartMode,PathName
+   $drivers=Get-CimInstance Win32_SystemDriver|Sort-Object Name|Select-Object Name,State,StartMode,PathName
+   $devices=Get-PnpDevice -ErrorAction SilentlyContinue|Sort-Object InstanceId|Select-Object InstanceId,Status,Class
+   $protected=Get-Process -ErrorAction SilentlyContinue|Where-Object{$_.ProcessName-match'(?i)omnissa|horizon|msrdc|mstsc|tailscale'}|Select-Object ProcessName,Id
+   [ordered]@{Tasks=$tasks;Services=$services;Drivers=$drivers;Devices=$devices;ProtectedProcesses=$protected}|ConvertTo-Json -Compress -Depth 9
+  }
+ }
+ It 'keeps task service driver device and protected-process state unchanged for refusal paths and Apply WhatIf' {
+  if($env:LACKSAN_RUN_WINDOWS_INTEGRATION-ne'1' -or $env:OS-ne'Windows_NT'){Set-ItResult -Skipped -Because 'Opt-in HP Windows 11 integration only.';return}
+  $selection=Join-Path $TestDrive 'selection.json';$state=Join-Path $TestDrive 'exp156-state.json';$log=Join-Path $TestDrive 'exp156.jsonl'
+  [ordered]@{experiment='EXP-143';classification='priority-target';surface='ScheduledTask';inventoryHash='integration-placeholder';identity='\Lacksan\DefinitelyAbsentTask';originalState=@{enabled=$true;xml='<Task><Triggers><LogonTrigger /></Triggers><Settings><Enabled>true</Enabled></Settings></Task>'}}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $selection -Encoding UTF8
+  $before=Snapshot-State
+  & $script:providerPath -Action Check -SelectionPath $selection -StatePath $state -LogPath $log|Out-Null;(Snapshot-State)|Should -BeExactly $before
+  try{& $script:providerPath -Action Capture -SelectionPath $selection -StatePath $state -LogPath $log|Out-Null}catch{};(Snapshot-State)|Should -BeExactly $before
+  try{& $script:providerPath -Action DryRun -SelectionPath $selection -StatePath $state -LogPath $log|Out-Null}catch{};(Snapshot-State)|Should -BeExactly $before
+  try{& $script:providerPath -Action Apply -SelectionPath $selection -StatePath $state -LogPath $log -WhatIf|Out-Null}catch{};(Snapshot-State)|Should -BeExactly $before
+ }
+}
