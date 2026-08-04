@@ -1,7 +1,8 @@
 $provider=Join-Path $PSScriptRoot '..\providers\PriorityRunRegistrationRemoval.ps1'
-Describe 'EXP-144 priority Run/RunOnce provider contract' {
+Describe 'EXP-153 priority Run/RunOnce provider contract' {
  BeforeAll {$text=Get-Content -LiteralPath $provider -Raw}
  It 'parses as PowerShell' {$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($provider,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0}
+ It 'uses EXP-153 evidence identity and rejects the retired EXP-144 identity' {$text|Should -Match "EXP-153-state\.json";$text|Should -Match "EXP-153\.jsonl";$text|Should -Match "\$Experiment='EXP-153'";$text|Should -Not -Match 'EXP-144'}
  It 'implements the full reversible lifecycle' {foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match ([regex]::Escape("'$a'"))}}
  It 'requires an EXP-143 priority-target selection and approved Run paths' {foreach($t in 'EXP-143','priority-target','ApprovedPaths','RunOnce','WOW6432Node','Exactly one EXP-143 registry selection is required'){$text|Should -Match ([regex]::Escape($t))}}
  It 'supports only direct signed executable registrations' {foreach($t in 'Resolve-Command','Get-AuthenticodeSignature','Unsigned or invalid startup executable refused','REG_SZ and REG_EXPAND_SZ','Script, shell, installer, or indirection launcher refused'){$text|Should -Match ([regex]::Escape($t))}}
