@@ -60,6 +60,11 @@ Describe 'EXP-065 HP System Info controller contract' {
     $text | Should -Match 'capturedBootUtc'
     $text | Should -Match 'userSid'
   }
+  It 'collects dependency names without WhatIf-sensitive member shorthand' {
+    $text | Should -Match 'ServicesDependedOn\|ForEach-Object \{\[string\]\$_\.Name\}'
+    $text | Should -Match 'DependentServices\|ForEach-Object \{\[string\]\$_\.Name\}'
+    $text | Should -Not -Match 'ForEach-Object Name'
+  }
   It 'implements zero-mutation DryRun' {
     $dry=[regex]::Match($text,"'DryRun' \{(?<body>[\s\S]*?)\n    'Apply'").Groups['body'].Value
     $dry | Should -Match 'WouldChange'
