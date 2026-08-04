@@ -28,6 +28,8 @@ on:
       - 'controller/tests/LogiTuneDemandLaunch*.Tests.ps1'
       - 'controller/providers/LogiTuneSigninTask.ps1'
       - 'controller/tests/LogiTuneSigninTask*.Tests.ps1'
+      - 'controller/providers/InventoryBoundRunRegistrationRemoval.ps1'
+      - 'controller/tests/InventoryBoundRunRegistrationRemoval*.Tests.ps1'
       - 'controller/providers/InventoryBoundSigninTaskRemoval.ps1'
       - 'controller/tests/InventoryBoundSigninTaskRemoval*.Tests.ps1'
       - 'controller/providers/InventoryBoundStartupFolderRemoval.ps1'
@@ -82,6 +84,8 @@ jobs:
             'controller/tests/LogiTuneDemandLaunch.Integration.Tests.ps1',
             'controller/tests/LogiTuneSigninTask.Tests.ps1',
             'controller/tests/LogiTuneSigninTask.Integration.Tests.ps1',
+            'controller/tests/InventoryBoundRunRegistrationRemoval.Tests.ps1',
+            'controller/tests/InventoryBoundRunRegistrationRemoval.Integration.Tests.ps1',
             'controller/tests/InventoryBoundSigninTaskRemoval.Tests.ps1',
             'controller/tests/InventoryBoundSigninTaskRemoval.Integration.Tests.ps1',
             'controller/tests/InventoryBoundStartupFolderRemoval.Tests.ps1',
