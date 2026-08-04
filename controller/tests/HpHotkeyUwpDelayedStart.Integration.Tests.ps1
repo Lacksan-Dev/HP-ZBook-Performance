@@ -1,11 +1,10 @@
-$provider = Join-Path $PSScriptRoot '..\providers\HpHotkeyUwpDelayedStart.ps1'
-
 Describe 'EXP-120 HP Hotkey UWP zero-mutation integration' -Tag 'WindowsIntegration' {
     BeforeAll {
-        $enabled = $env:LACKSAN_RUN_WINDOWS_INTEGRATION -eq '1' -and $env:OS -eq 'Windows_NT'
+        $script:providerPath = Join-Path $PSScriptRoot '..\providers\HpHotkeyUwpDelayedStart.ps1'
+        $script:integrationEnabled = $env:LACKSAN_RUN_WINDOWS_INTEGRATION -eq '1' -and $env:OS -eq 'Windows_NT'
     }
 
-    It 'keeps service configuration and hotkey device state unchanged during Check and DryRun' -Skip:(-not $enabled) {
+    It 'keeps service configuration and hotkey device state unchanged during Check and DryRun' -Skip:(-not $script:integrationEnabled) {
         function Get-IntegrationSnapshot {
             [ordered]@{
                 Services = @(Get-CimInstance Win32_Service | Select-Object Name,StartMode,State,PathName | Sort-Object Name)
@@ -19,16 +18,16 @@ Describe 'EXP-120 HP Hotkey UWP zero-mutation integration' -Tag 'WindowsIntegrat
         $state = Join-Path $TestDrive 'state.json'
         $log = Join-Path $TestDrive 'events.jsonl'
         $floor = Join-Path $TestDrive 'security-floor.json'
-        $support = & $provider -Action Check -StatePath $state -LogPath $log -SecurityFloorPath $floor
+        $support = & $script:providerPath -Action Check -StatePath $state -LogPath $log -SecurityFloorPath $floor
         if ($support.Supported) {
-            & $provider -Action DryRun -StatePath $state -LogPath $log -SecurityFloorPath $floor | Out-Null
+            & $script:providerPath -Action DryRun -StatePath $state -LogPath $log -SecurityFloorPath $floor | Out-Null
         }
         $after = Get-IntegrationSnapshot
         $after | Should -BeExactly $before
     }
 
     It 'contains no broad destructive operation' {
-        $text = Get-Content -LiteralPath $provider -Raw
+        $text = Get-Content -LiteralPath $script:providerPath -Raw
         $text | Should -Not -Match 'Remove-Service|sc\.exe\s+delete|Remove-AppxPackage|Disable-PnpDevice|Remove-PnpDevice|pnputil|Unregister-ScheduledTask|Disable-ScheduledTask|Set-MpPreference|Set-NetFirewallRule'
     }
 }
