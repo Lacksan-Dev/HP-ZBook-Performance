@@ -7,11 +7,11 @@
   "lastCompletedLayer": 7,
   "lastCompletedLayerName": "Security and isolation overhead without reducing protection",
   "lastCompletedAtUtc": "2026-07-31T16:02:00Z",
-  "sourceCommit": "2ebfd837e4a9d0e59e1fd116d57231c9689cdaad",
-  "outcome": "portfolio-research-merged",
+  "sourceCommit": "1ccd7a6fc0ef7518004c100fa5ebeeafe157167f",
+  "outcome": "portfolio-implementation-merged",
   "evidencePath": "experiments/EXP-001/layer-evidence/layer-07-security-activity-profile-2026-07-31.md",
-  "reason": "Reconciled merged PR #413 after its corrected portfolio CI run passed 86 tests with three expected opt-in skips. EXP-154 now has a CI-backed supported-API rollback gate but remains Experimental and needs physical exact-restore proof. Standardized the research and needs-evidence labels for EXP-149, EXP-155, and EXP-156. The guarded EXP-065 runner again required elevation, AC power, and 20 minutes of local idle time; no Windows mutation, reboot, or evidence export occurred.",
-  "lastPortfolioActionAtUtc": "2026-08-04T04:39:25Z",
+  "reason": "Merged PR #416 after adding missing portfolio CI coverage, correcting Pester discovery scope, passing focused local tests, and passing the required repository check. EXP-155 now has consistent provider and evidence identity and remains Experimental pending physical validation. Recorded the independent-lane/runbook conflict on PR #418 instead of merging it. The guarded EXP-065 runner again required elevation, AC power, and 20 minutes of local idle time; no Windows mutation, reboot, or evidence export occurred.",
+  "lastPortfolioActionAtUtc": "2026-08-04T05:42:41Z",
   "activeTracks": [
     {
       "experiment": "EXP-002",
