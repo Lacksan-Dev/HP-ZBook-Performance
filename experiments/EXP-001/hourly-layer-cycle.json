@@ -1,34 +1,35 @@
 {
   "schemaVersion": 2,
-  "cadence": "two-hour",
-  "mode": "autonomous-layer-engineering",
+  "cadence": "hourly",
+  "mode": "experiment-discovery-portfolio",
   "nextLayer": 8,
   "nextLayerName": "Boot, services, tasks, background permissions, and startup applications",
   "lastCompletedLayer": 7,
   "lastCompletedLayerName": "Security and isolation overhead without reducing protection",
   "lastCompletedAtUtc": "2026-07-31T16:02:00Z",
-  "sourceCommit": "d798022928492d091dd62819c95827f8572387f7",
-  "outcome": "implemented",
+  "sourceCommit": "1fdb9cedc7debdbdd58a55d79dcbe0072b7a39e9",
+  "outcome": "portfolio-implementation-merged",
   "evidencePath": "experiments/EXP-001/layer-evidence/layer-07-security-activity-profile-2026-07-31.md",
-  "reason": "Integrated SecurityProfile into UX-ROM as a protection-preserving Layer 7 assessment. The bounded profile records selected Defender, active firewall, and Device Guard state, then measures a fixed Microsoft security-process catalog with warmed CPU, I/O, and private-working-set counters plus observer calibration. The ten-second lab run retained five samples for MsMpEng and NisSrv; Defender real-time and tamper protection remained enabled, all three firewall profiles were enabled, VBS reported running, and observer median/p95 were 145.987/170.996 ms with an estimated 8.548% duty cycle. The full relevant suite passed 129 tests. No protection or Windows state changed and no performance-gain claim was made.",
+  "reason": "Merged PR #403 after conflict resolution, scope review, focused local tests, and passing GitHub checks. EXP-120 now has a reversible HP Hotkey UWP delayed-start provider and remains Experimental. The guarded EXP-065 laptop run returned needs-evidence because the session lacked elevation, AC power, and 20 minutes of idle time; no Windows mutation or evidence export occurred.",
+  "lastPortfolioActionAtUtc": "2026-08-04T02:38:51Z",
   "activeTracks": [
     {
       "experiment": "EXP-002",
       "name": "Startup registration minimization",
-      "cadence": "two-hour",
+      "cadence": "hourly",
       "protectedUserApps": ["Omnissa", "Windows App", "Remote Desktop", "Tailscale"],
       "priorityTargets": ["Microsoft Teams", "Microsoft Office", "Microsoft 365", "Logitech", "Logi Options+", "Logi Bolt", "Logi Tune", "G Hub"]
     },
     {
       "experiment": "EXP-003",
       "name": "Edge demand-launch responsiveness",
-      "cadence": "two-hour",
+      "cadence": "hourly",
       "startupFolderEntryAllowed": false
     },
     {
       "experiment": "EXP-004",
       "name": "Service suspension, demand-start, and replacement candidates",
-      "cadence": "two-hour"
+      "cadence": "hourly"
     }
   ],
   "portfolioRules": {
@@ -36,8 +37,8 @@
     "pendingEvidenceLabel": "needs-evidence",
     "mergeExperimentalPullRequestsByDefault": true,
     "stableRequiresHumanApproval": true,
-    "spawnFocusedExperimentFromActionableResearch": false,
-    "requirePowerShellEngineeringEachCycle": true,
+    "spawnFocusedExperimentFromActionableResearch": true,
+    "requirePowerShellEngineeringEachCycle": false,
     "publishRoutineResearch": false
   }
 }
