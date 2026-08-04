@@ -1,14 +1,19 @@
-$provider = Join-Path $PSScriptRoot '..\providers\LogiBoltDemandLaunch.ps1'
-Describe 'LogiBoltDemandLaunch contract' {
- BeforeAll { $text = Get-Content -LiteralPath $provider -Raw }
- It 'parses as PowerShell' { [scriptblock]::Create($text) | Should -Not -BeNullOrEmpty }
- It 'exposes the full reversible lifecycle' { foreach($action in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){ $text | Should -Match "'$action'" } }
- It 'uses ShouldProcess and supports WhatIf' { $text | Should -Match 'SupportsShouldProcess'; $text | Should -Match 'ShouldProcess'; $text | Should -Match 'WhatIfPreference' }
- It 'captures exact registry ACL executable and signer identity' { foreach($token in 'DoNotExpandEnvironmentNames','GetValueKind','Get-Acl','KeySddl','Get-AuthenticodeSignature','Get-FileHash','Thumbprint','ProductName','CompanyName'){ $text | Should -Match $token } }
- It 'requires explicit Logi Bolt startup intent and rejects servicing paths' { foreach($token in 'LogiBolt','logi-bolt','background','minimi','startup','tray','silent','IsNullOrWhiteSpace'){ $text | Should -Match $token }; $text | Should -Match 'updat\|uninstall\|repair\|firmware\|dfu\|driver\|pairing' }
- It 'captures bounded management ownership signals' { foreach($token in 'DomainJoined','MdmEnrollments','OmadmAccounts','PolicyManager','ConfigMgr','RunPolicy'){ $text | Should -Match $token }; $text | Should -Match 'Exactly one eligible Logi Bolt' }
- It 'holds protected services Logitech drivers and Logitech devices against drift' { foreach($token in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','TermService','Tailscale','LogitechDrivers','LogitechDevices','Get-PnpDevice','Assert-Protected'){ $text | Should -Match $token } }
- It 'records Experimental evidence and requires a later boot for persistence' { $text | Should -Match 'needs-evidence'; $text | Should -Match 'capturedBootTime'; $text | Should -Match 'A later boot is required' }
- It 'limits production mutation to the selected Run value' { $text | Should -Match 'Remove-ItemProperty'; $text | Should -Not -Match 'Remove-AppxPackage|Uninstall-Package|Remove-Package|Set-Service|Stop-Service|Remove-Service|Disable-PnpDevice|Remove-PnpDevice|pnputil|Disable-ScheduledTask|Unregister-ScheduledTask|Set-MpPreference|Disable-WindowsOptionalFeature' }
- It 'retains failures and performs collision-safe exact rollback' { $text | Should -Match "'failure' 'fail'"; $text | Should -Match "'idempotent'"; $text | Should -Match 'Rollback overwrite refused'; $text | Should -Match 'Enum]::Parse'; $text | Should -Match 'Exact rollback verification failed' }
+Describe 'EXP-051 LogiBoltDemandLaunch contract' {
+ BeforeAll {
+  $script:providerPath = Join-Path $PSScriptRoot '..\providers\LogiBoltDemandLaunch.ps1'
+  $script:text = Get-Content -LiteralPath $script:providerPath -Raw
+ }
+ It 'parses as PowerShell' { [scriptblock]::Create($script:text) | Should -Not -BeNullOrEmpty }
+ It 'retains Experimental identity and evidence state' { $script:text | Should -Match 'EXP-051'; $script:text | Should -Match 'needs-evidence'; $script:text | Should -Not -Match 'status:stable|stage:stable|Stable=' }
+ It 'exposes the full reversible lifecycle' { foreach($action in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){ $script:text | Should -Match "'$action'" } }
+ It 'requires HP Windows 11 elevation and self-managed ownership' { foreach($token in 'Windows 11','Hewlett-Packard','Test-Elevated','Elevated','Managed','ManagementSignals','Enterprise-management ownership detected','Management ownership appeared'){ $script:text | Should -Match ([regex]::Escape($token)) } }
+ It 'uses ShouldProcess and supports WhatIf' { $script:text | Should -Match 'SupportsShouldProcess'; $script:text | Should -Match 'ShouldProcess'; $script:text | Should -Match 'WhatIfPreference' }
+ It 'captures exact registry ACL executable and signer identity' { foreach($token in 'DoNotExpandEnvironmentNames','GetValueKind','Get-Acl','KeyOwner','KeySddl','Get-AuthenticodeSignature','Get-FileHash','Thumbprint','FileVersion','ProductName','CompanyName'){ $script:text | Should -Match $token } }
+ It 'requires explicit Logi Bolt startup intent and rejects servicing paths' { foreach($token in 'LogiBolt','logi-bolt','background','minimi','startup','tray','silent','IsNullOrWhiteSpace'){ $script:text | Should -Match $token }; $script:text | Should -Match 'updat\|uninstall\|repair\|firmware\|dfu\|driver\|pairing' }
+ It 'captures bounded management ownership signals' { foreach($token in 'DomainJoined','MdmEnrollments','OmadmAccounts','PolicyManager','ConfigMgr','RunPolicy'){ $script:text | Should -Match $token }; $script:text | Should -Match 'Exactly one eligible Logi Bolt' }
+ It 'holds protected services Logitech drivers and Logitech devices against drift' { foreach($token in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','TermService','Tailscale','LogitechDrivers','LogitechDevices','Get-PnpDevice','Assert-Protected'){ $script:text | Should -Match $token } }
+ It 'refuses Run-key ACL drift and unsafe key recreation' { foreach($token in 'Assert-RunKey','Run-key drift detected','Run-key ACL drift detected','PreserveRunKeyAcl'){ $script:text | Should -Match ([regex]::Escape($token)) }; $script:text | Should -Not -Match "New-Item -Path \$s\.entry\.Path" }
+ It 'records Experimental evidence and requires a later boot for persistence' { $script:text | Should -Match 'needs-evidence'; $script:text | Should -Match 'capturedBootTime'; $script:text | Should -Match 'A later boot is required'; $script:text | Should -Match 'Reboot persistence failed' }
+ It 'limits production mutation to the selected Run value' { $script:text | Should -Match 'Remove-ItemProperty'; $script:text | Should -Match '\.SetValue\('; $script:text | Should -Not -Match 'Remove-AppxPackage|Uninstall-Package|Remove-Package|Set-Service|Stop-Service|Remove-Service|Disable-PnpDevice|Remove-PnpDevice|pnputil|Disable-ScheduledTask|Unregister-ScheduledTask|Set-MpPreference|Disable-WindowsOptionalFeature' }
+ It 'retains failures idempotence and collision-safe exact rollback' { $script:text | Should -Match "'failure' 'fail'"; $script:text | Should -Match "'idempotent'"; $script:text | Should -Match 'Rollback overwrite refused'; $script:text | Should -Match 'Enum]::Parse'; $script:text | Should -Match 'Exact rollback verification failed'; $script:text | Should -Match 'restoredExactOriginal' }
 }
