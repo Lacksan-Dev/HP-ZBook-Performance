@@ -37,7 +37,7 @@ function Get-ProtectedSnapshot {
     $processes=@(Get-Process -ErrorAction SilentlyContinue|Where-Object{$_.ProcessName-match'(?i)omnissa|horizon|msrdc|mstsc|tailscale|windowsapp'}|Select-Object ProcessName,Id,Responding)
     [pscustomobject]@{services=$services;processes=$processes}
 }
-function Get-RegistrationState($ProviderState){$path=[string]$ProviderState.entry.Path;$name=[string]$ProviderState.entry.Name;if(-not(Test-Path -LiteralPath $path)){return [pscustomobject]@{present=$false;kind=$null;data=$null}};$k=Get-Item -LiteralPath $path;if(-not($k.GetValueNames()-contains$name)){return [pscustomobject]@{present=$false;kind=$null;data=$null}};[pscustomobject]@{present=$true;kind=$k.GetValueKind($name).ToString();data=[string]$k.GetValue($name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)}
+function Get-RegistrationState($ProviderState){$path=[string]$ProviderState.entry.Path;$name=[string]$ProviderState.entry.Name;if(-not(Test-Path -LiteralPath $path)){return [pscustomobject]@{present=$false;kind=$null;data=$null}};$k=Get-Item -LiteralPath $path;if(-not($k.GetValueNames()-contains$name)){return [pscustomobject]@{present=$false;kind=$null;data=$null}};[pscustomobject]@{present=$true;kind=$k.GetValueKind($name).ToString();data=[string]$k.GetValue($name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)}}
 function Assert-BaselineRegistration($ProviderState){$r=Get-RegistrationState $ProviderState;if(-not$r.present-or$r.kind-ne[string]$ProviderState.entry.Kind-or$r.data-ne[string]$ProviderState.entry.Data){throw 'Baseline Microsoft 365 Run registration drift detected.'}}
 function Assert-TreatmentRegistration($ProviderState){$r=Get-RegistrationState $ProviderState;if($r.present){throw 'Treatment Microsoft 365 Run registration reappeared.'}}
 function Get-SystemSample {$cpu=(Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'").PercentProcessorTime;$disk=(Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'").DiskBytesPersec;[pscustomobject]@{cpu=[double]$cpu;disk=[double]$disk}}
@@ -56,6 +56,7 @@ if(-not(Test-Path -LiteralPath $ProviderPath)){throw 'EXP-124 provider missing.'
 switch($Action){
     'Start' {
         Ensure-Directory $EvidenceRoot;if(Test-Path -LiteralPath $ActivePointer){throw 'An active EXP-124 run already exists.'};$check=Invoke-Provider 'Check' $EvidenceRoot
+        Invoke-Provider 'DryRun' $EvidenceRoot|Out-Null
         if($WhatIfPreference){$null=$PSCmdlet.ShouldProcess($TaskName,"Prepare $RunsPerArm baseline and treatment boots plus rollback verification");return $check}
         $stamp=(Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss');$dir=Join-Path $EvidenceRoot $stamp;Ensure-Directory $dir;$p=Get-Paths $dir;Invoke-Provider 'Capture' $dir|Out-Null;$state=[ordered]@{schemaVersion=1;phase='Baseline';completedRuns=0;runsPerArm=$RunsPerArm;lastBootUtc=$null;sampleSeconds=$SampleSeconds;sampleIntervalSeconds=$SampleIntervalSeconds};Write-Json $p.State $state;Write-Json $ActivePointer @{runDirectory=$dir};Register-ResumeTask $dir;Write-LabLog $dir 'started' @{runsPerArm=$RunsPerArm;sampleSeconds=$SampleSeconds};Reboot-IfAllowed $dir
     }

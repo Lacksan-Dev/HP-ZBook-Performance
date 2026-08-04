@@ -4,16 +4,16 @@
 Develop measurable Windows responsiveness improvements for office, browser, workstation, battery, driver, and local-AI workloads.
 
 ## Operating cadence
-- Run an experiment cycle every three hours.
+- Run an experiment cycle every two hours.
 - Keep multiple experiments active in parallel across research, design, engineering, validation, documentation, and customer education.
 - A slow or inconclusive experiment never pauses unrelated experiments.
 - Research at any layer must create a new focused experiment issue when it finds a reversible candidate worth measuring.
-- Each three-hour run must do useful work: gather evidence, create or refine an experiment, implement a reversible candidate, execute available tests, or merge an eligible pull request.
+- Each two-hour run must do useful work: gather evidence, create or refine an experiment, implement a reversible candidate, execute available tests, or merge an eligible pull request.
 - Repeated inventory-only reports are insufficient unless the inventory directly selects or rejects a specific candidate.
 
 ## Repository Codex portfolio agent
 - The project-scoped custom agent is `.codex/agents/experiment-discovery-portfolio.toml`.
-- A three-hour portfolio cycle must use that agent and follow `.codex/portfolio-agent.md` as the complete runbook.
+- A two-hour portfolio cycle must use that agent and follow `.codex/portfolio-agent.md` as the complete runbook.
 - Laptop mutation is allowed only through `.codex/scripts/Invoke-PortfolioValidation.ps1` and a `ready` entry in `portfolio/validation-queue.json`. Do not bypass its HP, Windows, elevation, AC-power, idle-time, pending-reboot, protected-scope, single-active-run, harness-contract, and rollback gates.
 - Raw physical evidence and exact rollback artifacts remain machine-local. Only the bounded sanitized export produced by the runner may be committed to `evidence/physical/`.
 - A completed physical run remains `Experimental`. The portfolio agent never assigns `Stable` or converts a performance hypothesis into a claim.
@@ -65,7 +65,7 @@ Every research layer must search for specific candidate experiments, including:
 A candidate becomes its own EXP issue with one variable, a benchmark, a verification method, and rollback.
 
 ## Startup Responsiveness workstream
-Maintain a dedicated three-hour workstream for sign-in to usable desktop.
+Maintain a dedicated two-hour workstream for sign-in to usable desktop.
 
 ### Protected startup allowlist
 Preserve startup behavior for:
@@ -99,7 +99,7 @@ Measure at minimum:
 - Exact restoration
 
 ## Edge Demand-Launch workstream
-Maintain a dedicated three-hour workstream for loading Microsoft Edge as fast as possible when requested.
+Maintain a dedicated two-hour workstream for loading Microsoft Edge as fast as possible when requested.
 
 Requirements:
 - Keep Edge out of the Startup folder.

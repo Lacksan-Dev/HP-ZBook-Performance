@@ -1,6 +1,6 @@
 [CmdletBinding(SupportsShouldProcess=$true)]
 param(
- [ValidateSet('Check','Capture','Apply','Verify','VerifyReboot','Rollback')][string]$Action='Check',
+ [ValidateSet('Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback')][string]$Action='Check',
  [string]$StatePath="$PSScriptRoot\state.json",
  [string]$LogPath="$PSScriptRoot\events.jsonl"
 )
@@ -34,6 +34,7 @@ function SetMode([string]$mode,[int]$delay){Set-Service $ServiceName -StartupTyp
 $c=Candidate;$s=$c.Service
 switch($Action){
  'Check'{Event 'supported' @{version=$c.Version;hash=$c.Hash;startMode=$s.StartMode;delayed=$c.Delayed};[pscustomobject]@{Name=$s.Name;StartMode=$s.StartMode;DelayedAutoStart=$c.Delayed;State=$s.State;Version=$c.Version;SHA256=$c.Hash;Model=$c.Model}}
+ 'DryRun'{Event 'dry-run' @{before=$s.StartMode;beforeDelayed=$c.Delayed;after='Auto';afterDelayed=1};$null=$PSCmdlet.ShouldProcess($ServiceName,'Set Automatic Delayed Start');[pscustomobject]@{Supported=$true;WouldChange=($s.StartMode-ne'Auto'-or$c.Delayed-ne 1);Before=$s.StartMode;BeforeDelayed=$c.Delayed;After='Auto';AfterDelayed=1}}
  'Capture'{Save $c|Out-Null}
  'Apply'{if($WhatIfPreference){Event 'dry-run' @{before=$s.StartMode;beforeDelayed=$c.Delayed;after='Auto';afterDelayed=1};$null=$PSCmdlet.ShouldProcess($ServiceName,'Set Automatic Delayed Start');break};if(-not(Test-Path $StatePath)){Save $c|Out-Null};if($s.StartMode -eq 'Auto' -and $c.Delayed -eq 1){Event 'already-applied' @{};break};if($s.StartMode -ne 'Auto'){throw 'Treatment requires Automatic baseline'};if($PSCmdlet.ShouldProcess($ServiceName,'Set Automatic Delayed Start')){SetMode Automatic 1}else{break};$a=Candidate;if($a.Service.StartMode -ne 'Auto' -or $a.Delayed -ne 1){throw 'Apply verification failed'};Event 'applied' @{delayed=1}}
  'Verify'{if($s.StartMode -ne 'Auto' -or $c.Delayed -ne 1){throw 'Verification failed'};Event 'verified' @{state=$s.State}}

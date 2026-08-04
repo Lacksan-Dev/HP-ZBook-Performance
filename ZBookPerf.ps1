@@ -15,7 +15,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'FirmwareProfile', 'DriverProfile', 'KernelProfile', 'PowerProfile', 'SecurityProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status', 'EnrollmentCleanup', 'EnrollmentCleanupCheck', 'EnrollmentCleanupRollback')]
+    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'FirmwareProfile', 'DriverProfile', 'KernelProfile', 'PowerProfile', 'SecurityProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status', 'EnrollmentCleanup', 'EnrollmentCleanupCheck', 'EnrollmentCleanupRollback', 'InstallLaptopCycle', 'RemoveLaptopCycle', 'LaptopCycleStatus')]
     [string]$Action = 'Menu',
 
     [switch]$FullDiagnostics,
@@ -139,7 +139,10 @@ param(
     [switch]$LabTier2Confirmed,
     [switch]$SelfManagedEnrollmentConfirmed,
     [switch]$NoReboot,
-    [string]$EnrollmentStatePath
+    [string]$EnrollmentStatePath,
+    [string]$RepositoryRoot,
+    [ValidateRange(1,24)][int]$LaptopCycleIntervalHours = 2,
+    [switch]$AllowAutomaticReboot
 )
 
 Set-StrictMode -Version 2.0
@@ -337,6 +340,17 @@ if ($Action -eq 'EnrollmentCleanupRollback') {
     return
 }
 
+if ($Action -in @('InstallLaptopCycle','RemoveLaptopCycle','LaptopCycleStatus')) {
+    if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+        if ([string]::IsNullOrWhiteSpace([string]$PSScriptRoot)) { throw '-RepositoryRoot is required for a downloaded one-line launch.' }
+        $RepositoryRoot = $PSScriptRoot
+    }
+    $helper = Resolve-UxRomComponent -RelativePath 'controller\automation\UxRomLaptopCycle.ps1' -CacheName 'UxRomLaptopCycle.ps1'
+    $mode = @{ InstallLaptopCycle='Install'; RemoveLaptopCycle='Remove'; LaptopCycleStatus='Status' }[$Action]
+    & $helper -Action $mode -RepositoryRoot $RepositoryRoot -IntervalHours $LaptopCycleIntervalHours -AllowAutomaticReboot:$AllowAutomaticReboot -WhatIf:$WhatIfPreference -Confirm:$false
+    return
+}
+
 if (Test-UxRomAnimationEnabled) {
     Write-Host ''
     Write-Host 'LACKSAN UX-ROM BOOTSTRAP' -ForegroundColor Red
@@ -350,7 +364,7 @@ Write-UxRomAnimatedStage -Label 'Verifying controller' -Frames 7 -DelayMilliseco
 
 $forward = @{}
 foreach ($key in $PSBoundParameters.Keys) {
-    if ($key -notin @('EnrollmentCleanup','SelfManagedEnrollmentConfirmed','NoReboot','EnrollmentStatePath')) {
+    if ($key -notin @('EnrollmentCleanup','SelfManagedEnrollmentConfirmed','NoReboot','EnrollmentStatePath','RepositoryRoot','LaptopCycleIntervalHours','AllowAutomaticReboot')) {
         $forward[$key] = $PSBoundParameters[$key]
     }
 }

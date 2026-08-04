@@ -1,6 +1,6 @@
 # Experiment Discovery and Portfolio Agent runbook
 
-This file defines one three-hour cycle for the project-scoped Codex agent named
+This file defines one two-hour cycle for the project-scoped Codex agent named
 `experiment_discovery_portfolio`. The cycle is an R&D control loop, not a status
 report generator.
 
@@ -35,7 +35,13 @@ Maintain these lanes concurrently even when another lane is waiting for evidence
   access, enterprise ownership, and device-critical drivers.
 
 A lane is active when it owns at least one focused open EXP, an implementation or
-review in progress, or a physical validation in progress. If it does not, research
+review in progress, or a physical validation in progress.
+
+For discovery, search current primary vendor and Microsoft documentation first, then
+use reputable engineering forums and relevant Reddit discussions as leads. Treat
+forum and Reddit claims as hypotheses only. Trace each candidate to supported
+documentation or local observation, check for duplicate EXP issues, and never place
+an unreviewed internet tweak directly into the validation queue. If it does not, research
 one reversible candidate and create a non-duplicate EXP issue with:
 
 - one candidate and one changed variable;
