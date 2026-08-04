@@ -1,0 +1,13 @@
+$provider=Join-Path $PSScriptRoot '..\providers\EdgeDisableCopilotAddressBarSuggestions.ps1'
+Describe 'EdgeDisableCopilotAddressBarSuggestions provider contract' {
+ BeforeAll{$text=Get-Content -LiteralPath $provider -Raw}
+ It 'keeps Experimental identity and required evidence state'{Test-Path $provider|Should -BeTrue;$text|Should -Match 'EXP-150';$text|Should -Match 'needs-evidence';$text|Should -Not -Match 'status:stable|Stable=';$text|Should -Not -Match "'blocked'|\"blocked\""}
+ It 'implements the complete reversible lifecycle'{foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
+ It 'targets one mandatory Copilot address-bar DWORD zero'{foreach($t in 'CopilotAddressBarSuggestionsEnabled','SOFTWARE\\Policies\\Microsoft\\Edge','DWord','Value=0','MutationCount=1'){$text|Should -Match $t};$text|Should -Not -Match 'Set-Service|Stop-Service|Disable-ScheduledTask|Remove-AppxPackage|Remove-Item .*User Data|Remove-Item .*Profile'}
+ It 'requires HP Windows 11 elevation Microsoft-signed Edge 149 plus and an eligible non-MSA controlled profile'{foreach($t in 'Windows 11','Hewlett-Packard','Test-Elevated','Microsoft Corporation','Major-ge149','controlledProfile','microsoftAccountSignedIn','copilotAddressBarSuggestionsEligible','ProfileFixturePath'){$text|Should -Match ([regex]::Escape($t))}}
+ It 'captures held address-bar and Edge performance state'{foreach($t in 'SearchSuggestEnabled','AddressBarWorkSearchResultsEnabled','StartupBoostEnabled','BackgroundModeEnabled','SleepingTabsEnabled','HardwareAccelerationModeEnabled','NetworkPredictionOptions','NewTabPageContentEnabled','NewTabPagePrerenderEnabled'){$text|Should -Match $t}}
+ It 'captures Edge profile management boot and protected scope'{foreach($t in 'Sha256','Thumbprint','MarkerSha256','capturedBootTime','userSid','Get-Protected','Get-Management','Get-StartupFolders'){$text|Should -Match $t}}
+ It 'has dry run WhatIf structured logging idempotence and terminating failures'{foreach($t in 'DryRun','WhatIfPreference','Write-Log','ConvertTo-Json -Compress','idempotent','catch','failure'){$text|Should -Match $t}}
+ It 'requires reboot persistence and exact collision-safe rollback'{foreach($t in 'A later boot is required','Reboot persistence failed','rollback overwrite refused','Exact rollback verification failed','restoredExactOriginal'){$text|Should -Match $t}}
+ It 'preserves security updates Edge Update Remote Desktop and Tailscale service configuration'{foreach($t in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','edgeupdate','edgeupdatem','TermService','Tailscale','Protected service configuration drift detected'){$text|Should -Match $t}}
+}
