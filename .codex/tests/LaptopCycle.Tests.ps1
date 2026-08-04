@@ -30,10 +30,35 @@ Describe 'Two-hour laptop cycle' {
         $cycle | Should -Match 'AllowAutomaticReboot'
     }
 
-    It 'installs one elevated recurring and logon task' {
-        foreach ($token in @('UX-ROM Laptop Cycle','RepetitionInterval','IntervalHours = 2','New-ScheduledTaskTrigger -AtLogOn','RunLevel Highest','MultipleInstances IgnoreNew')) {
+    It 'binds automatic execution to one exact HP ZBook laptop' {
+        foreach ($token in @('ExpectedMachineUuid','Assert-BoundZBookLaptop','Win32_ComputerSystemProduct','Win32_SystemEnclosure','Win32_Battery','\bZBook\b','portableChassis','different physical HP ZBook')) {
+            $cycle | Should -Match ([regex]::Escape($token))
+        }
+        $guardPosition = $cycle.IndexOf('$targetIdentity = Assert-BoundZBookLaptop')
+        $runnerPosition = $cycle.IndexOf('& $runner @arguments')
+        $guardPosition | Should -BeGreaterThan -1
+        $runnerPosition | Should -BeGreaterThan $guardPosition
+    }
+
+    It 'fails closed for legacy scheduled tasks without a machine binding' {
+        $cycle | Should -Match 'predates machine binding'
+        $cycle | Should -Match 'Reinstall it locally on the intended HP ZBook laptop'
+    }
+
+    It 'installs one elevated recurring and logon task only on a qualified ZBook laptop' {
+        foreach ($token in @('UX-ROM Laptop Cycle','RepetitionInterval','IntervalHours = 2','New-ScheduledTaskTrigger -AtLogOn','RunLevel Highest','MultipleInstances IgnoreNew','Assert-ZBookLaptopTarget','Win32_ComputerSystemProduct','Win32_SystemEnclosure','Win32_Battery','ExpectedMachineUuid')) {
             $installer | Should -Match ([regex]::Escape($token))
         }
+        $assertPosition = $installer.IndexOf('$target = Assert-ZBookLaptopTarget')
+        $registerPosition = $installer.IndexOf('Register-ScheduledTask')
+        $assertPosition | Should -BeGreaterThan -1
+        $registerPosition | Should -BeGreaterThan $assertPosition
+    }
+
+    It 'persists the exact hardware UUID into the scheduled task command' {
+        $installer | Should -Match "'-ExpectedMachineUuid '"
+        $installer | Should -Match '\$target\.uuid'
+        $installer | Should -Match 'bound to \$\(\$target\.model\)'
     }
 
     It 'exposes install remove and status from the main script' {
