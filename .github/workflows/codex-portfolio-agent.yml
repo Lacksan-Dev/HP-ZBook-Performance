@@ -12,8 +12,8 @@ on:
       - 'experiments/EXP-065/Invoke-Exp065LabHarness.Tests.ps1'
       - 'experiments/EXP-067/**'
       - 'experiments/EXP-154/**'
-      - 'controller/providers/LogitechDownloadAssistantScheduledDemandLaunch.ps1'
-      - 'controller/tests/EXP-080.LogitechDownloadAssistantScheduledDemandLaunch*.Tests.ps1'
+      - 'controller/providers/LogitechDownloadAssistantDemandLaunch.ps1'
+      - 'controller/tests/LogitechDownloadAssistantDemandLaunch*.Tests.ps1'
       - 'controller/providers/SetPointEventManagerDemandLaunch.ps1'
       - 'controller/tests/SetPointEventManagerDemandLaunch.Tests.ps1'
       - 'controller/providers/HpHotkeyUwpDelayedStart.ps1'
@@ -66,7 +66,8 @@ jobs:
             'experiments/EXP-065/Invoke-Exp065LabHarness.Tests.ps1',
             'experiments/EXP-067/Invoke-Exp067HpDiagnostics.Tests.ps1',
             'experiments/EXP-067/Invoke-Exp067HpDiagnostics.Integration.Tests.ps1',
-            'controller/tests/EXP-080.LogitechDownloadAssistantScheduledDemandLaunch.Tests.ps1',
+            'controller/tests/LogitechDownloadAssistantDemandLaunch.Tests.ps1',
+            'controller/tests/LogitechDownloadAssistantDemandLaunch.Integration.Tests.ps1',
             'controller/tests/SetPointEventManagerDemandLaunch.Tests.ps1',
             'controller/tests/HpHotkeyUwpDelayedStart.Tests.ps1',
             'controller/tests/HpHotkeyUwpDelayedStart.Integration.Tests.ps1',
