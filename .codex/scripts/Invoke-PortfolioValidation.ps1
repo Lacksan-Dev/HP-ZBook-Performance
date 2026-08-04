@@ -11,6 +11,8 @@ param(
 
     [string]$EvidenceOutputRoot,
 
+    [string]$RecoveryRequestPath,
+
     [switch]$AllowAutomaticReboot
 )
 
@@ -27,6 +29,9 @@ if ([string]::IsNullOrWhiteSpace($DataRoot)) {
 }
 if ([string]::IsNullOrWhiteSpace($EvidenceOutputRoot)) {
     $EvidenceOutputRoot = Join-Path $RepoRoot 'evidence\physical'
+}
+if ([string]::IsNullOrWhiteSpace($RecoveryRequestPath)) {
+    $RecoveryRequestPath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Lacksan\PortfolioValidation\recovery-request.json'
 }
 
 $ActiveCyclePath = Join-Path $DataRoot 'active-cycle.json'
@@ -557,6 +562,29 @@ if ($Action -eq 'Recover') {
         return
     }
     Recover-ActiveValidation -Active (Read-JsonFile -Path $ActiveCyclePath)
+    return
+}
+
+if ($Action -eq 'Auto' -and (Test-Path -LiteralPath $RecoveryRequestPath)) {
+    try {
+        $request = Read-JsonFile -Path $RecoveryRequestPath
+        if ([int]$request.schemaVersion -ne 1 -or [string]$request.action -ne 'recover') { throw 'Recovery request schema or action is invalid.' }
+        if (-not (Test-Path -LiteralPath $ActiveCyclePath)) { throw 'Recovery request has no matching active portfolio cycle.' }
+        $active = Read-JsonFile -Path $ActiveCyclePath
+        if ([string]$request.experiment -ne [string]$active.experiment) { throw 'Recovery request experiment does not match the active cycle.' }
+        if ([string]$request.activeSourceCommit -ne [string]$active.sourceCommit) { throw 'Recovery request source commit does not match the active cycle.' }
+        if ([string]$request.runnerCommit -ne [string](Get-SourceCommit)) { throw 'Recovery request runner commit does not match the current checkout.' }
+        $recoveryResult = Recover-ActiveValidation -Active $active
+        if ([string]$recoveryResult.evidenceStatus -eq 'recovered-needs-rerun') {
+            Remove-Item -LiteralPath $RecoveryRequestPath -Force
+        }
+        $recoveryResult
+    } catch {
+        [pscustomobject][ordered]@{
+            evidenceStatus = 'needs-evidence'
+            exactEvidenceRequest = @("Retain the active cycle and recovery request for inspection: $($_.Exception.Message)")
+        }
+    }
     return
 }
 

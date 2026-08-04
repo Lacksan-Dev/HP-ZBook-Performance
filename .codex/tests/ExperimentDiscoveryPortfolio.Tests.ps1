@@ -129,6 +129,16 @@ Describe 'Guarded HP laptop validation runner' {
         $runner | Should -Match 'retain the active cycle for inspection'
     }
 
+    It 'accepts only a commit-bound local recovery request through the guarded Auto path' {
+        foreach ($token in @('RecoveryRequestPath','LocalApplicationData','recovery-request.json','request.activeSourceCommit','active.sourceCommit','request.runnerCommit','Get-SourceCommit')) {
+            $runner | Should -Match ([regex]::Escape($token))
+        }
+        $runner | Should -Match ([regex]::Escape("`$Action -eq 'Auto'"))
+        $runner | Should -Match "request.action -ne 'recover'"
+        $runner | Should -Match "recoveryResult.evidenceStatus -eq 'recovered-needs-rerun'"
+        $runner | Should -Match 'Retain the active cycle and recovery request for inspection'
+    }
+
     It 'exports only bounded aggregate evidence from identifier-bearing raw files' {
         $dataRoot = Join-Path $TestDrive 'machine-data'
         $evidenceRoot = Join-Path $dataRoot 'runs\EXP-065'
