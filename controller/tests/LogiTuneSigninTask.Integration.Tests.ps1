@@ -1,5 +1,5 @@
 $provider=Join-Path $PSScriptRoot '..\providers\LogiTuneSigninTask.ps1'
-Describe 'EXP-104 LogiTuneSigninTask zero-mutation integration' -Tag 'WindowsIntegration' {
+Describe 'EXP-114 LogiTuneSigninTask zero-mutation integration' -Tag 'WindowsIntegration' {
  BeforeAll {
   if($env:LACKSAN_RUN_WINDOWS_INTEGRATION-ne'1' -or $env:OS-ne'Windows_NT'){Set-ItResult -Skipped -Because 'Opt-in HP Windows 11 integration only.';return}
   function Snapshot-State {
@@ -13,7 +13,7 @@ Describe 'EXP-104 LogiTuneSigninTask zero-mutation integration' -Tag 'WindowsInt
  }
  It 'keeps task service driver device and protected-process state unchanged during Check Capture DryRun and Apply WhatIf' {
   if($env:LACKSAN_RUN_WINDOWS_INTEGRATION-ne'1' -or $env:OS-ne'Windows_NT'){Set-ItResult -Skipped -Because 'Opt-in HP Windows 11 integration only.';return}
-  $before=Snapshot-State;$state=Join-Path $TestDrive 'exp104-state.json';$log=Join-Path $TestDrive 'exp104.jsonl'
+  $before=Snapshot-State;$state=Join-Path $TestDrive 'exp114-state.json';$log=Join-Path $TestDrive 'exp114.jsonl'
   & $provider -Action Check -LogPath $log|Out-Null;(Snapshot-State)|Should -BeExactly $before
   try{& $provider -Action Capture -StatePath $state -LogPath $log|Out-Null}catch{};(Snapshot-State)|Should -BeExactly $before
   if(Test-Path -LiteralPath $state){Remove-Item -LiteralPath $state -Force}
