@@ -56,6 +56,7 @@ if(-not(Test-Path -LiteralPath $ProviderPath)){throw 'EXP-124 provider missing.'
 switch($Action){
     'Start' {
         Ensure-Directory $EvidenceRoot;if(Test-Path -LiteralPath $ActivePointer){throw 'An active EXP-124 run already exists.'};$check=Invoke-Provider 'Check' $EvidenceRoot
+        Invoke-Provider 'DryRun' $EvidenceRoot|Out-Null
         if($WhatIfPreference){$null=$PSCmdlet.ShouldProcess($TaskName,"Prepare $RunsPerArm baseline and treatment boots plus rollback verification");return $check}
         $stamp=(Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss');$dir=Join-Path $EvidenceRoot $stamp;Ensure-Directory $dir;$p=Get-Paths $dir;Invoke-Provider 'Capture' $dir|Out-Null;$state=[ordered]@{schemaVersion=1;phase='Baseline';completedRuns=0;runsPerArm=$RunsPerArm;lastBootUtc=$null;sampleSeconds=$SampleSeconds;sampleIntervalSeconds=$SampleIntervalSeconds};Write-Json $p.State $state;Write-Json $ActivePointer @{runDirectory=$dir};Register-ResumeTask $dir;Write-LabLog $dir 'started' @{runsPerArm=$RunsPerArm;sampleSeconds=$SampleSeconds};Reboot-IfAllowed $dir
     }
