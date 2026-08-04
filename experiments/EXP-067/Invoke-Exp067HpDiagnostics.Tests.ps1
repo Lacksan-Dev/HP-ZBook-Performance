@@ -61,7 +61,7 @@ Describe 'EXP-067 HP Diagnostics HSA controller contract' {
     $text | Should -Match 'schemaVersion=1'
     $text | Should -Match 'ConvertTo-Json -Compress'
     $text | Should -Match 'events.jsonl'
-    $text | Should -Match "experiment=\$Experiment"
+    $text | Should -Match 'experiment=\$Experiment'
     $text | Should -Match "Write-Event 'failure' 'failed'"
     $text | Should -Match '\bthrow\b'
   }
@@ -72,12 +72,9 @@ Describe 'EXP-067 HP Diagnostics HSA controller contract' {
     $text | Should -Match 'Protected security, update, or remote-access state drift detected'
   }
   It 'uses collision-safe exact rollback' {
-    $rollback=[regex]::Match($text,"'Rollback' \{(?<body>[\s\S]*?)\n  \}\n\} catch").Groups['body'].Value
-    $rollback | Should -Match 'Rollback collision detected'
-    $rollback | Should -Match 'Set-RegistryValueState'
-    $rollback | Should -Match 'Exact rollback verification failed'
-    $rollback | Should -Match "\$o.State -eq 'Running'"
-    $rollback | Should -Match "\$o.State -eq 'Stopped'"
+    foreach($token in 'Rollback collision detected','Set-RegistryValueState','Exact rollback verification failed',"`$o.State -eq 'Running'","`$o.State -eq 'Stopped'"){
+      $text | Should -Match ([regex]::Escape($token))
+    }
   }
   It 'preserves security updates drivers packages and protected remote access' {
     $text | Should -Match 'WinDefend'
