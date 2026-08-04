@@ -10,7 +10,7 @@ Describe 'EXP-087 lab harness contract' {
  It 'captures protected remote-access and security observations' {$text|Should -Match 'WinDefend';$text|Should -Match 'mpssvc';$text|Should -Match 'TermService';$text|Should -Match 'Tailscale';$text|Should -Match 'windowsapp';$text|Should -Match 'omnissa'}
  It 'preserves unresolved HP workflow evidence explicitly' {$text|Should -Match 'hpProductDetection';$text|Should -Match 'hpDiagnostics';$text|Should -Match 'localhostEndpoint';$text|Should -Match 'demandOrManualStart';$text|Should -Match 'needs-evidence'}
  It 'requires explicit automatic reboot opt-in' {$text|Should -Match 'AllowAutomaticReboot';$text|Should -Match 'reboot-required'}
- It 'uses a Windows PowerShell compatible unattended continuation' {$text|Should -Match '\[switch\]\$Unattended';$text|Should -Match "if\(\$Unattended\)\{\$ConfirmPreference='None'\}";$text|Should -Match '-NonInteractive';$text|Should -Match '-Action Continue -Unattended'}
- It 'preserves explicit automatic reboot authorization in the scheduled continuation' {$text|Should -Match "if\(\$AllowAutomaticReboot\)\{\$arg\+=' -AllowAutomaticReboot'\}"}
- It 'suppresses nested provider confirmation prompts without widening provider scope' {$text|Should -Match 'AcknowledgeHpWorkflowValidation -Confirm:\$false';$text|Should -Match 'Set-Service' -Not}
+ It 'uses a Windows PowerShell compatible unattended continuation' {$text|Should -Match '\[switch\]\$Unattended';$text|Should -Match 'if\(\$Unattended\)\{\$ConfirmPreference=''None''\}';$text|Should -Match '-NonInteractive';$text|Should -Match '-Action Continue -Unattended'}
+ It 'preserves explicit automatic reboot authorization in the scheduled continuation' {$text|Should -Match 'if\(\$AllowAutomaticReboot\)\{\$arg\+=''-AllowAutomaticReboot''\}' }
+ It 'suppresses nested provider confirmation prompts without widening provider scope' {$text|Should -Match 'AcknowledgeHpWorkflowValidation -Confirm:\$false';$text|Should -Not -Match 'Set-Service'}
 }
