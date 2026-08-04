@@ -2,6 +2,7 @@ Describe 'EXP-065 lab harness contract' {
   BeforeAll {$scriptPath=Join-Path $PSScriptRoot 'Invoke-Exp065LabHarness.ps1';$text=Get-Content -LiteralPath $scriptPath -Raw}
   It 'supports dry run and explicit automatic reboot gating' {$text | Should -Match 'SupportsShouldProcess=\$true';$text | Should -Match 'AllowAutomaticReboot';$text | Should -Match '\$WhatIfPreference'}
   It 'persists reboot-aware state and rejects duplicate boot collection' {$text | Should -Match 'lastBootUtc';$text | Should -Match 'Duplicate collection from same boot refused';$text | Should -Match 'Get-BootUtc'}
+  It 'compares each baseline boot with the captured provider state shape' {$text | Should -Match 'Assert-BaselineConfiguration';$text | Should -Match '\$OriginalState\.support\.Service';$text | Should -Match '\$CurrentSupport\.Service';$text | Should -Match '\$CurrentSupport\.Protected';$text | Should -Not -Match '\$cur\.StartMode';$text | Should -Not -Match '\$orig\.startMode'}
   It 'alternates baseline then treatment and restores exact state on completion' {$text | Should -Match "phase='Baseline'";$text | Should -Match "phase='Treatment'";$text | Should -Match "Controller 'Apply'";$text | Should -Match "Controller 'Rollback'"}
   It 'uses five runs per arm by default' {$text | Should -Match '\[int\]\$RunsPerArm=5'}
   It 'samples first 120 seconds by default' {$text | Should -Match '\[int\]\$SampleSeconds=120'}
