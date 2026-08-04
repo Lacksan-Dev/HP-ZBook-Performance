@@ -8,6 +8,7 @@ on:
       - 'portfolio/**'
       - 'experiments/EXP-065/Invoke-Exp065LabHarness.ps1'
       - 'experiments/EXP-065/Invoke-Exp065LabHarness.Tests.ps1'
+      - 'experiments/EXP-154/**'
       - 'controller/providers/LogitechDownloadAssistantScheduledDemandLaunch.ps1'
       - 'controller/tests/EXP-080.LogitechDownloadAssistantScheduledDemandLaunch*.Tests.ps1'
       - 'controller/providers/SetPointEventManagerDemandLaunch.ps1'
@@ -18,6 +19,7 @@ on:
       - 'controller/tests/ClassicTeamsDemandLaunch.Tests.ps1'
       - 'controller/providers/LogiTuneSigninTask.ps1'
       - 'controller/tests/LogiTuneSigninTask*.Tests.ps1'
+      - 'controller/tests/EXP-154.StartupTaskRollbackGate*.Tests.ps1'
       - '.github/workflows/codex-portfolio-agent.yml'
   workflow_dispatch:
 
@@ -48,7 +50,9 @@ jobs:
             'controller/tests/HpHotkeyUwpDelayedStart.Integration.Tests.ps1',
             'controller/tests/ClassicTeamsDemandLaunch.Tests.ps1',
             'controller/tests/LogiTuneSigninTask.Tests.ps1',
-            'controller/tests/LogiTuneSigninTask.Integration.Tests.ps1'
+            'controller/tests/LogiTuneSigninTask.Integration.Tests.ps1',
+            'controller/tests/EXP-154.StartupTaskRollbackGate.Tests.ps1',
+            'controller/tests/EXP-154.StartupTaskRollbackGate.Integration.Tests.ps1'
           )
           $config.Run.Exit = $true
           $config.Output.Verbosity = 'Detailed'
