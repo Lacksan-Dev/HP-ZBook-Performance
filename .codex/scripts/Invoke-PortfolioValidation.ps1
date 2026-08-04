@@ -2,7 +2,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [ValidateSet('Inspect','Auto','Export')]
+    [ValidateSet('Inspect','Auto','Export','Recover')]
     [string]$Action = 'Inspect',
 
     [string]$QueuePath,
@@ -491,6 +491,48 @@ function Start-ReadyValidation {
     }
 }
 
+function Recover-ActiveValidation {
+    param([Parameter(Mandatory=$true)]$Active)
+    $harness = Resolve-RepositoryPath -RelativePath ([string]$Active.harnessPath)
+    $harnessPointer = Join-Path ([string]$Active.evidenceRoot) 'active.json'
+    if (-not (Test-Path -LiteralPath $harnessPointer)) {
+        return [pscustomobject][ordered]@{
+            experiment = [string]$Active.experiment
+            evidenceStatus = 'needs-evidence'
+            exactEvidenceRequest = @('Retain the active record and inspect the missing harness pointer before recovery.')
+        }
+    }
+    if (-not $PSCmdlet.ShouldProcess([string]$Active.experiment,'Run the harness exact rollback and clear the incomplete active cycle')) {
+        return [pscustomobject][ordered]@{ experiment=[string]$Active.experiment; evidenceStatus='recovery-ready'; whatIf=$true }
+    }
+    try {
+        & $harness -Action Stop -EvidenceRoot ([string]$Active.evidenceRoot) -Confirm:$false | Out-Null
+    } catch {
+        return [pscustomobject][ordered]@{
+            experiment = [string]$Active.experiment
+            evidenceStatus = 'needs-evidence'
+            exactEvidenceRequest = @("Complete and verify exact rollback from the retained active cycle: $($_.Exception.Message)")
+        }
+    }
+    if (Test-Path -LiteralPath $harnessPointer) {
+        return [pscustomobject][ordered]@{
+            experiment = [string]$Active.experiment
+            evidenceStatus = 'needs-evidence'
+            exactEvidenceRequest = @('The harness Stop path returned without clearing its active pointer; retain the active cycle for inspection.')
+        }
+    }
+    $recovery = [ordered]@{
+        schemaVersion = 1
+        experiment = [string]$Active.experiment
+        evidenceStatus = 'recovered-needs-rerun'
+        recoveredUtc = [DateTime]::UtcNow.ToString('o')
+        exactEvidenceRequest = @('Rerun the ready experiment from one clean source commit; the incomplete run is not publishable evidence.')
+    }
+    Write-JsonFile -Path (Join-Path $DataRoot ('recovery-{0}.json' -f [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))) -Value $recovery
+    Remove-Item -LiteralPath $ActiveCyclePath -Force
+    return [pscustomobject]$recovery
+}
+
 $queue = Get-Queue
 $ready = @($queue.items | Where-Object { [string]$_.state -eq 'ready' } | Sort-Object priority,experiment)
 
@@ -503,6 +545,18 @@ if ($Action -eq 'Inspect') {
         queuePath = $QueuePath
         mutationPerformed = $false
     }
+    return
+}
+
+if ($Action -eq 'Recover') {
+    if (-not (Test-Path -LiteralPath $ActiveCyclePath)) {
+        [pscustomobject][ordered]@{
+            evidenceStatus = 'needs-evidence'
+            exactEvidenceRequest = @('No active portfolio validation is registered for recovery.')
+        }
+        return
+    }
+    Recover-ActiveValidation -Active (Read-JsonFile -Path $ActiveCyclePath)
     return
 }
 
