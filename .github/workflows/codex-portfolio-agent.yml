@@ -16,6 +16,8 @@ on:
       - 'controller/tests/HpHotkeyUwpDelayedStart*.Tests.ps1'
       - 'controller/providers/ClassicTeamsDemandLaunch.ps1'
       - 'controller/tests/ClassicTeamsDemandLaunch.Tests.ps1'
+      - 'controller/providers/LogiTuneSigninTask.ps1'
+      - 'controller/tests/LogiTuneSigninTask*.Tests.ps1'
       - '.github/workflows/codex-portfolio-agent.yml'
   workflow_dispatch:
 
@@ -44,7 +46,9 @@ jobs:
             'controller/tests/SetPointEventManagerDemandLaunch.Tests.ps1',
             'controller/tests/HpHotkeyUwpDelayedStart.Tests.ps1',
             'controller/tests/HpHotkeyUwpDelayedStart.Integration.Tests.ps1',
-            'controller/tests/ClassicTeamsDemandLaunch.Tests.ps1'
+            'controller/tests/ClassicTeamsDemandLaunch.Tests.ps1',
+            'controller/tests/LogiTuneSigninTask.Tests.ps1',
+            'controller/tests/LogiTuneSigninTask.Integration.Tests.ps1'
           )
           $config.Run.Exit = $true
           $config.Output.Verbosity = 'Detailed'
