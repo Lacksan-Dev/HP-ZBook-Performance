@@ -16,6 +16,14 @@
       "verification": ["Verify CASL remains healthy after reboot and HP-dependent workflows remain usable.","Verify delayed-start persistence before rollback.","Verify Omnissa, Windows App, Remote Desktop, Tailscale, Windows security, update, networking, and device health remain intact."],
       "rollback": "Run Stop on interruption or allow normal completion after the final treatment boot; both invoke the HPCaslDelayedStart provider exact captured-state rollback.",
       "protectedScopes": ["WindowsSecurity","WindowsUpdate","EdgeUpdate","Credentials","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Networking","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
+    },
+    {
+      "priority": 30,"experiment": "EXP-087","issue": 201,"track": "service-candidate","state": "ready","releaseState": "Experimental","harnessPath": "experiments/EXP-087/Invoke-Exp087LabHarness.ps1","runsPerArm": 5,"sampleSeconds": 120,"minimumIdleMinutes": 20,"automaticReboot": true,
+      "candidate": "Change only the verified HP Support Solutions Framework service startup configuration from Automatic to Manual while preserving its current running state and the HP localhost/support workflow boundary.",
+      "benchmark": "Five matched baseline boots and five matched treatment boots; compare medians and MAD for usable-desktop proxy and first-120-second CPU and disk activity while retaining raw per-boot framework observations.",
+      "verification": ["Verify HP product detection, diagnostics, localhost endpoint behavior, and demand-start or declared manual-start workflow remain usable.","Verify Manual startup persistence after reboot before exact rollback.","Verify Omnissa, Windows App, Remote Desktop, Tailscale, Windows security, update, networking, and device health remain intact."],
+      "rollback": "Run Stop on interruption or allow normal completion after the final treatment boot; both invoke the EXP-087 provider's drift-safe exact captured-state rollback and verification.",
+      "protectedScopes": ["WindowsSecurity","WindowsUpdate","EdgeUpdate","Credentials","Recovery","EnterpriseManagement","DeviceCriticalDrivers","Networking","Omnissa","WindowsApp","RemoteDesktop","Tailscale"]
     }
   ]
 }
