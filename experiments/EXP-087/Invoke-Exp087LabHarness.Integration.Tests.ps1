@@ -1,6 +1,6 @@
-$sut=Join-Path $PSScriptRoot 'Invoke-Exp087LabHarness.ps1'
 Describe 'EXP-087 continuation integration guard' {
  BeforeAll {
+  $sut=Join-Path $PSScriptRoot 'Invoke-Exp087LabHarness.ps1'
   $text=Get-Content -LiteralPath $sut -Raw
   $tokens=$null;$errors=$null
   [void][System.Management.Automation.Language.Parser]::ParseFile($sut,[ref]$tokens,[ref]$errors)
