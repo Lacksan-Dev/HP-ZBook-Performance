@@ -6,7 +6,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-$experiment='EXP-104'
+$experiment='EXP-114'
 $provider='logi-tune-signin-task'
 $profile='LogiTuneSigninTask'
 $protected='(?i)omnissa|vmware horizon|windows app|remote desktop|mstsc|tailscale|defender|securityhealth|firewall|bitlocker|credential|windows update|recovery|intune|sccm|configmgr|mdm'
