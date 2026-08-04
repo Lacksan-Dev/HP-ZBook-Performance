@@ -1,6 +1,6 @@
 [CmdletBinding(SupportsShouldProcess=$true)]
 param(
-  [ValidateSet('Baseline','Treatment','Summarize','Rollback')][string]$Phase='Summarize',
+  [ValidateSet('Preflight','Baseline','Treatment','Summarize','Rollback')][string]$Phase='Summarize',
   [string]$EvidenceRoot="$PSScriptRoot/../evidence/EXP-095",
   [int]$TargetRuns=5,
   [int]$SampleSeconds=120,
@@ -32,6 +32,7 @@ function Summary{
   $s=[ordered]@{schemaVersion=1;experiment='EXP-095';baselineRuns=$b.Count;treatmentRuns=$t.Count;metric=$metric;baselineMedian=$bm;baselineMAD=Mad @($b|ForEach-Object{[double]$_.$metric});treatmentMedian=$tm;treatmentMAD=Mad @($t|ForEach-Object{[double]$_.$metric});improvementPercent=$pct;classification=$class;rawRuns=@($runs|Select-Object phase,run,bootId,capturedUtc)};$s|ConvertTo-Json -Depth 8|Set-Content (Join-Path $EvidenceRoot 'summary.json') -Encoding UTF8;$s
 }
 switch($Phase){
+ 'Preflight'{& $provider -Action Check -LogPath $log|Out-Null;& $provider -Action DryRun -LogPath $log|Out-Null}
  'Baseline'{& $provider -Action Check -LogPath $log|Out-Null;Collect Baseline}
  'Treatment'{if(!(Test-Path $state)){& $provider -Action Capture -StatePath $state -LogPath $log|Out-Null;& $provider -Action DryRun -StatePath $state -LogPath $log|Out-Null;& $provider -Action Apply -StatePath $state -LogPath $log|Out-Null;& $provider -Action Verify -StatePath $state -LogPath $log|Out-Null}else{& $provider -Action VerifyReboot -StatePath $state -LogPath $log|Out-Null};Collect Treatment}
  'Summarize'{Summary}
