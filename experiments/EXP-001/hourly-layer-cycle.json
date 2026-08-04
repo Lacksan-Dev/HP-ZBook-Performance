@@ -7,11 +7,11 @@
   "lastCompletedLayer": 7,
   "lastCompletedLayerName": "Security and isolation overhead without reducing protection",
   "lastCompletedAtUtc": "2026-07-31T16:02:00Z",
-  "sourceCommit": "1fdb9cedc7debdbdd58a55d79dcbe0072b7a39e9",
+  "sourceCommit": "7bcdd7d6aafbf26075d63b2d38a18c14f3265a24",
   "outcome": "portfolio-implementation-merged",
   "evidencePath": "experiments/EXP-001/layer-evidence/layer-07-security-activity-profile-2026-07-31.md",
-  "reason": "Merged PR #403 after conflict resolution, scope review, focused local tests, and passing GitHub checks. EXP-120 now has a reversible HP Hotkey UWP delayed-start provider and remains Experimental. The guarded EXP-065 laptop run returned needs-evidence because the session lacked elevation, AC power, and 20 minutes of idle time; no Windows mutation or evidence export occurred.",
-  "lastPortfolioActionAtUtc": "2026-08-04T02:38:51Z",
+  "reason": "Merged PR #411 after focused local tests, scope review, and the passing required GitHub check. The portfolio workflow now covers the EXP-114 Logi Tune contract and opt-in zero-mutation integration tests. The guarded EXP-065 laptop run again returned needs-evidence because the session lacked elevation, AC power, and 20 minutes of idle time; no Windows mutation, reboot, or evidence export occurred.",
+  "lastPortfolioActionAtUtc": "2026-08-04T03:42:55Z",
   "activeTracks": [
     {
       "experiment": "EXP-002",
