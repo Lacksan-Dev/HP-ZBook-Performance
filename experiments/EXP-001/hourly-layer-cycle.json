@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "cadence": "three-hour",
+  "cadence": "two-hour",
   "mode": "experiment-discovery-portfolio",
   "nextLayer": 8,
   "nextLayerName": "Boot, services, tasks, background permissions, and startup applications",
@@ -10,26 +10,26 @@
   "sourceCommit": "47ccafe12bf88d9f60100e7d0e9c583b42cb4054",
   "outcome": "portfolio-configuration-updated",
   "evidencePath": "experiments/EXP-001/layer-evidence/layer-07-security-activity-profile-2026-07-31.md",
-  "reason": "Aligned the checked-in portfolio cadence with the Codex app's every-three-hours schedule while keeping startup, Edge, and service lanes active. Reconciled merged EXP-150 and EXP-151 engineering by adding their missing CI coverage and correcting Pester discovery scope. The guarded EXP-065 runner ran first and now requires only elevation plus 20 minutes of local idle time; AC power was accepted and no Windows mutation, reboot, or evidence export occurred.",
+  "reason": "Aligned the checked-in portfolio cadence with the Codex app's every-two-hours schedule while keeping startup, Edge, and service lanes active. Reconciled merged EXP-150 and EXP-151 engineering by adding their missing CI coverage and correcting Pester discovery scope. The guarded EXP-065 runner ran first and now requires only elevation plus 20 minutes of local idle time; AC power was accepted and no Windows mutation, reboot, or evidence export occurred.",
   "lastPortfolioActionAtUtc": "2026-08-04T06:41:49Z",
   "activeTracks": [
     {
       "experiment": "EXP-002",
       "name": "Startup registration minimization",
-      "cadence": "three-hour",
+      "cadence": "two-hour",
       "protectedUserApps": ["Omnissa", "Windows App", "Remote Desktop", "Tailscale"],
       "priorityTargets": ["Microsoft Teams", "Microsoft Office", "Microsoft 365", "Logitech", "Logi Options+", "Logi Bolt", "Logi Tune", "G Hub"]
     },
     {
       "experiment": "EXP-003",
       "name": "Edge demand-launch responsiveness",
-      "cadence": "three-hour",
+      "cadence": "two-hour",
       "startupFolderEntryAllowed": false
     },
     {
       "experiment": "EXP-004",
       "name": "Service suspension, demand-start, and replacement candidates",
-      "cadence": "three-hour"
+      "cadence": "two-hour"
     }
   ],
   "portfolioRules": {
