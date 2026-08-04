@@ -1,6 +1,6 @@
-$provider=Join-Path $PSScriptRoot '..\providers\LogiTuneDemandLaunch.ps1'
 Describe 'EXP-052 Logi Tune zero-mutation integration' -Tag 'WindowsIntegration' {
  BeforeAll {
+  $script:provider=Join-Path $PSScriptRoot '..\providers\LogiTuneDemandLaunch.ps1'
   $script:enabled=($env:RUN_LACKSAN_WINDOWS_INTEGRATION-eq'1'-and$env:OS-eq'Windows_NT')
   function Snapshot-State {
    $path='HKCU:\Software\Microsoft\Windows\CurrentVersion\Run';$run=if(Test-Path $path){$k=Get-Item $path;@($k.GetValueNames()|Sort-Object|ForEach-Object{[pscustomobject]@{Name=$_;Kind=$k.GetValueKind($_).ToString();Data=[string]$k.GetValue($_,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)}})}else{@()}
@@ -12,12 +12,12 @@ Describe 'EXP-052 Logi Tune zero-mutation integration' -Tag 'WindowsIntegration'
  }
  It 'keeps Run protected-service driver and device state unchanged during Check and DryRun' -Skip:(-not$script:enabled) {
   $root=Join-Path $TestDrive 'exp052-readonly';New-Item -ItemType Directory -Path $root -Force|Out-Null;$state=Join-Path $root 'state.json';$log=Join-Path $root 'events.jsonl';$before=Snapshot-State
-  try{$check=& $provider -Action Check -StatePath $state -LogPath $log;if(!$check.Support.Supported){Set-ItResult -Skipped -Because 'EXP-052 support gate refused this machine.';return};& $provider -Action DryRun -StatePath $state -LogPath $log|Out-Null}catch{Set-ItResult -Skipped -Because $_.Exception.Message;return}
+  try{$check=& $script:provider -Action Check -StatePath $state -LogPath $log;if(!$check.Support.Supported){Set-ItResult -Skipped -Because 'EXP-052 support gate refused this machine.';return};& $script:provider -Action DryRun -StatePath $state -LogPath $log|Out-Null}catch{Set-ItResult -Skipped -Because $_.Exception.Message;return}
   (Snapshot-State)|Should -BeExactly $before
  }
  It 'keeps production state unchanged during Capture and Apply WhatIf' -Skip:(-not$script:enabled) {
   $root=Join-Path $TestDrive 'exp052-whatif';New-Item -ItemType Directory -Path $root -Force|Out-Null;$state=Join-Path $root 'state.json';$log=Join-Path $root 'events.jsonl';$before=Snapshot-State
-  try{$check=& $provider -Action Check -StatePath $state -LogPath $log;if(!$check.Support.Supported-or@($check.Candidates).Count-ne1){Set-ItResult -Skipped -Because 'Exactly one eligible EXP-052 candidate is required.';return};& $provider -Action Capture -StatePath $state -LogPath $log|Out-Null;& $provider -Action Apply -StatePath $state -LogPath $log -WhatIf|Out-Null}catch{Set-ItResult -Skipped -Because $_.Exception.Message;return}
+  try{$check=& $script:provider -Action Check -StatePath $state -LogPath $log;if(!$check.Support.Supported-or@($check.Candidates).Count-ne1){Set-ItResult -Skipped -Because 'Exactly one eligible EXP-052 candidate is required.';return};& $script:provider -Action Capture -StatePath $state -LogPath $log|Out-Null;& $script:provider -Action Apply -StatePath $state -LogPath $log -WhatIf|Out-Null}catch{Set-ItResult -Skipped -Because $_.Exception.Message;return}
   (Snapshot-State)|Should -BeExactly $before
  }
 }
