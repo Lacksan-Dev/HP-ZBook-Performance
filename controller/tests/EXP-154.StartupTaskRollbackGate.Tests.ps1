@@ -15,7 +15,7 @@ Describe 'EXP-154 packaged StartupTask rollback gate contract' {
  }
  It 'requires the complete reversible lifecycle after the physical gate passes' {
   foreach($action in @('Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback')){
-   $script:text | Should -Match ([regex]::Escape("`$action`"))
+   $script:text | Should -Match ([regex]::Escape($action))
   }
   foreach($token in @('ShouldProcess','-WhatIf','structured JSONL','idempotent','terminating failure','drift refusal','post-rollback equality verification')){
    $script:text | Should -Match ([regex]::Escape($token))
