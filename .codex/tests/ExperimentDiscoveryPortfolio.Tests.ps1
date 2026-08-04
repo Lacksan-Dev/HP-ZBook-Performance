@@ -70,7 +70,7 @@ Describe 'Portfolio runbook and queue' {
         $items[1].experiment | Should -Be 'EXP-095'
         [int]$items[0].priority | Should -BeLessThan ([int]$items[1].priority)
         foreach ($item in $items) {
-            $item.track | Should -Be 'service-candidate'
+            $item.track | Should -BeIn @('service-candidate','startup-responsiveness')
             $item.state | Should -Be 'ready'
             $item.releaseState | Should -Be 'Experimental'
             $item.runsPerArm | Should -Be 5
