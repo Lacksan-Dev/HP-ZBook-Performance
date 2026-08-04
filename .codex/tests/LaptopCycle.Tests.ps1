@@ -1,4 +1,3 @@
-BeforeAll {
     $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
     $cyclePath = Join-Path $repoRoot '.codex\scripts\Invoke-LaptopCycle.ps1'
     $installerPath = Join-Path $repoRoot 'controller\automation\UxRomLaptopCycle.ps1'
@@ -6,7 +5,6 @@ BeforeAll {
     $cycle = Get-Content -LiteralPath $cyclePath -Raw
     $installer = Get-Content -LiteralPath $installerPath -Raw
     $bootstrap = Get-Content -LiteralPath $bootstrapPath -Raw
-}
 
 Describe 'Two-hour laptop cycle' {
     It 'parses every PowerShell entry point' {
