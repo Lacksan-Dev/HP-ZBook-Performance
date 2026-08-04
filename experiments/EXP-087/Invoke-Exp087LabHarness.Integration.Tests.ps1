@@ -8,7 +8,7 @@ Describe 'EXP-087 continuation integration guard' {
  It 'parses without PowerShell syntax errors' {$errors.Count|Should -Be 0}
  It 'keeps automatic reboot as explicit opt-in across continuation' {
   $text|Should -Match '\[switch\]\$AllowAutomaticReboot'
-  $text|Should -Match "if\(\$AllowAutomaticReboot\)\{\$arg\+=' -AllowAutomaticReboot'\}"
+  $text|Should -Match 'if\(\$AllowAutomaticReboot\)\{\$arg\+=''-AllowAutomaticReboot''\}'
   $text|Should -Match 'Restart-Computer -Force'
  }
  It 'makes the scheduled continuation noninteractive without passing Confirm through powershell file arguments' {
