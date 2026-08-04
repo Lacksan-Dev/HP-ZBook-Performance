@@ -15,7 +15,7 @@ on:
       - 'controller/providers/LogitechDownloadAssistantDemandLaunch.ps1'
       - 'controller/tests/LogitechDownloadAssistantDemandLaunch*.Tests.ps1'
       - 'controller/providers/SetPointEventManagerDemandLaunch.ps1'
-      - 'controller/tests/SetPointEventManagerDemandLaunch.Tests.ps1'
+      - 'controller/tests/SetPointEventManagerDemandLaunch*.Tests.ps1'
       - 'controller/providers/HpHotkeyUwpDelayedStart.ps1'
       - 'controller/tests/HpHotkeyUwpDelayedStart*.Tests.ps1'
       - 'controller/providers/ClassicTeamsDemandLaunch.ps1'
@@ -69,6 +69,7 @@ jobs:
             'controller/tests/LogitechDownloadAssistantDemandLaunch.Tests.ps1',
             'controller/tests/LogitechDownloadAssistantDemandLaunch.Integration.Tests.ps1',
             'controller/tests/SetPointEventManagerDemandLaunch.Tests.ps1',
+            'controller/tests/SetPointEventManagerDemandLaunch.Integration.Tests.ps1',
             'controller/tests/HpHotkeyUwpDelayedStart.Tests.ps1',
             'controller/tests/HpHotkeyUwpDelayedStart.Integration.Tests.ps1',
             'controller/tests/ClassicTeamsDemandLaunch.Tests.ps1',
