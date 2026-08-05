@@ -29,6 +29,24 @@ function Write-Log([string]$Operation,[string]$Result,$Detail,$Before=$null,$Aft
         action = $Operation; result = $Result; detail = $Detail; before = $Before; after = $After
     } | ConvertTo-Json -Depth 12 -Compress | Add-Content -LiteralPath $LogPath -Encoding UTF8
 }
+function Test-Elevated {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+function Get-ManagementState {
+    $cs = Get-CimInstance Win32_ComputerSystem
+    $configMgr = [bool](Get-Service CcmExec -ErrorAction SilentlyContinue)
+    $enrollments = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Enrollments' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^[0-9A-Fa-f-]{36}$' }).Count
+    $omadm = @(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Provisioning\OMADM\Accounts' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^[0-9A-Fa-f-]{36}$' }).Count
+    [pscustomobject][ordered]@{
+        domainJoined = [bool]$cs.PartOfDomain
+        configMgr = $configMgr
+        enrollmentCount = $enrollments
+        omadmCount = $omadm
+        managed = ([bool]$cs.PartOfDomain -or $configMgr -or ($enrollments -gt 0 -and $omadm -gt 0))
+    }
+}
 function Get-BootId { (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o') }
 function Get-XmlHash([string]$Xml,[switch]$NormalizeEnabled) {
     [xml]$doc = $Xml
@@ -86,13 +104,15 @@ function Get-ProtectedRuntimeEvidence {
         protectedProcesses = @($apps | ForEach-Object { [pscustomobject]@{Name=$_;Running=[bool](Get-Process -Name $_ -ErrorAction SilentlyContinue)} })
     }
 }
-function Save-State($Identity,$ProtectedConfiguration,$ProtectedRuntime) {
+function Save-State($Identity,$ProtectedConfiguration,$ProtectedRuntime,$Management) {
+    if (Test-Path -LiteralPath $StatePath) { throw 'State overwrite refused.' }
     Ensure-Parent $StatePath
     [pscustomobject][ordered]@{
         schemaVersion = 1; experiment = $ExperimentId; capturedUtc = (Get-Date).ToUniversalTime().ToString('o')
         machine = $env:COMPUTERNAME; userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-        selfManagedLab = [bool]$SelfManagedLab; original = $Identity
+        selfManagedLab = [bool]$SelfManagedLab; management = $Management; original = $Identity
         protectedConfiguration = $ProtectedConfiguration; protectedRuntime = $ProtectedRuntime
+        evidenceStatus = 'needs-evidence'
     } | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $StatePath -Encoding UTF8
 }
 function Load-State {
@@ -106,9 +126,18 @@ function Load-State {
 function Assert-SafeContext {
     $os = Get-CimInstance Win32_OperatingSystem
     $cs = Get-CimInstance Win32_ComputerSystem
+    $management = Get-ManagementState
     if ([string]$os.Caption -notmatch 'Windows 11') { throw 'Windows 11 is required.' }
     if ([string]$cs.Manufacturer -notmatch '(?i)^HP$|Hewlett-Packard') { throw 'HP hardware is required.' }
+    if (-not (Test-Elevated)) { throw 'Elevation is required.' }
     if (-not $SelfManagedLab) { throw 'EXP-162 requires explicit SelfManagedLab ownership before mutation.' }
+    if ($management.managed) { throw 'Enterprise management ownership detected.' }
+    $management
+}
+function Assert-ManagementUnchanged($Captured) {
+    $current = Get-ManagementState | ConvertTo-Json -Depth 6 -Compress
+    $expected = $Captured | ConvertTo-Json -Depth 6 -Compress
+    if ($current -ne $expected) { throw 'Management ownership drift detected.' }
 }
 function Assert-ProtectedConfigurationUnchanged($Captured) {
     $current = Get-ProtectedConfiguration | ConvertTo-Json -Depth 10 -Compress
@@ -119,58 +148,69 @@ function Assert-ProtectedConfigurationUnchanged($Captured) {
 try {
     switch ($Action) {
         'Check' {
-            Assert-SafeContext
+            $management = Assert-SafeContext
             $id = Get-TaskIdentity
-            [pscustomobject]@{experiment=$ExperimentId;supported=$true;candidate=$id;protectedRuntime=(Get-ProtectedRuntimeEvidence)}
+            $result = [pscustomobject]@{experiment=$ExperimentId;supported=$true;candidate=$id;management=$management;protectedRuntime=(Get-ProtectedRuntimeEvidence);evidenceStatus='needs-evidence'}
+            Write-Log Check success 'Support and candidate qualification passed.' $null $result
+            $result
         }
         'Capture' {
-            Assert-SafeContext
+            $management = Assert-SafeContext
             $id = Get-TaskIdentity
             if (-not $id.enabled) { throw 'Candidate must be enabled at baseline.' }
             $protectedConfiguration = Get-ProtectedConfiguration
             $protectedRuntime = Get-ProtectedRuntimeEvidence
-            Save-State $id $protectedConfiguration $protectedRuntime
+            Save-State $id $protectedConfiguration $protectedRuntime $management
             Write-Log Capture success 'Exact task state captured.' $id $null
             $id
         }
         'DryRun' {
-            Assert-SafeContext
+            $management = Assert-SafeContext
             $id = Get-TaskIdentity
-            [pscustomobject]@{wouldDisable=$true;taskPath=$id.taskPath;taskName=$id.taskName;executable=$id.execute;rollback='Restore captured enabled state after structural drift checks.'}
+            $result = [pscustomobject]@{wouldDisable=$true;mutationCount=1;taskPath=$id.taskPath;taskName=$id.taskName;executable=$id.execute;management=$management;rollback='Restore captured enabled state after structural drift checks.';rebootPersistenceRequired=$true;evidenceStatus='needs-evidence'}
+            Write-Log DryRun success 'One selected scheduled-task mutation proposed; production state unchanged.' $id $result
+            $result
         }
         'Apply' {
-            Assert-SafeContext
+            Assert-SafeContext | Out-Null
             $state = Load-State
+            Assert-ManagementUnchanged $state.management
             Assert-ProtectedConfigurationUnchanged $state.protectedConfiguration
             $id = Get-TaskIdentity
             if ($id.structuralHash -ne $state.original.structuralHash) { throw 'Task definition drift detected before apply.' }
             if (-not $id.enabled) { Write-Log Apply success 'Already disabled; idempotent no-op.' $id $id; return $id }
-            if ($PSCmdlet.ShouldProcess("$TaskPath$TaskName",'Disable one EXP-162 logon task')) { Disable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath | Out-Null }
+            if ($WhatIfPreference) { Write-Log Apply whatif 'Selected task would be disabled; production state unchanged.' $id $id; return $id }
+            if ($PSCmdlet.ShouldProcess("$TaskPath$TaskName",'Disable one EXP-162 logon task')) { Disable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath | Out-Null } else { return $id }
             $after = Get-TaskIdentity
             if ($after.enabled) { throw 'Task remained enabled after apply.' }
             Write-Log Apply success 'Selected logon task disabled.' $id $after
             $after
         }
         'Verify' {
+            Assert-SafeContext | Out-Null
             $state = Load-State
+            Assert-ManagementUnchanged $state.management
             Assert-ProtectedConfigurationUnchanged $state.protectedConfiguration
             $id = Get-TaskIdentity
             if ($id.structuralHash -ne $state.original.structuralHash -or $id.enabled) { throw 'Treatment verification failed.' }
-            Write-Log Verify success 'Treatment state verified.' $state.original ([pscustomobject]@{task=$id;runtime=(Get-ProtectedRuntimeEvidence)})
+            Write-Log Verify success 'Treatment state verified.' $state.original ([pscustomobject]@{task=$id;runtime=(Get-ProtectedRuntimeEvidence);evidenceStatus='needs-evidence'})
             $id
         }
         'VerifyReboot' {
+            Assert-SafeContext | Out-Null
             $state = Load-State
             if ((Get-BootId) -eq $state.original.bootId) { throw 'A later boot has not occurred.' }
+            Assert-ManagementUnchanged $state.management
             Assert-ProtectedConfigurationUnchanged $state.protectedConfiguration
             $id = Get-TaskIdentity
             if ($id.structuralHash -ne $state.original.structuralHash -or $id.enabled) { throw 'Reboot persistence verification failed.' }
-            Write-Log VerifyReboot success 'Disabled state persisted across reboot.' $state.original ([pscustomobject]@{task=$id;runtime=(Get-ProtectedRuntimeEvidence)})
+            Write-Log VerifyReboot success 'Disabled state persisted across reboot.' $state.original ([pscustomobject]@{task=$id;runtime=(Get-ProtectedRuntimeEvidence);evidenceStatus='needs-evidence'})
             $id
         }
         'Rollback' {
-            Assert-SafeContext
+            Assert-SafeContext | Out-Null
             $state = Load-State
+            Assert-ManagementUnchanged $state.management
             Assert-ProtectedConfigurationUnchanged $state.protectedConfiguration
             $id = Get-TaskIdentity
             if ($id.structuralHash -ne $state.original.structuralHash) { throw 'Task definition drift detected; rollback refused.' }
@@ -181,7 +221,7 @@ try {
             }
             $after = Get-TaskIdentity
             if ($after.structuralHash -ne $state.original.structuralHash -or $after.enabled -ne [bool]$state.original.enabled -or $after.xmlHash -ne $state.original.xmlHash) { throw 'Exact rollback verification failed.' }
-            Write-Log Rollback success 'Captured task state restored exactly.' $id ([pscustomobject]@{task=$after;runtime=(Get-ProtectedRuntimeEvidence)})
+            Write-Log Rollback success 'Captured task state restored exactly.' $id ([pscustomobject]@{task=$after;runtime=(Get-ProtectedRuntimeEvidence);evidenceStatus='needs-evidence'})
             $after
         }
     }
