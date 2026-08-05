@@ -1,0 +1,85 @@
+[CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact='High')]
+param(
+ [ValidateSet('Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback')][string]$Action='Check',
+ [string]$StatePath,
+ [string]$LogPath
+)
+Set-StrictMode -Version Latest
+$ErrorActionPreference='Stop'
+$Experiment='EXP-072'
+$Provider='edge-enable-sleeping-tabs'
+$MandatoryPath='HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+$RecommendedPath='HKLM:\SOFTWARE\Policies\Microsoft\Edge\Recommended'
+$ValueName='SleepingTabsEnabled'
+$Treatment=1
+$RelatedNames=@('SleepingTabsTimeout','StartupBoostEnabled','BackgroundModeEnabled','HardwareAccelerationModeEnabled','NetworkPredictionOptions','RestoreOnStartup','ClearBrowsingDataOnExit','ClearCachedImagesAndFilesOnExit')
+function Write-Log([string]$Event,[string]$Result,[object]$Data){
+ if([string]::IsNullOrWhiteSpace($LogPath)){return}
+ $parent=Split-Path -Parent $LogPath
+ if($parent-and!(Test-Path -LiteralPath $parent)){New-Item -ItemType Directory -Path $parent -Force|Out-Null}
+ [ordered]@{schemaVersion=1;timestampUtc=(Get-Date).ToUniversalTime().ToString('o');experiment=$Experiment;provider=$Provider;action=$Action;event=$Event;result=$Result;machine=$env:COMPUTERNAME;userSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;data=$Data}|ConvertTo-Json -Compress -Depth 20|Add-Content -LiteralPath $LogPath -Encoding UTF8
+}
+function Test-Elevated{([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)}
+function Test-Same($A,$B){($A|ConvertTo-Json -Compress -Depth 20)-eq($B|ConvertTo-Json -Compress -Depth 20)}
+function Get-Reg([string]$Path,[string]$Name){
+ if(!(Test-Path -LiteralPath $Path)){return [pscustomobject]@{KeyExists=$false;ValueExists=$false;Kind=$null;Data=$null}}
+ $key=Get-Item -LiteralPath $Path
+ if($key.GetValueNames()-notcontains$Name){return [pscustomobject]@{KeyExists=$true;ValueExists=$false;Kind=$null;Data=$null}}
+ [pscustomobject]@{KeyExists=$true;ValueExists=$true;Kind=$key.GetValueKind($Name).ToString();Data=$key.GetValue($Name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)}
+}
+function Get-Edge{
+ $paths=@($env:ProgramFiles,${env:ProgramFiles(x86)})|Where-Object{$_}|ForEach-Object{Join-Path $_ 'Microsoft\Edge\Application\msedge.exe'}|Where-Object{Test-Path -LiteralPath $_}|Select-Object -Unique
+ $items=@($paths|ForEach-Object{$item=Get-Item -LiteralPath $_;$sig=Get-AuthenticodeSignature -LiteralPath $_;$publisher=if($sig.SignerCertificate){$sig.SignerCertificate.Subject}else{$null};[pscustomobject]@{Path=$item.FullName;Version=$item.VersionInfo.FileVersion;Major=[int]$item.VersionInfo.FileVersion.Split('.')[0];Sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash;Signature=$sig.Status.ToString();Publisher=$publisher;Thumbprint=if($sig.SignerCertificate){$sig.SignerCertificate.Thumbprint}else{$null};ValidPublisher=($sig.Status-eq'Valid'-and$publisher-match'Microsoft Corporation')}})
+ if($items.Count-ne1){return $null};$items[0]
+}
+function Get-Management{
+ $computer=Get-CimInstance Win32_ComputerSystem
+ $configMgr=[bool](Get-Service CcmExec -ErrorAction SilentlyContinue)
+ $enrollments=@(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Enrollments' -ErrorAction SilentlyContinue|Where-Object{$_.PSChildName-match'^[0-9a-fA-F-]{36}$'}).Count
+ $omadm=@(Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Provisioning\OMADM\Accounts' -ErrorAction SilentlyContinue|Where-Object{$_.PSChildName-match'^[0-9a-fA-F-]{36}$'}).Count
+ [pscustomobject]@{Managed=([bool]$computer.PartOfDomain-or$configMgr-or($enrollments-gt0-and$omadm-gt0));DomainJoined=[bool]$computer.PartOfDomain;ConfigMgr=$configMgr;EnrollmentCount=$enrollments;OmadmCount=$omadm}
+}
+function Get-StartupFolders{
+ $shell=New-Object -ComObject WScript.Shell;$rows=@()
+ foreach($folder in @([Environment]::GetFolderPath('Startup'),[Environment]::GetFolderPath('CommonStartup'))|Where-Object{$_}|Select-Object -Unique){if(Test-Path -LiteralPath $folder){foreach($item in Get-ChildItem -LiteralPath $folder -File -ErrorAction SilentlyContinue){$target=$null;if($item.Extension-eq'.lnk'){try{$target=$shell.CreateShortcut($item.FullName).TargetPath}catch{}};$rows+=[pscustomobject]@{Path=$item.FullName;Target=$target;Edge=[bool]($item.Name-match'(?i)edge|msedge'-or$target-match'(?i)\\msedge\.exe$')}}}}
+ [pscustomobject]@{EdgeEntryCount=@($rows|Where-Object Edge).Count;Entries=$rows}
+}
+function Get-Protected{
+ $rows=@('WinDefend','mpssvc','wuauserv','UsoSvc','BITS','Tailscale','edgeupdate','edgeupdatem','TermService')|ForEach-Object{Get-CimInstance Win32_Service -Filter "Name='$_'" -ErrorAction SilentlyContinue}|Where-Object{$_}|Sort-Object Name
+ [pscustomobject]@{Configuration=@($rows|Select-Object Name,StartMode,PathName);Runtime=@($rows|Select-Object Name,State)}
+}
+function Get-Policies{
+ $related=[ordered]@{}
+ foreach($name in $RelatedNames){$related["Mandatory:$name"]=Get-Reg $MandatoryPath $name;$related["Recommended:$name"]=Get-Reg $RecommendedPath $name}
+ [pscustomobject]@{MandatoryCandidate=Get-Reg $MandatoryPath $ValueName;RecommendedCandidate=Get-Reg $RecommendedPath $ValueName;Related=[pscustomobject]$related}
+}
+function Assert-EdgeClosed{if(Get-Process msedge -ErrorAction SilentlyContinue){throw 'Close all Edge processes before policy application or rollback.'}}
+function Get-Support{
+ $os=Get-CimInstance Win32_OperatingSystem;$computer=Get-CimInstance Win32_ComputerSystem;$edge=Get-Edge;$management=Get-Management;$policies=Get-Policies;$startup=Get-StartupFolders
+ $supported=($os.Caption-match'Windows 11'-and$computer.Manufacturer-match'(?i)^HP$|Hewlett-Packard'-and(Test-Elevated)-and$edge-and$edge.ValidPublisher-and$edge.Major-ge88-and!$management.Managed-and!$policies.MandatoryCandidate.ValueExists-and!$policies.RecommendedCandidate.ValueExists-and$startup.EdgeEntryCount-eq0)
+ [pscustomobject]@{Supported=$supported;OS=$os.Caption;Build=$os.BuildNumber;Manufacturer=$computer.Manufacturer;Model=$computer.Model;Elevated=(Test-Elevated);Edge=$edge;Management=$management;Policies=$policies;Startup=$startup;EvidenceStatus='needs-evidence'}
+}
+function Assert-Supported($Support){if(!$Support.Supported){throw 'Unsupported, managed, ambiguous, pre-88 Edge, existing SleepingTabsEnabled policy, unsigned Edge, or Edge Startup-folder state.'}}
+function Save-State($Support){
+ Assert-Supported $Support;if([string]::IsNullOrWhiteSpace($StatePath)){throw 'StatePath is required.'};if(Test-Path -LiteralPath $StatePath){throw 'State overwrite refused.'}
+ $protected=Get-Protected;$state=[ordered]@{schemaVersion=1;experiment=$Experiment;provider=$Provider;capturedUtc=(Get-Date).ToUniversalTime().ToString('o');capturedBootTime=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o');machine=$env:COMPUTERNAME;userSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;mandatoryPath=$MandatoryPath;recommendedPath=$RecommendedPath;valueName=$ValueName;original=$Support.Policies.RecommendedCandidate;mandatoryOriginal=$Support.Policies.MandatoryCandidate;related=$Support.Policies.Related;edge=$Support.Edge;management=$Support.Management;startupEdgeCount=$Support.Startup.EdgeEntryCount;protectedConfiguration=$protected.Configuration;protectedRuntime=$protected.Runtime;evidenceStatus='needs-evidence'}
+ $parent=Split-Path -Parent $StatePath;if($parent-and!(Test-Path -LiteralPath $parent)){New-Item -ItemType Directory -Path $parent -Force|Out-Null};$state|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $StatePath -Encoding UTF8;[pscustomobject]$state
+}
+function Read-State{if([string]::IsNullOrWhiteSpace($StatePath)-or!(Test-Path -LiteralPath $StatePath)){throw 'State artifact is missing.'};$state=Get-Content -LiteralPath $StatePath -Raw|ConvertFrom-Json;$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;if($state.schemaVersion-ne1-or$state.experiment-ne$Experiment-or$state.provider-ne$Provider-or$state.machine-ne$env:COMPUTERNAME-or$state.userSid-ne$sid){throw 'State identity validation failed.'};$state}
+function Assert-DriftFree($State){
+ $edge=Get-Edge;if(!$edge-or$edge.Major-lt88-or$edge.Sha256-ne$State.edge.Sha256-or$edge.Version-ne$State.edge.Version-or$edge.Thumbprint-ne$State.edge.Thumbprint){throw 'Edge identity drift detected.'};if((Get-Management).Managed){throw 'Management ownership drift detected.'}
+ $policies=Get-Policies;if(!(Test-Same $policies.Related $State.related)-or!(Test-Same $policies.MandatoryCandidate $State.mandatoryOriginal)){throw 'Related Edge policy drift detected.'};if((Get-StartupFolders).EdgeEntryCount-ne0){throw 'Edge Startup-folder drift detected.'};$protected=Get-Protected;if(!(Test-Same $protected.Configuration $State.protectedConfiguration)){throw 'Protected service configuration drift detected.'};[pscustomobject]@{ProtectedRuntime=$protected.Runtime}
+}
+function Test-Applied{$candidate=Get-Reg $RecommendedPath $ValueName;$candidate.ValueExists-and$candidate.Kind-eq'DWord'-and[int]$candidate.Data-eq$Treatment}
+try{
+ $support=Get-Support;Write-Log 'support-detection' $(if($support.Supported){'pass'}else{'unsupported'}) $support
+ switch($Action){
+  'Check'{[pscustomobject]@{Support=$support;Profile='EdgeEnableSleepingTabs'}}
+  'Capture'{$state=Save-State $support;Write-Log 'capture' 'pass' $state;$state}
+  'DryRun'{Assert-Supported $support;$result=[pscustomobject]@{WouldChange=$true;MutationCount=1;Path=$RecommendedPath;Name=$ValueName;Type='DWord';Value=$Treatment;BrowserRestartRequired=$true;RebootPersistenceCheckRequired=$true;Rollback='Restore exact captured registry value/type or remove only the experiment-created value and empty experiment-created key.';EvidenceStatus='needs-evidence'};Write-Log 'dry-run' 'pass' $result;$result}
+  'Apply'{$state=if($StatePath-and(Test-Path -LiteralPath $StatePath)){Read-State}else{Save-State $support};$drift=Assert-DriftFree $state;if(Test-Applied){Write-Log 'apply' 'idempotent' @{mutationCount=0;protectedRuntime=$drift.ProtectedRuntime};return [pscustomobject]@{Applied=$true;MutationCount=0}};Assert-Supported $support;if($WhatIfPreference){Write-Log 'apply' 'whatif' @{mutationCount=0};return [pscustomobject]@{Applied=$false;WhatIf=$true;MutationCount=0}};Assert-EdgeClosed;if($PSCmdlet.ShouldProcess("$RecommendedPath::$ValueName",'Enable Edge sleeping tabs')){if(!(Test-Path -LiteralPath $RecommendedPath)){New-Item -Path $RecommendedPath -Force|Out-Null};New-ItemProperty -LiteralPath $RecommendedPath -Name $ValueName -PropertyType DWord -Value $Treatment -Force|Out-Null};if(!(Test-Applied)){throw 'Apply verification failed.'};Write-Log 'apply' 'pass' @{mutationCount=1;protectedRuntime=$drift.ProtectedRuntime};[pscustomobject]@{Applied=$true;MutationCount=1}}
+  'Verify'{$state=Read-State;$drift=Assert-DriftFree $state;if(!(Test-Applied)){throw 'Policy verification failed.'};$result=[pscustomobject]@{Verified=$true;ProtectedRuntime=$drift.ProtectedRuntime;EvidenceStatus='needs-evidence'};Write-Log 'verify' 'pass' $result;$result}
+  'VerifyReboot'{$state=Read-State;$drift=Assert-DriftFree $state;$boot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime();if($boot-le[datetime]$state.capturedBootTime){throw 'A later boot is required.'};if(!(Test-Applied)){throw 'Reboot persistence failed.'};$result=[pscustomobject]@{VerifiedReboot=$true;BootTime=$boot.ToString('o');ProtectedRuntime=$drift.ProtectedRuntime;EvidenceStatus='needs-evidence'};Write-Log 'verify-reboot' 'pass' $result;$result}
+  'Rollback'{$state=Read-State;$drift=Assert-DriftFree $state;Assert-EdgeClosed;$now=Get-Reg $RecommendedPath $ValueName;if(!$now.ValueExists-and!$state.original.ValueExists){Write-Log 'rollback' 'idempotent' @{mutationCount=0;protectedRuntime=$drift.ProtectedRuntime};return [pscustomobject]@{RolledBack=$true;MutationCount=0}};if($state.original.ValueExists){if($now.ValueExists-and!(Test-Applied)){throw 'Policy drift detected; rollback overwrite refused.'};$kind=[Enum]::Parse([Microsoft.Win32.RegistryValueKind],[string]$state.original.Kind,$true);$key=Get-Item -LiteralPath $RecommendedPath;$key.SetValue($ValueName,$state.original.Data,$kind)}else{if($now.ValueExists-and!(Test-Applied)){throw 'Policy drift detected; rollback overwrite refused.'};if($now.ValueExists){Remove-ItemProperty -LiteralPath $RecommendedPath -Name $ValueName};if(!$state.original.KeyExists-and(Test-Path -LiteralPath $RecommendedPath)-and@((Get-Item -LiteralPath $RecommendedPath).GetValueNames()).Count-eq0-and@((Get-ChildItem -LiteralPath $RecommendedPath -ErrorAction SilentlyContinue)).Count-eq0){Remove-Item -LiteralPath $RecommendedPath}};$after=Get-Reg $RecommendedPath $ValueName;if(!(Test-Same $after $state.original)){throw 'Exact rollback verification failed.'};$post=Get-Protected;if(!(Test-Same $post.Configuration $state.protectedConfiguration)){throw 'Protected configuration changed during rollback.'};Write-Log 'rollback' 'pass' @{restoredExactOriginal=$true;protectedRuntime=$post.Runtime};[pscustomobject]@{RolledBack=$true;RestoredExactOriginal=$true}}
+ }
+}catch{Write-Log 'failure' 'failure' @{stage=$Action;message=$_.Exception.Message;type=$_.Exception.GetType().FullName;evidenceStatus='needs-evidence'};throw}
