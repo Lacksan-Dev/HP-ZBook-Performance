@@ -29,6 +29,12 @@ Describe 'EXP-162 scheduled-task provider contract' {
         $Source | Should -Match 'SelfManagedLab'
     }
 
+    It 'independently requires elevation and refuses enterprise management ownership' {
+        foreach ($token in @('Test-Elevated','Get-ManagementState','PartOfDomain','CcmExec','Microsoft\Enrollments','Provisioning\OMADM\Accounts','Enterprise management ownership detected','Management ownership drift detected')) {
+            $Source | Should -Match ([regex]::Escape($token))
+        }
+    }
+
     It 'refuses protected identities and Windows platform task paths' {
         foreach ($token in @('omnissa','windowsapp','remote desktop','tailscale','defender','windowsupdate','credential','recovery','driver','firmware')) {
             $Source.ToLowerInvariant() | Should -Match ([regex]::Escape($token))
@@ -44,17 +50,31 @@ Describe 'EXP-162 scheduled-task provider contract' {
         $Source | Should -Match 'rollback refused'
     }
 
+    It 'refuses captured-state overwrite and retains management state with evidence pending' {
+        $Source | Should -Match 'State overwrite refused'
+        $Source | Should -Match 'management = \$Management'
+        $Source | Should -Match "evidenceStatus = 'needs-evidence'"
+    }
+
+    It 'keeps Apply WhatIf mutation free and returns before post-apply verification' {
+        $apply = [regex]::Match($Source,"'Apply'\s*\{(?<body>[\s\S]*?)\n\s*'Verify'\s*\{").Groups['body'].Value
+        $apply | Should -Match '\$WhatIfPreference'
+        $apply | Should -Match 'Write-Log Apply whatif'
+        $apply | Should -Match 'return \$id'
+        $apply.IndexOf('$WhatIfPreference') | Should -BeLessThan $apply.IndexOf('Disable-ScheduledTask')
+    }
+
+    It 'logs Check DryRun WhatIf success and failure evidence as JSONL' {
+        foreach ($token in @('Write-Log Check success','Write-Log DryRun success','Write-Log Apply whatif','Write-Log $Action failure','ConvertTo-Json -Depth 12 -Compress','Add-Content -LiteralPath $LogPath')) {
+            $Source | Should -Match ([regex]::Escape($token))
+        }
+    }
+
     It 'separates protected runtime evidence from configuration drift gating' {
         $Source | Should -Match 'Get-ProtectedConfiguration'
         $Source | Should -Match 'Get-ProtectedRuntimeEvidence'
         $Source | Should -Match 'Assert-ProtectedConfigurationUnchanged'
         $Source | Should -Not -Match 'Assert-ProtectedRuntime'
-    }
-
-    It 'records structured JSONL success and failure evidence' {
-        $Source | Should -Match 'ConvertTo-Json -Depth 12 -Compress'
-        $Source | Should -Match 'Add-Content -LiteralPath \$LogPath'
-        $Source | Should -Match 'Write-Log \$Action failure'
     }
 
     It 'requires a later boot for reboot persistence verification' {
