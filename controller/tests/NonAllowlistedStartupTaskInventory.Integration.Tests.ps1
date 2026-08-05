@@ -15,10 +15,11 @@ Describe 'EXP-135 issue 305 NonAllowlistedStartupTaskInventory zero-mutation int
    [ordered]@{Tasks=$tasks;Run=$run;Startup=$startup;Packages=$packages;Services=$services;Drivers=$drivers;Devices=$devices;Security=$security;ProtectedProcesses=$protected}|ConvertTo-Json -Compress -Depth 12
   }
  }
- It 'keeps task startup package service driver device security and protected state unchanged during Check and Capture' {
+ It 'keeps task startup package service driver device security and protected state unchanged during Check DryRun and Capture' {
   if($env:LACKSAN_RUN_WINDOWS_INTEGRATION-ne'1' -or $env:OS-ne'Windows_NT'){Set-ItResult -Skipped -Because 'Opt-in HP Windows 11 integration only.';return}
   $before=Snapshot-State;$state=Join-Path $TestDrive 'exp135-issue305-state.json';$log=Join-Path $TestDrive 'exp135-issue305.jsonl'
   & $probe -Action Check -LogPath $log|Out-Null;(Snapshot-State)|Should -BeExactly $before
+  $dry=& $probe -Action DryRun -LogPath $log;$dry.zeroMutation|Should -BeTrue;$dry.plannedMutation|Should -BeNullOrEmpty;(Snapshot-State)|Should -BeExactly $before
   & $probe -Action Capture -StatePath $state -LogPath $log|Out-Null;(Snapshot-State)|Should -BeExactly $before
  }
 }
