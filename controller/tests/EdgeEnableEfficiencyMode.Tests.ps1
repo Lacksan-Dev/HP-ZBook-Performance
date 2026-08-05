@@ -1,0 +1,13 @@
+Describe 'EdgeEnableEfficiencyMode provider contract' {
+ BeforeAll{$script:providerPath=Join-Path $PSScriptRoot '..\providers\EdgeEnableEfficiencyMode.ps1';$text=Get-Content -LiteralPath $script:providerPath -Raw}
+ It 'parses as PowerShell'{$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($script:providerPath,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0}
+ It 'keeps Experimental identity and evidence pending'{Test-Path $script:providerPath|Should -BeTrue;$text|Should -Match 'EXP-074';$text|Should -Match 'needs-evidence';$text|Should -Not -Match 'status:stable|Stable='}
+ It 'implements the complete reversible lifecycle'{foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
+ It 'targets only recommended EfficiencyModeEnabled DWORD 1'{foreach($t in 'EfficiencyModeEnabled','SOFTWARE\\Policies\\Microsoft\\Edge\\Recommended','DWord','Treatment=1','MutationCount=1'){$text|Should -Match $t};$text|Should -Not -Match 'Disable-ScheduledTask|Set-Service|Stop-Service|Remove-AppxPackage|Uninstall-Package|Disable-PnpDevice|pnputil'}
+ It 'requires HP Windows 11 elevation Microsoft signed Edge 106 and no Edge Startup entry'{foreach($t in 'Windows 11','Hewlett-Packard','Test-Elevated','Microsoft Corporation','Major-ge106','Get-StartupFolders','EdgeEntryCount'){$text|Should -Match ([regex]::Escape($t))}}
+ It 'refuses preexisting candidate policy and captures related efficiency state'{foreach($t in 'MandatoryCandidate','RecommendedCandidate','EfficiencyMode','EfficiencyModeOnPowerEnabled','SleepingTabsEnabled','SleepingTabsTimeout','StartupBoostEnabled','BackgroundModeEnabled'){$text|Should -Match $t}}
+ It 'captures identity management power boot and protected state'{foreach($t in 'Sha256','Thumbprint','capturedBootTime','userSid','Get-Protected','Get-Management','Get-PowerObservation','protectedConfiguration','protectedRuntime'){$text|Should -Match $t}}
+ It 'has dry run WhatIf logging idempotence and terminating failure retention'{foreach($t in 'DryRun','WhatIfPreference','Write-Log','ConvertTo-Json -Compress','idempotent','catch','failure'){$text|Should -Match $t}}
+ It 'requires later boot persistence and collision safe exact rollback'{foreach($t in 'A later boot is required','Reboot persistence failed','rollback overwrite refused','Exact rollback verification failed','restoredExactOriginal'){$text|Should -Match $t}}
+ It 'holds security updates Edge Update Remote Desktop and Tailscale configuration'{foreach($t in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','edgeupdate','edgeupdatem','TermService','Tailscale','Protected service configuration drift detected'){$text|Should -Match $t}}
+}
