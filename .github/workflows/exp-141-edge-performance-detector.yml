@@ -1,0 +1,19 @@
+name: EXP-141 Edge Performance Detector
+on:
+  pull_request:
+    paths:
+      - 'controller/providers/EdgeDisablePerformanceDetector.ps1'
+      - 'controller/tests/EdgeDisablePerformanceDetector*.Tests.ps1'
+      - '.github/workflows/exp-141-edge-performance-detector.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Pester
+        shell: pwsh
+        run: Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser
+      - name: Run focused tests
+        shell: pwsh
+        run: Invoke-Pester -Path controller/tests/EdgeDisablePerformanceDetector.Tests.ps1,controller/tests/EdgeDisablePerformanceDetector.Integration.Tests.ps1 -Output Detailed
