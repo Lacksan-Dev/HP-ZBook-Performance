@@ -6,7 +6,7 @@ BeforeAll {
 
 Describe 'EXP-162 scheduled-task provider contract' {
     It 'keeps the provider bound to EXP-162' {
-        $Source | Should -Match "\$ExperimentId = 'EXP-162'"
+        $Source | Should -Match '\$ExperimentId\s*=\s*''EXP-162'''
     }
 
     It 'exposes the complete reversible lifecycle' {
@@ -33,7 +33,7 @@ Describe 'EXP-162 scheduled-task provider contract' {
         foreach ($token in @('omnissa','windowsapp','remote desktop','tailscale','defender','windowsupdate','credential','recovery','driver','firmware')) {
             $Source.ToLowerInvariant() | Should -Match [regex]::Escape($token)
         }
-        $Source | Should -Match "\\Microsoft\\Windows\\\*"
+        $Source | Should -Match [regex]::Escape("`$TaskPath -like '\Microsoft\Windows\*'")
     }
 
     It 'captures exact XML plus structural hash and verifies exact XML on rollback' {
@@ -58,7 +58,7 @@ Describe 'EXP-162 scheduled-task provider contract' {
     }
 
     It 'requires a later boot for reboot persistence verification' {
-        $Source | Should -Match "A later boot has not occurred"
+        $Source | Should -Match 'A later boot has not occurred'
     }
 
     It 'does not alter services, drivers, packages, files, registry, or security configuration' {
