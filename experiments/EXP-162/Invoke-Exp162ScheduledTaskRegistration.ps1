@@ -121,7 +121,7 @@ try {
         'Check' {
             Assert-SafeContext
             $id = Get-TaskIdentity
-            [pscustomobject]@{experiment=$ExperimentId;supported=$true;candidate=$id;protectedRuntime=Get-ProtectedRuntimeEvidence}
+            [pscustomobject]@{experiment=$ExperimentId;supported=$true;candidate=$id;protectedRuntime=(Get-ProtectedRuntimeEvidence)}
         }
         'Capture' {
             Assert-SafeContext
@@ -156,7 +156,7 @@ try {
             Assert-ProtectedConfigurationUnchanged $state.protectedConfiguration
             $id = Get-TaskIdentity
             if ($id.structuralHash -ne $state.original.structuralHash -or $id.enabled) { throw 'Treatment verification failed.' }
-            Write-Log Verify success 'Treatment state verified.' $state.original ([pscustomobject]@{task=$id;runtime=Get-ProtectedRuntimeEvidence})
+            Write-Log Verify success 'Treatment state verified.' $state.original ([pscustomobject]@{task=$id;runtime=(Get-ProtectedRuntimeEvidence)})
             $id
         }
         'VerifyReboot' {
@@ -165,7 +165,7 @@ try {
             Assert-ProtectedConfigurationUnchanged $state.protectedConfiguration
             $id = Get-TaskIdentity
             if ($id.structuralHash -ne $state.original.structuralHash -or $id.enabled) { throw 'Reboot persistence verification failed.' }
-            Write-Log VerifyReboot success 'Disabled state persisted across reboot.' $state.original ([pscustomobject]@{task=$id;runtime=Get-ProtectedRuntimeEvidence})
+            Write-Log VerifyReboot success 'Disabled state persisted across reboot.' $state.original ([pscustomobject]@{task=$id;runtime=(Get-ProtectedRuntimeEvidence)})
             $id
         }
         'Rollback' {
@@ -181,7 +181,7 @@ try {
             }
             $after = Get-TaskIdentity
             if ($after.structuralHash -ne $state.original.structuralHash -or $after.enabled -ne [bool]$state.original.enabled -or $after.xmlHash -ne $state.original.xmlHash) { throw 'Exact rollback verification failed.' }
-            Write-Log Rollback success 'Captured task state restored exactly.' $id ([pscustomobject]@{task=$after;runtime=Get-ProtectedRuntimeEvidence})
+            Write-Log Rollback success 'Captured task state restored exactly.' $id ([pscustomobject]@{task=$after;runtime=(Get-ProtectedRuntimeEvidence)})
             $after
         }
     }
