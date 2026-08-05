@@ -36,11 +36,19 @@ Describe 'EXP-162 scheduled-task provider contract' {
         $Source | Should -Match "\\Microsoft\\Windows\\\*"
     }
 
-    It 'captures exact XML plus a structural hash and refuses rollback drift' {
+    It 'captures exact XML plus structural hash and verifies exact XML on rollback' {
         $Source | Should -Match 'Export-ScheduledTask'
         $Source | Should -Match 'xmlHash'
         $Source | Should -Match 'structuralHash'
+        $Source | Should -Match '\$after\.xmlHash -ne \$state\.original\.xmlHash'
         $Source | Should -Match 'rollback refused'
+    }
+
+    It 'separates protected runtime evidence from configuration drift gating' {
+        $Source | Should -Match 'Get-ProtectedConfiguration'
+        $Source | Should -Match 'Get-ProtectedRuntimeEvidence'
+        $Source | Should -Match 'Assert-ProtectedConfigurationUnchanged'
+        $Source | Should -Not -Match 'Assert-ProtectedRuntime'
     }
 
     It 'records structured JSONL success and failure evidence' {
