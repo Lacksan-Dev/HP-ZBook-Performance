@@ -1,0 +1,35 @@
+name: EXP-124 Microsoft 365 Run quick launch
+
+on:
+  pull_request:
+    paths:
+      - 'controller/providers/Microsoft365RunQuickLaunchRemoval.ps1'
+      - 'controller/tests/Microsoft365RunQuickLaunchRemoval*.Tests.ps1'
+      - '.github/workflows/exp-124-m365-run-quick-launch.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pester:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force
+      - name: Validate EXP-124 provider
+        shell: pwsh
+        run: |
+          $config = New-PesterConfiguration
+          $config.Run.Path = @(
+            'controller/tests/Microsoft365RunQuickLaunchRemoval.Tests.ps1',
+            'controller/tests/Microsoft365RunQuickLaunchRemoval.Integration.Tests.ps1'
+          )
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
