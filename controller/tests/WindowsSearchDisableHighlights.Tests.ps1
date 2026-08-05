@@ -1,0 +1,12 @@
+Describe 'WindowsSearchDisableHighlights provider contract' {
+ BeforeAll{$script:providerPath=Join-Path $PSScriptRoot '..\providers\WindowsSearchDisableHighlights.ps1';$text=Get-Content -LiteralPath $script:providerPath -Raw}
+ It 'parses as PowerShell'{$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($script:providerPath,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0}
+ It 'keeps Experimental identity and evidence pending'{Test-Path $script:providerPath|Should -BeTrue;$text|Should -Match 'EXP-083';$text|Should -Match 'needs-evidence';$text|Should -Not -Match 'status:stable|Stable='}
+ It 'implements the complete reversible lifecycle'{foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
+ It 'targets only Search highlights policy DWORD zero'{foreach($t in 'EnableDynamicContentInWSB','SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search','DWord','Treatment=0','MutationCount=1'){$text|Should -Match $t};$text|Should -Not -Match 'Set-Service|Stop-Service|Disable-ScheduledTask|Remove-AppxPackage|Uninstall-Package|Disable-PnpDevice|pnputil|netsh'}
+ It 'requires Windows 11 supported editions build elevation and unmanaged ownership'{foreach($t in 'Windows 11','Professional','Enterprise','Education','IoTEnterprise','Build-ge22000','Test-Elevated','Get-Management','Managed'){$text|Should -Match ([regex]::Escape($t))}}
+ It 'captures exact registry platform management boot and protected state'{foreach($t in 'KeyExists','ValueExists','Kind','Data','capturedBootTime','userSid','platform','management','protectedConfiguration','protectedRuntime'){$text|Should -Match $t}}
+ It 'has dry run WhatIf structured logging idempotence and terminating failure retention'{foreach($t in 'DryRun','WhatIfPreference','Write-Log','ConvertTo-Json -Compress','idempotent','catch','failure'){$text|Should -Match $t}}
+ It 'requires later boot persistence and collision safe exact rollback'{foreach($t in 'A later boot is required','Reboot persistence failed','rollback overwrite refused','Exact rollback verification failed','restoredExactOriginal'){$text|Should -Match $t}}
+ It 'preserves Search security updates Remote Desktop and Tailscale configuration'{foreach($t in 'WSearch','WinDefend','mpssvc','wuauserv','UsoSvc','BITS','TermService','Tailscale','Protected service configuration drift detected'){$text|Should -Match $t}}
+}
