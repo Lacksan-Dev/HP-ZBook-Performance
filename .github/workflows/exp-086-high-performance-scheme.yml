@@ -1,0 +1,29 @@
+name: EXP-086 High Performance Power Scheme
+on:
+  pull_request:
+    paths:
+      - 'controller/providers/HighPerformancePowerScheme.ps1'
+      - 'controller/tests/HighPerformancePowerScheme*.Tests.ps1'
+      - '.github/workflows/exp-086-high-performance-scheme.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pester:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force
+      - name: Validate EXP-086 provider
+        shell: pwsh
+        run: |
+          $c=New-PesterConfiguration
+          $c.Run.Path=@('controller/tests/HighPerformancePowerScheme.Tests.ps1','controller/tests/HighPerformancePowerScheme.Integration.Tests.ps1')
+          $c.Run.Exit=$true
+          $c.Output.Verbosity='Detailed'
+          Invoke-Pester -Configuration $c
