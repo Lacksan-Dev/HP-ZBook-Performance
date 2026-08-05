@@ -1,4 +1,4 @@
-Describe 'EXP-155 zero-mutation Windows integration' -Tag 'WindowsIntegration' {
+Describe 'EXP-160 zero-mutation Windows integration' -Tag 'WindowsIntegration' {
  BeforeAll {
   $script:providerPath=Join-Path $PSScriptRoot '..\providers\InventoryBoundStartupFolderRemoval.ps1'
   $script:enabled=($env:LACKSAN_RUN_WINDOWS_INTEGRATION-eq'1'-and$env:OS-eq'Windows_NT')
@@ -10,14 +10,14 @@ Describe 'EXP-155 zero-mutation Windows integration' -Tag 'WindowsIntegration' {
   }
  }
  It 'Check and DryRun preserve Startup folders and protected services' -Skip:(-not$script:enabled) {
-  $selection=$env:LACKSAN_EXP155_SELECTION;if([string]::IsNullOrWhiteSpace($selection)-or!(Test-Path $selection)){Set-ItResult -Skipped -Because 'Set LACKSAN_EXP155_SELECTION to a real EXP-143 selection artifact.';return}
+  $selection=$env:LACKSAN_EXP160_SELECTION;if([string]::IsNullOrWhiteSpace($selection)-or!(Test-Path $selection)){Set-ItResult -Skipped -Because 'Set LACKSAN_EXP160_SELECTION to a real EXP-143 selection artifact.';return}
   $state=Join-Path $TestDrive 'state.json';$log=Join-Path $TestDrive 'events.jsonl';$beforeStartup=Snapshot-Startup;$beforeProtected=Snapshot-Protected
   $check=& $script:providerPath -Action Check -SelectionPath $selection -StatePath $state -LogPath $log
   if($check.Supported){& $script:providerPath -Action DryRun -SelectionPath $selection -StatePath $state -LogPath $log|Out-Null}
   (Snapshot-Startup)|Should -BeExactly $beforeStartup;(Snapshot-Protected)|Should -BeExactly $beforeProtected;Test-Path $state|Should -BeFalse
  }
  It 'Capture and Apply WhatIf preserve production state when eligible' -Skip:(-not$script:enabled) {
-  $selection=$env:LACKSAN_EXP155_SELECTION;if([string]::IsNullOrWhiteSpace($selection)-or!(Test-Path $selection)){Set-ItResult -Skipped -Because 'Set LACKSAN_EXP155_SELECTION to a real EXP-143 selection artifact.';return}
+  $selection=$env:LACKSAN_EXP160_SELECTION;if([string]::IsNullOrWhiteSpace($selection)-or!(Test-Path $selection)){Set-ItResult -Skipped -Because 'Set LACKSAN_EXP160_SELECTION to a real EXP-143 selection artifact.';return}
   $state=Join-Path $TestDrive 'whatif-state.json';$log=Join-Path $TestDrive 'whatif-events.jsonl';$beforeStartup=Snapshot-Startup;$beforeProtected=Snapshot-Protected
   $check=& $script:providerPath -Action Check -SelectionPath $selection -StatePath $state -LogPath $log;if(!$check.Supported){Set-ItResult -Skipped -Because ($check.Reasons-join'; ');return}
   & $script:providerPath -Action Capture -SelectionPath $selection -StatePath $state -LogPath $log|Out-Null;& $script:providerPath -Action Apply -SelectionPath $selection -StatePath $state -LogPath $log -WhatIf|Out-Null
