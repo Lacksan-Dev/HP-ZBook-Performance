@@ -31,9 +31,9 @@ Describe 'EXP-162 scheduled-task provider contract' {
 
     It 'refuses protected identities and Windows platform task paths' {
         foreach ($token in @('omnissa','windowsapp','remote desktop','tailscale','defender','windowsupdate','credential','recovery','driver','firmware')) {
-            $Source.ToLowerInvariant() | Should -Match [regex]::Escape($token)
+            $Source.ToLowerInvariant() | Should -Match ([regex]::Escape($token))
         }
-        $Source | Should -Match [regex]::Escape("`$TaskPath -like '\Microsoft\Windows\*'")
+        $Source | Should -Match ([regex]::Escape("`$TaskPath -like '\Microsoft\Windows\*'"))
     }
 
     It 'captures exact XML plus structural hash and verifies exact XML on rollback' {
