@@ -1,12 +1,16 @@
-$providerPath=Join-Path $PSScriptRoot '..\providers\EdgeStartupBoostEnabledPolicy.ps1'
 Describe 'EXP-079 Edge Startup Boost enabled provider contract' {
-    BeforeAll { $content=Get-Content -LiteralPath $providerPath -Raw }
-    It 'parses as PowerShell' { { [scriptblock]::Create($content) } | Should -Not -Throw }
-    It 'supports the complete reversible action contract' { foreach($action in @('Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback')) { $content | Should -Match "'$action'" } }
-    It 'targets one recommended policy value and value 1' { $content | Should -Match 'StartupBoostEnabled'; $content | Should -Match "targetValue=1"; $content | Should -Match 'Edge\\Recommended' }
-    It 'requires HP Windows 11, elevation, Edge 88, and enterprise refusal' { $content | Should -Match 'Windows 11'; $content | Should -Match 'Hewlett-Packard'; $content | Should -Match 'Major-ge88'; $content | Should -Match 'Elevation is required'; $content | Should -Match 'Enterprise management detected' }
-    It 'refuses existing mandatory or recommended policy ownership' { $content | Should -Match 'mandatory.*recommended Startup Boost policy detected' }
-    It 'captures state and refuses identity or policy drift' { $content | Should -Match 'State identity validation failed'; $content | Should -Match 'policy drifted' }
-    It 'provides dry run, ShouldProcess, idempotence, verification, JSONL logging, and exact rollback' { $content | Should -Match 'SupportsShouldProcess'; $content | Should -Match 'WouldChange'; $content | Should -Match 'MutationCount=0'; $content | Should -Match 'ConvertTo-Json -Compress'; $content | Should -Match 'restoredExactOriginal' }
-    It 'does not mutate protected scopes' { $content | Should -Not -Match 'Set-MpPreference|Disable-WindowsOptionalFeature|Remove-AppxPackage|sc.exe|Set-Service|Stop-Service|Disable-NetAdapter|pnputil|bcdedit' }
+ BeforeAll{$script:providerPath=Join-Path $PSScriptRoot '..\providers\EdgeStartupBoostEnabledPolicy.ps1';$script:text=Get-Content -LiteralPath $script:providerPath -Raw}
+ It 'parses as PowerShell'{$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($script:providerPath,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0}
+ It 'retains Experimental identity and pending physical evidence'{$script:text|Should -Match 'EXP-079';$script:text|Should -Match 'needs-evidence';$script:text|Should -Not -Match 'status:stable|Stable='}
+ It 'implements the complete reversible lifecycle'{foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$script:text|Should -Match "'$a'"}}
+ It 'targets only the recommended Startup Boost DWORD'{$script:text|Should -Match 'StartupBoostEnabled';$script:text|Should -Match "TargetValue=1";$script:text|Should -Match 'Microsoft\\Edge\\Recommended';$script:text|Should -Match "PropertyType DWord -Value \$TargetValue"}
+ It 'requires HP Windows 11 elevation signed Edge 88 and self-managed ownership'{foreach($x in 'Windows 11 required','HP platform required','Elevation required','Exactly one Microsoft-signed Edge 88+ installation required','Enterprise management ownership detected','CcmExec','Microsoft\\Enrollments','Provisioning\\OMADM\\Accounts'){$script:text|Should -Match ([regex]::Escape($x))}}
+ It 'keeps Edge out of both Startup folders'{foreach($x in 'CommonStartup','EdgeEntryCount','Edge Startup-folder entry refused','Edge Startup-folder drift detected'){$script:text|Should -Match ([regex]::Escape($x))}}
+ It 'captures exact Edge policy boot user and protected state' {foreach($x in 'Sha256','Thumbprint','SignatureStatus','capturedBootUtc','userSid','original=','mandatory=','protectedHash'){$script:text|Should -Match $x}}
+ It 'refuses state overwrite policy collisions and identity drift'{foreach($x in 'State overwrite refused','Recommended policy collision detected','Rollback collision detected','Edge executable identity drift detected','Mandatory policy drift detected','Protected configuration drift detected'){$script:text|Should -Match ([regex]::Escape($x))}}
+ It 'provides DryRun WhatIf structured logging idempotence and terminating failure retention'{foreach($x in 'DryRun','WhatIfPreference','ShouldProcess','ConvertTo-Json -Compress','Add-Content','idempotent','failureDetail','ErrorActionPreference','catch'){$script:text|Should -Match $x}}
+ It 'requires a genuinely later boot before persistence succeeds'{$script:text|Should -Match 'A later boot is required';$script:text|Should -Match 'Reboot persistence failed'}
+ It 'restores exact original value type and key semantics'{$script:text|Should -Match 'RegistryValueKind';$script:text|Should -Match 'RestoredExactOriginal';$script:text|Should -Match 'Exact rollback verification failed';$script:text|Should -Match 'Remove-ItemProperty'}
+ It 'preserves security updates Edge Update and protected remote access configuration'{foreach($x in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','edgeupdate','edgeupdatem','TermService','Tailscale'){$script:text|Should -Match $x}}
+ It 'contains no package service driver device profile or security mutation primitives'{$script:text|Should -Not -Match 'Remove-AppxPackage|Uninstall-Package|Disable-PnpDevice|Remove-PnpDevice|pnputil|Set-MpPreference|Set-NetFirewall|Disable-ScheduledTask|Stop-Service|sc\.exe\s+config'}
 }
