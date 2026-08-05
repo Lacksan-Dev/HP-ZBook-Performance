@@ -1,0 +1,35 @@
+name: EXP-087 HP Support Solutions Framework Manual
+
+on:
+  pull_request:
+    paths:
+      - 'controller/providers/HPSupportSolutionsFrameworkManual.ps1'
+      - 'controller/tests/HPSupportSolutionsFrameworkManual*.Tests.ps1'
+      - '.github/workflows/exp-087-hp-support-framework-manual.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pester:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force
+      - name: Validate EXP-087 provider
+        shell: pwsh
+        run: |
+          $config = New-PesterConfiguration
+          $config.Run.Path = @(
+            'controller/tests/HPSupportSolutionsFrameworkManual.Tests.ps1',
+            'controller/tests/HPSupportSolutionsFrameworkManual.Integration.Tests.ps1'
+          )
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
