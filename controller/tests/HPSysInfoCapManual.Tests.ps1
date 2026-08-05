@@ -1,0 +1,14 @@
+Describe 'EXP-065 HP System Info HSA Manual provider contract' {
+ BeforeAll{$script:providerPath=Join-Path $PSScriptRoot '..\providers\HPSysInfoCapManual.ps1';$script:text=Get-Content -LiteralPath $script:providerPath -Raw}
+ It 'parses as PowerShell'{$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($script:providerPath,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0}
+ It 'retains Experimental identity and pending evidence'{$script:text|Should -Match 'EXP-065';$script:text|Should -Match 'needs-evidence';$script:text|Should -Not -Match 'status:stable|Stable='}
+ It 'implements the reversible lifecycle'{foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$script:text|Should -Match "'$a'"}}
+ It 'qualifies HP Windows 11 elevation and unmanaged ownership'{foreach($x in 'Windows 11 required','HP platform required','Elevation required','Enterprise management ownership detected','CcmExec','Microsoft\\Enrollments','Provisioning\\OMADM\\Accounts'){$script:text|Should -Match $x}}
+ It 'requires exact service and HP signed executable identity'{foreach($x in 'HPSysInfoCap','HP System Info HSA Service','HPSigned','Sha256','Thumbprint'){$script:text|Should -Match ([regex]::Escape($x))}}
+ It 'captures dependency recovery trigger account and delayed-start state'{foreach($x in 'StartName','Dependencies','Dependents','qfailure','qtriggerinfo','DelayedAutoStart','RegistryOwner'){$script:text|Should -Match $x}}
+ It 'changes only startup configuration to Manual during Apply'{$script:text|Should -Match 'start= demand';$script:text|Should -Match 'PreserveCurrentRunningState';$script:text|Should -Not -Match 'Remove-AppxPackage|Uninstall-Package|Disable-PnpDevice|Remove-PnpDevice|pnputil|sc\.exe\s+delete'}
+ It 'provides dry run WhatIf JSONL idempotence and failure retention'{foreach($x in 'DryRun','WhatIfPreference','ConvertTo-Json -Compress','Add-Content','idempotent','failureDetail','catch'){$script:text|Should -Match $x}}
+ It 'requires later boot and refuses drift or rollback collision'{foreach($x in 'A later boot is required','Reboot persistence failed','Executable identity drift detected','Service configuration drift detected','Management ownership drift detected','Protected configuration drift detected','Rollback collision detected'){$script:text|Should -Match ([regex]::Escape($x))}}
+ It 'restores exact startup delayed-start and running state'{foreach($x in 'Restore-State','original.StartMode','original.DelayedAutoStart','original.State','Exact rollback verification failed'){$script:text|Should -Match $x}}
+ It 'preserves security update and protected remote access service configuration'{foreach($x in 'WinDefend','mpssvc','wuauserv','UsoSvc','BITS','TermService','Tailscale'){$script:text|Should -Match $x}}
+}
