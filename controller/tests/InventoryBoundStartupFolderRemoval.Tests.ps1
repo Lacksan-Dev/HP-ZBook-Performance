@@ -1,4 +1,4 @@
-Describe 'EXP-155 inventory-bound Startup-folder provider contract' {
+Describe 'EXP-160 inventory-bound Startup-folder provider contract' {
  BeforeAll {$script:providerPath=Join-Path $PSScriptRoot '..\providers\InventoryBoundStartupFolderRemoval.ps1';$text=Get-Content -LiteralPath $script:providerPath -Raw}
  It 'parses as PowerShell' {$tokens=$null;$errors=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($script:providerPath,[ref]$tokens,[ref]$errors);@($errors).Count|Should -Be 0}
  It 'implements the complete reversible lifecycle' {foreach($a in 'Check','Capture','DryRun','Apply','Verify','VerifyReboot','Rollback'){$text|Should -Match "'$a'"}}
@@ -13,5 +13,5 @@ Describe 'EXP-155 inventory-bound Startup-folder provider contract' {
  It 'requires a later boot for persistence verification' {$text|Should -Match 'Later boot required';$text|Should -Match 'Treatment failed reboot persistence'}
  It 'refuses conflicting rollback and restores exact captured content' {foreach($x in 'Rollback conflicting-path overwrite refused','WriteAllBytes','SetSecurityDescriptorSddlForm','Set-Acl','Exact rollback verification failed','restoredExactOriginal'){$text|Should -Match $x}}
  It 'retains Experimental evidence state without Stable assignment' {$text|Should -Match 'needs-evidence';$text|Should -Not -Match 'status:stable|Stable='}
- It 'uses current experiment identity only' {$text|Should -Match 'EXP-155';$text|Should -Not -Match 'EXP-146'}
+ It 'uses current experiment identity only' {$text|Should -Match 'EXP-160';$text|Should -Not -Match 'EXP-155|EXP-146'}
 }
