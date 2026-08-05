@@ -42,6 +42,8 @@ on:
       - 'controller/tests/EdgeDisableAddressBarClipboardSuggestions*.Tests.ps1'
       - 'controller/providers/EdgeDisableShoppingAssistant.ps1'
       - 'controller/tests/EdgeDisableShoppingAssistant*.Tests.ps1'
+      - 'controller/providers/EdgeDisableTextPrediction.ps1'
+      - 'controller/tests/EdgeDisableTextPrediction*.Tests.ps1'
       - 'controller/tests/EXP-154.StartupTaskRollbackGate*.Tests.ps1'
       - '.github/workflows/codex-portfolio-agent.yml'
   workflow_dispatch:
@@ -102,6 +104,8 @@ jobs:
             'controller/tests/EdgeDisableAddressBarClipboardSuggestions.Integration.Tests.ps1',
             'controller/tests/EdgeDisableShoppingAssistant.Tests.ps1',
             'controller/tests/EdgeDisableShoppingAssistant.Integration.Tests.ps1',
+            'controller/tests/EdgeDisableTextPrediction.Tests.ps1',
+            'controller/tests/EdgeDisableTextPrediction.Integration.Tests.ps1',
             'controller/tests/EXP-154.StartupTaskRollbackGate.Tests.ps1',
             'controller/tests/EXP-154.StartupTaskRollbackGate.Integration.Tests.ps1'
           )
