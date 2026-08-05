@@ -48,6 +48,8 @@ on:
       - 'controller/tests/EdgeRequireHardwareAcceleration*.Tests.ps1'
       - 'controller/providers/EdgeSleepingTabsTimeout15Minutes.ps1'
       - 'controller/tests/EdgeSleepingTabsTimeout15Minutes*.Tests.ps1'
+      - 'controller/providers/EdgeDisableNetworkPrediction.ps1'
+      - 'controller/tests/EdgeDisableNetworkPrediction*.Tests.ps1'
       - 'controller/tests/EXP-154.StartupTaskRollbackGate*.Tests.ps1'
       - '.github/workflows/codex-portfolio-agent.yml'
   workflow_dispatch:
@@ -114,6 +116,8 @@ jobs:
             'controller/tests/EdgeRequireHardwareAcceleration.Integration.Tests.ps1',
             'controller/tests/EdgeSleepingTabsTimeout15Minutes.Tests.ps1',
             'controller/tests/EdgeSleepingTabsTimeout15Minutes.Integration.Tests.ps1',
+            'controller/tests/EdgeDisableNetworkPrediction.Tests.ps1',
+            'controller/tests/EdgeDisableNetworkPrediction.Integration.Tests.ps1',
             'controller/tests/EXP-154.StartupTaskRollbackGate.Tests.ps1',
             'controller/tests/EXP-154.StartupTaskRollbackGate.Integration.Tests.ps1'
           )
