@@ -1,7 +1,6 @@
-$probe=Join-Path $PSScriptRoot '..\research\NonAllowlistedStartupTaskInventory.ps1'
 Describe 'EXP-135 issue 305 NonAllowlistedStartupTaskInventory zero-mutation integration' -Tag 'WindowsIntegration' {
  BeforeAll {
-  if($env:LACKSAN_RUN_WINDOWS_INTEGRATION-ne'1' -or $env:OS-ne'Windows_NT'){Set-ItResult -Skipped -Because 'Opt-in HP Windows 11 integration only.';return}
+  $script:probe=Join-Path $PSScriptRoot '..\research\NonAllowlistedStartupTaskInventory.ps1'
   function Snapshot-State {
    $tasks=Get-ScheduledTask -ErrorAction SilentlyContinue|Sort-Object TaskPath,TaskName|ForEach-Object{[ordered]@{TaskPath=$_.TaskPath;TaskName=$_.TaskName;Enabled=[bool]$_.Settings.Enabled;State=$_.State.ToString()}}
    $run=@('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run','HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce','HKLM:\Software\Microsoft\Windows\CurrentVersion\Run','HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce')|ForEach-Object{if(Test-Path $_){[ordered]@{Path=$_;Values=(Get-ItemProperty $_|Select-Object * -ExcludeProperty PSPath,PSParentPath,PSChildName,PSDrive,PSProvider)}}}
@@ -18,8 +17,8 @@ Describe 'EXP-135 issue 305 NonAllowlistedStartupTaskInventory zero-mutation int
  It 'keeps task startup package service driver device security and protected state unchanged during Check DryRun and Capture' {
   if($env:LACKSAN_RUN_WINDOWS_INTEGRATION-ne'1' -or $env:OS-ne'Windows_NT'){Set-ItResult -Skipped -Because 'Opt-in HP Windows 11 integration only.';return}
   $before=Snapshot-State;$state=Join-Path $TestDrive 'exp135-issue305-state.json';$log=Join-Path $TestDrive 'exp135-issue305.jsonl'
-  & $probe -Action Check -LogPath $log|Out-Null;(Snapshot-State)|Should -BeExactly $before
-  $dry=& $probe -Action DryRun -LogPath $log;$dry.zeroMutation|Should -BeTrue;$dry.plannedMutation|Should -BeNullOrEmpty;(Snapshot-State)|Should -BeExactly $before
-  & $probe -Action Capture -StatePath $state -LogPath $log|Out-Null;(Snapshot-State)|Should -BeExactly $before
+  & $script:probe -Action Check -LogPath $log|Out-Null;(Snapshot-State)|Should -BeExactly $before
+  $dry=& $script:probe -Action DryRun -LogPath $log;$dry.zeroMutation|Should -BeTrue;$dry.plannedMutation|Should -BeNullOrEmpty;(Snapshot-State)|Should -BeExactly $before
+  & $script:probe -Action Capture -StatePath $state -LogPath $log|Out-Null;(Snapshot-State)|Should -BeExactly $before
  }
 }
