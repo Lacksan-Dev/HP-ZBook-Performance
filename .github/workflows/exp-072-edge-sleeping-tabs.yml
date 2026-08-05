@@ -1,0 +1,35 @@
+name: EXP-072 Edge sleeping tabs
+
+on:
+  pull_request:
+    paths:
+      - 'controller/providers/EdgeEnableSleepingTabs.ps1'
+      - 'controller/tests/EdgeEnableSleepingTabs*.Tests.ps1'
+      - '.github/workflows/exp-072-edge-sleeping-tabs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pester:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force
+      - name: Validate EXP-072 provider
+        shell: pwsh
+        run: |
+          $config = New-PesterConfiguration
+          $config.Run.Path = @(
+            'controller/tests/EdgeEnableSleepingTabs.Tests.ps1',
+            'controller/tests/EdgeEnableSleepingTabs.Integration.Tests.ps1'
+          )
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
