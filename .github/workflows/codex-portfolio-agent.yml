@@ -13,6 +13,7 @@ on:
       - 'experiments/EXP-067/**'
       - 'experiments/EXP-087/**'
       - 'experiments/EXP-154/**'
+      - 'experiments/EXP-162/**'
       - 'controller/providers/LogitechDownloadAssistantDemandLaunch.ps1'
       - 'controller/tests/LogitechDownloadAssistantDemandLaunch*.Tests.ps1'
       - 'controller/providers/SetPointEventManagerDemandLaunch.ps1'
@@ -71,6 +72,8 @@ jobs:
             'experiments/EXP-067/Invoke-Exp067HpDiagnostics.Integration.Tests.ps1',
             'experiments/EXP-087/Invoke-Exp087LabHarness.Tests.ps1',
             'experiments/EXP-087/Invoke-Exp087LabHarness.Integration.Tests.ps1',
+            'experiments/EXP-162/Invoke-Exp162ScheduledTaskRegistration.Tests.ps1',
+            'experiments/EXP-162/Invoke-Exp162ScheduledTaskRegistration.Integration.Tests.ps1',
             'controller/tests/LogitechDownloadAssistantDemandLaunch.Tests.ps1',
             'controller/tests/LogitechDownloadAssistantDemandLaunch.Integration.Tests.ps1',
             'controller/tests/SetPointEventManagerDemandLaunch.Tests.ps1',
