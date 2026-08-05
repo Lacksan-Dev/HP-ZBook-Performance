@@ -10,7 +10,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $provider = Join-Path $PSScriptRoot 'Invoke-Exp162ScheduledTaskRegistration.ps1'
 
-if (-not $IsWindows -and $PSVersionTable.PSVersion.Major -ge 6) {
+if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) {
     Write-Output 'SKIP: EXP-162 integration requires Windows ScheduledTasks.'
     exit 0
 }
