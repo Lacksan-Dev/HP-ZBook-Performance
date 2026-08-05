@@ -20,8 +20,6 @@ function Get-Classification {
 
 function Add-Record {
     param([System.Collections.Generic.List[object]]$List,[string]$Surface,[string]$Identity,[string]$Command,[object]$State)
-    # Classification uses registration metadata as well as identity/command. Packaged StartupTasks often expose
-    # useful product/publisher/display-name evidence only in manifest metadata while executable identity is sparse.
     $stateText = if ($null -eq $State) { '' } else { $State | ConvertTo-Json -Compress -Depth 8 }
     $c = Get-Classification "$Identity $Command $stateText"
     $List.Add([pscustomobject]@{
@@ -32,7 +30,7 @@ function Add-Record {
 
 $records = [System.Collections.Generic.List[object]]::new()
 
-# Startup folders. Read only. Resolve shortcut target/arguments when WScript is available while preserving the shortcut path as registration identity.
+# Startup folders. Read only. Resolve shortcut metadata and capture exact local restore/security evidence where readable.
 $startupFolders = @(
     [Environment]::GetFolderPath('Startup'),
     [Environment]::GetFolderPath('CommonStartup')
@@ -42,23 +40,35 @@ foreach ($folder in $startupFolders) {
         $command = $_.FullName
         $target = $null
         $arguments = $null
+        $workingDirectory = $null
         if ($_.Extension -ieq '.lnk') {
             try {
                 $shell = New-Object -ComObject WScript.Shell
                 $shortcut = $shell.CreateShortcut($_.FullName)
                 $target = $shortcut.TargetPath
                 $arguments = $shortcut.Arguments
+                $workingDirectory = $shortcut.WorkingDirectory
                 if ($target) { $command = ('"{0}" {1}' -f $target,$arguments).Trim() }
             } catch { }
         }
-        # Capture byte-exact local restore evidence now, while the inventory remains read only.
         $fileBytes = [IO.File]::ReadAllBytes($_.FullName)
         $fileSha = [Security.Cryptography.SHA256]::Create()
         try { $fileHash = ([BitConverter]::ToString($fileSha.ComputeHash($fileBytes))).Replace('-','') } finally { $fileSha.Dispose() }
+        $owner = $null
+        $sddl = $null
+        $aclEvidenceStatus = 'available'
+        try {
+            $acl = Get-Acl -LiteralPath $_.FullName -ErrorAction Stop
+            $owner = [string]$acl.Owner
+            $sddl = $acl.GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::All)
+        } catch {
+            $aclEvidenceStatus = 'needs-evidence'
+        }
         Add-Record $records 'StartupFolder' $_.FullName $command @{
             length=$_.Length; sha256=$fileHash; contentBase64=[Convert]::ToBase64String($fileBytes)
             attributes=[string]$_.Attributes; creationTimeUtc=$_.CreationTimeUtc.ToString('o'); lastWriteTimeUtc=$_.LastWriteTimeUtc.ToString('o')
-            target=$target; arguments=$arguments
+            target=$target; arguments=$arguments; workingDirectory=$workingDirectory
+            owner=$owner; sddl=$sddl; aclEvidenceStatus=$aclEvidenceStatus
         }
     }
 }
@@ -126,7 +136,7 @@ $duplicates = @($normalized | Group-Object command | Where-Object { $_.Name -and
 } | Sort-Object command)
 
 # Hash only stable registration evidence. Runtime metadata is logged separately so repeated unchanged inventories produce the same SHA-256.
-$stableBundle = [pscustomobject]@{ experiment='EXP-143'; schemaVersion=5; mode='read-only'; registrations=$normalized; duplicates=$duplicates }
+$stableBundle = [pscustomobject]@{ experiment='EXP-143'; schemaVersion=6; mode='read-only'; registrations=$normalized; duplicates=$duplicates }
 $stableJson = $stableBundle | ConvertTo-Json -Depth 12
 $stableBytes = [Text.Encoding]::UTF8.GetBytes($stableJson)
 $sha = [Security.Cryptography.SHA256]::Create()
