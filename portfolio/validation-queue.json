@@ -365,7 +365,12 @@
       "experiment": "EXP-091",
       "issue": 241,
       "track": "startup-responsiveness",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Provide exactly one eligible signed Logitech G Hub logon task on the bound ZBook; the current machine has no eligible-looking task.",
+        "Merge bounded pass/fail verification for manual G Hub launch, device/profile readiness, supported update behavior, and every declared protected application; the current harness records those workflows as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic state and failure-safe exact rollback."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-091/Invoke-Exp091LabHarness.ps1",
       "runsPerArm": 5,
@@ -399,7 +404,11 @@
       "experiment": "EXP-099",
       "issue": 254,
       "track": "startup-responsiveness",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge bounded pass/fail verification for manual Logi Options+ launch, device/profile and updater readiness, and every declared protected application; the current harness records those workflows as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic state and failure-safe exact rollback."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-099/Invoke-Exp099LabHarness.ps1",
       "runsPerArm": 5,
@@ -433,7 +442,11 @@
       "experiment": "EXP-125",
       "issue": 289,
       "track": "startup-responsiveness",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge bounded pass/fail verification for manual Microsoft Teams launch, meeting and update readiness, servicing integrity, and every declared protected application; the current harness records those workflows as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic state and failure-safe exact rollback."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-125/Invoke-Exp125LabHarness.ps1",
       "runsPerArm": 5,
@@ -467,7 +480,12 @@
       "experiment": "EXP-055",
       "issue": null,
       "track": "service-candidate",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge bounded pass/fail verification for Logitech G Hub updater demand behavior, application/device/update readiness, and every declared protected scope.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic state and failure-safe exact rollback.",
+        "Add a distinct post-rollback boot that verifies the exact restored service configuration, running state, customer workflow, and all declared protected scopes before summary or pointer removal."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-055/Invoke-EXP055LabHarness.ps1",
       "runsPerArm": 5,
@@ -501,7 +519,12 @@
       "experiment": "EXP-063",
       "issue": null,
       "track": "service-candidate",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge bounded pass/fail verification for HP App Helper demand behavior, HP-dependent workflows, and every declared protected scope; the current harness records functionality as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic state and failure-safe exact rollback.",
+        "Add a distinct post-rollback boot that verifies the exact restored service configuration, running state, customer workflow, and all declared protected scopes before summary or pointer removal."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-063/Invoke-EXP063LabHarness.ps1",
       "runsPerArm": 5,
@@ -535,7 +558,12 @@
       "experiment": "EXP-066",
       "issue": null,
       "track": "service-candidate",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge bounded pass/fail verification for HP Network HSA demand behavior, HP network-dependent workflows, and every declared protected scope; the current harness records functionality as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic state and failure-safe exact rollback.",
+        "Add a distinct post-rollback boot that verifies the exact restored service configuration, running state, network workflow, and all declared protected scopes before summary or pointer removal."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-066/Invoke-EXP066LabHarness.ps1",
       "runsPerArm": 5,
@@ -569,7 +597,12 @@
       "experiment": "EXP-067",
       "issue": null,
       "track": "service-candidate",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge bounded pass/fail verification for HP Diagnostics HSA demand behavior, the declared diagnostic workflow, and every declared protected scope.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic state and failure-safe exact rollback.",
+        "Add a distinct post-rollback boot that verifies the exact restored service configuration, running state, diagnostic workflow, and all declared protected scopes before summary or pointer removal."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-067/Invoke-EXP067LabHarness.ps1",
       "runsPerArm": 5,
@@ -603,7 +636,12 @@
       "experiment": "EXP-068",
       "issue": null,
       "track": "service-candidate",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge bounded pass/fail verification for HP Audio Analytics demand behavior, audio-device workflows, and every declared protected scope; the current harness records functionality as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic state and failure-safe exact rollback.",
+        "Add a distinct post-rollback boot that verifies the exact restored service configuration, running state, audio workflow, and all declared protected scopes before summary or pointer removal."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-068/Invoke-EXP068LabHarness.ps1",
       "runsPerArm": 5,
@@ -637,7 +675,12 @@
       "experiment": "EXP-075",
       "issue": null,
       "track": "service-candidate",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge bounded pass/fail verification for HP TechPulse Smart Health demand behavior, health/telemetry workflow readiness, and every declared protected scope.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic state and failure-safe exact rollback.",
+        "Add a distinct post-rollback boot that verifies the exact restored service configuration, running state, health workflow, and all declared protected scopes before summary or pointer removal."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-075/Invoke-EXP075LabHarness.ps1",
       "runsPerArm": 5,
@@ -671,7 +714,11 @@
       "experiment": "EXP-113",
       "issue": null,
       "track": "startup-responsiveness",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge bounded pass/fail verification for the Microsoft 365 sign-in task, manual application readiness, update behavior, and every declared protected application; the current harness records those workflows as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic state and failure-safe exact rollback."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-113/Invoke-EXP113LabHarness.ps1",
       "runsPerArm": 5,
@@ -705,7 +752,12 @@
       "experiment": "EXP-120",
       "issue": null,
       "track": "service-candidate",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge bounded pass/fail verification for HP Hotkey UWP behavior, hotkey/customer workflows, and every declared protected scope.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic state and failure-safe exact rollback.",
+        "Add a distinct post-rollback boot that verifies the exact restored startup, delayed-start and running state, hotkey workflow, and all declared protected scopes before summary or pointer removal."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-120/Invoke-EXP120LabHarness.ps1",
       "runsPerArm": 5,
@@ -739,7 +791,11 @@
       "experiment": "EXP-124",
       "issue": null,
       "track": "startup-responsiveness",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge bounded pass/fail verification for Microsoft 365 manual launch, sign-in/update readiness, and every declared protected application; the current harness records those workflows as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic state and failure-safe exact rollback."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-124/Invoke-EXP124LabHarness.ps1",
       "runsPerArm": 5,
@@ -773,7 +829,12 @@
       "experiment": "EXP-131",
       "issue": null,
       "track": "service-candidate",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge bounded pass/fail verification for HP Comm Recovery behavior, the declared communication-recovery workflow, and every declared protected scope.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic original and lifecycle state plus failure-safe exact rollback.",
+        "Add a distinct post-rollback boot that verifies the exact restored startup, delayed-start and running state, communication-recovery workflow, and all declared protected scopes before summary or pointer removal."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-131/Invoke-EXP131LabHarness.ps1",
       "runsPerArm": 5,

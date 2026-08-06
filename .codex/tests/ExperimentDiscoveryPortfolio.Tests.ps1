@@ -88,7 +88,7 @@ Describe 'Portfolio runbook and queue' {
             @($item.exactEvidenceRequest).Count | Should -BeGreaterThan 0
             @($item.exactEvidenceRequest | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count | Should -Be 0
         }
-        @($items | Where-Object state -eq 'ready')[0].experiment | Should -Be 'EXP-091'
+        @($items | Where-Object state -eq 'ready').Count | Should -Be 0
     }
 
     It 'declares every protected startup, network, and security scope on every candidate' {
@@ -122,19 +122,19 @@ Describe 'Guarded HP laptop validation runner' {
         $runner | Should -Match ([regex]::Escape("Join-Path `$DataRoot 'sanitized-evidence'"))
     }
 
-    It 'inspects all ready candidates without creating machine-local state' {
+    It 'reports an empty ready queue without creating machine-local state' {
         $testData = Join-Path $TestDrive 'portfolio-validation'
         $result = & $runnerPath -Action Inspect -QueuePath $queuePath -DataRoot $testData
         $result.mutationPerformed | Should -BeFalse
-        @($result.readyExperiments) | Should -Not -Contain 'EXP-065'
-        @($result.readyExperiments) | Should -Not -Contain 'EXP-095'
-        @($result.readyExperiments) | Should -Not -Contain 'EXP-087'
-        @($result.readyExperiments) | Should -Not -Contain 'EXP-024'
-        @($result.readyExperiments) | Should -Not -Contain 'EXP-049'
-        foreach ($blockedExperiment in @('EXP-050','EXP-051','EXP-052','EXP-053')) {
-            @($result.readyExperiments) | Should -Not -Contain $blockedExperiment
-        }
-        @($result.readyExperiments)[0] | Should -Be 'EXP-091'
+        @($result.readyExperiments).Count | Should -Be 0
+        Test-Path -LiteralPath $testData | Should -BeFalse
+    }
+
+    It 'keeps Auto non-mutating when no reviewed candidate is ready' {
+        $testData = Join-Path $TestDrive 'empty-auto'
+        $result = & $runnerPath -Action Auto -QueuePath $queuePath -DataRoot $testData
+        $result.evidenceStatus | Should -Be 'needs-evidence'
+        @($result.exactEvidenceRequest) -join ' ' | Should -Match 'Add one reviewed Experimental reboot-aware harness'
         Test-Path -LiteralPath $testData | Should -BeFalse
     }
 
