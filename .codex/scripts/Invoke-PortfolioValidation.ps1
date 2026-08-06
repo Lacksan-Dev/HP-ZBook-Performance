@@ -332,7 +332,7 @@ function Export-CompletedEvidence {
     if ([string]$summary.experiment -ne [string]$Active.experiment) { throw 'Harness summary experiment identity mismatch.' }
     $runDirectory = Split-Path -Parent $summaryPath
     $proof = Get-LifecycleProof -RunDirectory $runDirectory
-    $classification = [string]$summary.classification
+    $classification = [string](Get-OptionalProperty $summary 'classification')
     if ($classification -notmatch '^(?i)beneficial|adverse|inconclusive|neutral|unqualified$') { $classification = 'unqualified' }
     $proofComplete = ($proof.capture -and $proof.dryRun -and $proof.apply -and $proof.verify -and $proof.verifyReboot -and $proof.rollback)
     $exactRequest = @()
