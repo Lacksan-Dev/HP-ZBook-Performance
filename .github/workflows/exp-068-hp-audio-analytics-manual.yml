@@ -1,0 +1,18 @@
+name: EXP-068 HP Audio Analytics Manual
+on:
+  pull_request:
+    paths:
+      - 'controller/providers/HPAudioAnalyticsManual.ps1'
+      - 'controller/tests/HPAudioAnalyticsManual*.Tests.ps1'
+      - '.github/workflows/exp-068-hp-audio-analytics-manual.yml'
+jobs:
+  pester:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Pester
+        shell: pwsh
+        run: Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.5.0
+      - name: Run focused contracts
+        shell: pwsh
+        run: Invoke-Pester controller/tests/HPAudioAnalyticsManual.Tests.ps1,controller/tests/HPAudioAnalyticsManual.Integration.Tests.ps1 -Output Detailed -CI
