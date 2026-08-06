@@ -209,7 +209,12 @@
       "experiment": "EXP-050",
       "issue": 119,
       "track": "startup-responsiveness",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Provide exactly one eligible signed Logi Options+ Run registration on the bound ZBook; the current machine has no matching registration.",
+        "Merge bounded pass/fail verification for manual launch, device settings and profiles, supported update behavior, and every declared protected application; the current harness records those workflows as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic original and lifecycle state."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-050/Invoke-Exp050LabHarness.ps1",
       "runsPerArm": 5,
@@ -243,7 +248,12 @@
       "experiment": "EXP-051",
       "issue": 121,
       "track": "startup-responsiveness",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Provide exactly one eligible signed Logi Bolt Run registration on the bound ZBook; the current machine has no matching registration.",
+        "Merge bounded pass/fail verification for manual launch, receiver and Bluetooth readiness, existing pairing readiness, and every declared protected application; the current harness records those workflows as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic original and lifecycle state."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-051/Invoke-Exp051LabHarness.ps1",
       "runsPerArm": 5,
@@ -277,7 +287,12 @@
       "experiment": "EXP-052",
       "issue": 123,
       "track": "startup-responsiveness",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Provide exactly one eligible signed Logi Tune Run registration on the bound ZBook; the current machine has no matching registration.",
+        "Merge bounded pass/fail verification for manual launch, camera and headset readiness, audio/video-device readiness, and every declared protected application; the current harness records those workflows as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic original and lifecycle state."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-052/Invoke-Exp052LabHarness.ps1",
       "runsPerArm": 5,
@@ -311,7 +326,12 @@
       "experiment": "EXP-053",
       "issue": 125,
       "track": "startup-responsiveness",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Provide exactly one eligible signed Logitech G Hub Run registration on the bound ZBook; the current machine has no matching registration.",
+        "Merge bounded pass/fail verification for manual launch, device-profile readiness, Logitech HID/audio/video readiness, and every declared protected application; the current harness records those workflows as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic original and lifecycle state."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-053/Invoke-Exp053LabHarness.ps1",
       "runsPerArm": 5,
