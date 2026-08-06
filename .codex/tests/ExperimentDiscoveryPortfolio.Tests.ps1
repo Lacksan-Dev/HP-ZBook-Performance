@@ -150,7 +150,6 @@ Describe 'Guarded HP laptop validation runner' {
             experiment = 'EXP-065'
             generatedUtc = '2026-08-04T00:00:00Z'
             computer = 'DESKTOP-SECRET'
-            classification = 'inconclusive'
             groups = [ordered]@{
                 Baseline = [ordered]@{ runs=5; cpuMedianPercent=[ordered]@{median=4.1;mad=0.2}; privatePath='C:\Users\secret' }
                 Treatment = [ordered]@{ runs=5; cpuMedianPercent=[ordered]@{median=3.8;mad=0.3}; userSid='S-1-5-21-secret' }
@@ -180,6 +179,7 @@ Describe 'Guarded HP laptop validation runner' {
         $published.releaseState | Should -Be 'Experimental'
         $published.stableAssignment | Should -BeFalse
         $published.performanceClaim | Should -BeFalse
+        $published.classification | Should -Be 'unqualified'
         $published.lifecycle.capture | Should -BeTrue
         $published.lifecycle.dryRun | Should -BeTrue
         $published.lifecycle.apply | Should -BeTrue
