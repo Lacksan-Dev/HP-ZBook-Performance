@@ -91,7 +91,12 @@
       "experiment": "EXP-087",
       "issue": 201,
       "track": "service-candidate",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge a bounded functional verifier that exercises HP product detection, diagnostics, localhost behavior, and demand-start or declared manual-start behavior with explicit pass/fail results; the current harness records all four as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, re-run AC, idle, local-session, pending-reboot, servicing, and protected-scope gates on every continuation, preserve original and lifecycle state atomically, and execute failure-safe exact rollback.",
+        "Add a distinct post-rollback boot that verifies exact restored startup, delayed-start, running-state, HP workflow, and all declared protected scopes before summary or pointer removal."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-087/Invoke-Exp087LabHarness.ps1",
       "runsPerArm": 5,
