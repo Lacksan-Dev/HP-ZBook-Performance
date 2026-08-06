@@ -131,7 +131,12 @@
       "experiment": "EXP-024",
       "issue": 63,
       "track": "service-candidate",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Merge a bounded functional verifier for the HP Touchpoint customer workflow and declared protected scopes; the current harness collects counters only and leaves customer-workflow demand-start as a separate unresolved check.",
+        "Bind the continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic original and lifecycle state.",
+        "Run Capture and DryRun before baseline registration, add failure-safe exact rollback plus a distinct post-rollback verification boot, and clear the harness active pointer only after verified rollback; the current completion and Stop paths leave that pointer behind."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-024/Invoke-Exp024LabHarness.ps1",
       "runsPerArm": 5,
