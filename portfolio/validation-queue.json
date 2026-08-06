@@ -170,7 +170,12 @@
       "experiment": "EXP-049",
       "issue": 114,
       "track": "startup-responsiveness",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Provide exactly one eligible signed classic Teams Squirrel Run registration on the bound ZBook; the current machine has no com.squirrel.Teams.Teams Run registration.",
+        "Merge bounded pass/fail verification for manual classic Teams launch, sign-in, meeting, update, and every declared protected application; the current harness records those workflows as needs-evidence.",
+        "Bind every continuation to the exact machine UUID and source commit, and re-run AC, idle, local-session, pending-reboot, servicing, single-run, and protected-scope gates on every continuation with atomic original and lifecycle state."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-049/Invoke-Exp049LabHarness.ps1",
       "runsPerArm": 5,
