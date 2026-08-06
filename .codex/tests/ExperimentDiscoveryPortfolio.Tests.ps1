@@ -88,7 +88,7 @@ Describe 'Portfolio runbook and queue' {
             @($item.exactEvidenceRequest).Count | Should -BeGreaterThan 0
             @($item.exactEvidenceRequest | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count | Should -Be 0
         }
-        @($items | Where-Object state -eq 'ready')[0].experiment | Should -Be 'EXP-024'
+        @($items | Where-Object state -eq 'ready')[0].experiment | Should -Be 'EXP-049'
     }
 
     It 'declares every protected startup, network, and security scope on every candidate' {
@@ -129,7 +129,8 @@ Describe 'Guarded HP laptop validation runner' {
         @($result.readyExperiments) | Should -Not -Contain 'EXP-065'
         @($result.readyExperiments) | Should -Not -Contain 'EXP-095'
         @($result.readyExperiments) | Should -Not -Contain 'EXP-087'
-        @($result.readyExperiments)[0] | Should -Be 'EXP-024'
+        @($result.readyExperiments) | Should -Not -Contain 'EXP-024'
+        @($result.readyExperiments)[0] | Should -Be 'EXP-049'
         Test-Path -LiteralPath $testData | Should -BeFalse
     }
 
