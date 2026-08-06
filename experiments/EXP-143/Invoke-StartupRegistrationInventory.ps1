@@ -32,7 +32,7 @@ function Add-Record {
 
 $records = [System.Collections.Generic.List[object]]::new()
 
-# Startup folders. Read only. Resolve shortcut target/arguments when WScript is available while preserving the shortcut path as registration identity.
+# Startup folders. Read only. Resolve shortcut target/arguments/working directory when WScript is available while preserving the shortcut path as registration identity.
 $startupFolders = @(
     [Environment]::GetFolderPath('Startup'),
     [Environment]::GetFolderPath('CommonStartup')
@@ -42,15 +42,36 @@ foreach ($folder in $startupFolders) {
         $command = $_.FullName
         $target = $null
         $arguments = $null
+        $workingDirectory = $null
         if ($_.Extension -ieq '.lnk') {
             try {
                 $shell = New-Object -ComObject WScript.Shell
                 $shortcut = $shell.CreateShortcut($_.FullName)
                 $target = $shortcut.TargetPath
                 $arguments = $shortcut.Arguments
+                $workingDirectory = $shortcut.WorkingDirectory
                 if ($target) { $command = ('"{0}" {1}' -f $target,$arguments).Trim() }
             } catch { }
         }
+
+        # Capture filesystem security evidence through read-only ACL APIs. An unreadable descriptor is retained
+        # explicitly as needs-evidence instead of fabricating an owner or descriptor.
+        $owner = $null
+        $sddl = $null
+        $aclEvidenceStatus = 'captured'
+        $aclEvidenceErrorType = $null
+        try {
+            $acl = Get-Acl -LiteralPath $_.FullName -ErrorAction Stop
+            $owner = [string]$acl.Owner
+            $sddl = [string]$acl.GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::All)
+            if ([string]::IsNullOrWhiteSpace($owner) -or [string]::IsNullOrWhiteSpace($sddl)) {
+                $aclEvidenceStatus = 'needs-evidence'
+            }
+        } catch {
+            $aclEvidenceStatus = 'needs-evidence'
+            $aclEvidenceErrorType = $_.Exception.GetType().FullName
+        }
+
         # Capture byte-exact local restore evidence now, while the inventory remains read only.
         $fileBytes = [IO.File]::ReadAllBytes($_.FullName)
         $fileSha = [Security.Cryptography.SHA256]::Create()
@@ -58,7 +79,8 @@ foreach ($folder in $startupFolders) {
         Add-Record $records 'StartupFolder' $_.FullName $command @{
             length=$_.Length; sha256=$fileHash; contentBase64=[Convert]::ToBase64String($fileBytes)
             attributes=[string]$_.Attributes; creationTimeUtc=$_.CreationTimeUtc.ToString('o'); lastWriteTimeUtc=$_.LastWriteTimeUtc.ToString('o')
-            target=$target; arguments=$arguments
+            target=$target; arguments=$arguments; workingDirectory=$workingDirectory
+            owner=$owner; sddl=$sddl; aclEvidenceStatus=$aclEvidenceStatus; aclEvidenceErrorType=$aclEvidenceErrorType
         }
     }
 }
@@ -126,7 +148,7 @@ $duplicates = @($normalized | Group-Object command | Where-Object { $_.Name -and
 } | Sort-Object command)
 
 # Hash only stable registration evidence. Runtime metadata is logged separately so repeated unchanged inventories produce the same SHA-256.
-$stableBundle = [pscustomobject]@{ experiment='EXP-143'; schemaVersion=5; mode='read-only'; registrations=$normalized; duplicates=$duplicates }
+$stableBundle = [pscustomobject]@{ experiment='EXP-143'; schemaVersion=6; mode='read-only'; registrations=$normalized; duplicates=$duplicates }
 $stableJson = $stableBundle | ConvertTo-Json -Depth 12
 $stableBytes = [Text.Encoding]::UTF8.GetBytes($stableJson)
 $sha = [Security.Cryptography.SHA256]::Create()
