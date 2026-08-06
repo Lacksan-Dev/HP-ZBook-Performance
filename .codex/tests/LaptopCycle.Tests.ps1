@@ -30,6 +30,12 @@ Describe 'Two-hour laptop cycle' {
         $cycle | Should -Match 'AllowAutomaticReboot'
     }
 
+    It 'stages sanitized evidence outside the executor checkout' {
+        $cycle | Should -Match 'CommonApplicationData'
+        $cycle | Should -Match 'PortfolioValidation\\sanitized-evidence'
+        $cycle | Should -Match 'EvidenceOutputRoot = \$evidenceStagingRoot'
+    }
+
     It 'binds automatic execution to one exact HP ZBook laptop' {
         foreach ($token in @('ExpectedMachineUuid','Assert-BoundZBookLaptop','Win32_ComputerSystemProduct','Win32_SystemEnclosure','Win32_Battery','\bZBook\b','portableChassis','different physical HP ZBook')) {
             $cycle | Should -Match ([regex]::Escape($token))
@@ -56,7 +62,7 @@ Describe 'Two-hour laptop cycle' {
     }
 
     It 'persists the exact hardware UUID into the scheduled task command' {
-        $installer | Should -Match "'-ExpectedMachineUuid '"
+        $installer | Should -Match ([regex]::Escape(" -ExpectedMachineUuid '"))
         $installer | Should -Match '\$target\.uuid'
         $installer | Should -Match 'bound to \$\(\$target\.model\)'
     }

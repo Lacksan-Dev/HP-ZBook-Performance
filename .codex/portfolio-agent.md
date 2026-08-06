@@ -88,11 +88,16 @@ remote session, free of a pending reboot or active installer, and the queue and
 harness prove the declared protected scope and exact rollback contract.
 
 Raw runs, provider state, structured logs, and rollback artifacts stay under the
-machine-local data root. When the harness completes, the runner writes a bounded,
-sanitized evidence package under `evidence/physical/`. Commit only that package on
-a focused evidence branch, push it, open or update a PR, and link the EXP issue.
-Keep the evidence and experiment `Experimental`; completed mechanics or favorable
-medians do not authorize `Stable` or a published performance claim.
+machine-local data root. When the harness completes, the runner stages a bounded,
+sanitized evidence package under
+`C:\ProgramData\Lacksan\PortfolioValidation\sanitized-evidence`, outside the
+executor checkout. Review the staged package, then copy only that package into its
+matching `evidence/physical/` path on a fresh focused evidence branch. Mark the
+matching queue item `completed` in the same pull request so it cannot rerun. Push,
+open or update the PR, and link the EXP issue. Never export or commit directly from
+the executor's `main` checkout. Keep the evidence and experiment `Experimental`;
+completed mechanics or favorable medians do not authorize `Stable` or a published
+performance claim.
 
 When the runner returns `needs-evidence`, copy its exact request to the matching
 issue only if doing so changes the issue's actionable state. Continue issue,
