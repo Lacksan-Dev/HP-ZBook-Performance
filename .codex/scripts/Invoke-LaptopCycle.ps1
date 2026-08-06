@@ -54,6 +54,7 @@ $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
 $runner = Join-Path $RepositoryRoot '.codex\scripts\Invoke-PortfolioValidation.ps1'
 $logRoot = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Lacksan\LaptopCycle'
 $logPath = Join-Path $logRoot 'cycle.log'
+$evidenceStagingRoot = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Lacksan\PortfolioValidation\sanitized-evidence'
 
 if (-not (Test-Path -LiteralPath (Join-Path $RepositoryRoot '.git'))) { throw "Not a Git checkout: $RepositoryRoot" }
 if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw "Validation runner is missing: $runner" }
@@ -87,7 +88,13 @@ try {
             if ($LASTEXITCODE -ne 0) { throw 'The laptop checkout cannot fast-forward to origin/main.' }
         }
 
-        $arguments = @{ Action = 'Auto' }
+        # Keep the executor checkout immutable. A separate publication cycle
+        # copies completed, sanitized packages from this staging root into a
+        # focused evidence branch after reviewing the package.
+        $arguments = @{
+            Action = 'Auto'
+            EvidenceOutputRoot = $evidenceStagingRoot
+        }
         if ($AllowAutomaticReboot) { $arguments.AllowAutomaticReboot = $true }
         & $runner @arguments
     } finally {

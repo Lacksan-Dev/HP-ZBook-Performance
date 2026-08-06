@@ -30,20 +30,25 @@ dry-run, verification, protected-scope, and exact-rollback review.
 Each entry contains one experiment, one candidate, one benchmark, functional and
 reboot verification, exact rollback, and the complete protected-scope declaration.
 Only `state: ready` entries are eligible, and the runner executes at most one at a
-time.
+time. After its sanitized evidence is merged, an entry moves to `state: completed`;
+completed entries remain as queue history but are never selected again.
 
 ## Evidence boundary
 
 Raw runs, machine-bound state, JSONL logs, and rollback artifacts stay under
 `C:\ProgramData\Lacksan\PortfolioValidation`. On completion, the runner creates a
-bounded package under `evidence/physical/` containing aggregate metrics, lifecycle
-booleans, protected scope, and local-file digests. It excludes machine and user
-identifiers, serials, paths, process IDs, credentials, browser/profile data, and
-customer content.
+bounded package under
+`C:\ProgramData\Lacksan\PortfolioValidation\sanitized-evidence`. It contains
+aggregate metrics, lifecycle booleans, protected scope, and local-file digests. It
+excludes machine and user identifiers, serials, paths, process IDs, credentials,
+browser/profile data, and customer content. Staging outside the executor checkout
+keeps `main` clean so the next scheduled validation can fast-forward and run.
 
-The Codex agent commits only the sanitized package on a focused evidence branch
-and opens or updates a pull request linked to the EXP issue. Physical evidence
-remains `Experimental`; the agent never assigns `Stable`.
+The Codex agent copies only the reviewed sanitized package into its matching
+`evidence/physical/` path on a fresh focused evidence branch, marks the completed
+queue item non-ready in the same pull request, and links the EXP issue. Physical
+evidence remains `Experimental`; the agent never assigns `Stable`. It never writes
+publication files directly into the executor's `main` checkout.
 
 
 ## Laptop executor

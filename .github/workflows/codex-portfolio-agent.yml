@@ -74,6 +74,7 @@ jobs:
           $config = New-PesterConfiguration
           $config.Run.Path = @(
             '.codex/tests/ExperimentDiscoveryPortfolio.Tests.ps1',
+            '.codex/tests/LaptopCycle.Tests.ps1',
             'experiments/EXP-065/Invoke-Exp065HpSystemInfo.Tests.ps1',
             'experiments/EXP-065/Invoke-Exp065LabHarness.Tests.ps1',
             'experiments/EXP-067/Invoke-Exp067HpDiagnostics.Tests.ps1',

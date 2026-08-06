@@ -28,7 +28,11 @@ if ([string]::IsNullOrWhiteSpace($DataRoot)) {
     $DataRoot = Join-Path $programData 'Lacksan\PortfolioValidation'
 }
 if ([string]::IsNullOrWhiteSpace($EvidenceOutputRoot)) {
-    $EvidenceOutputRoot = Join-Path $RepoRoot 'evidence\physical'
+    # Stage the sanitized publication package outside the Git checkout. The
+    # executor requires a clean main branch before it can fast-forward and
+    # select the next candidate, so writing completed evidence into that same
+    # checkout would deadlock every later scheduled run.
+    $EvidenceOutputRoot = Join-Path $DataRoot 'sanitized-evidence'
 }
 if ([string]::IsNullOrWhiteSpace($RecoveryRequestPath)) {
     $RecoveryRequestPath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Lacksan\PortfolioValidation\recovery-request.json'
@@ -86,6 +90,7 @@ function Get-Queue {
     if ($duplicates.Count -gt 0) { throw 'The validation queue contains duplicate experiment entries.' }
     foreach ($item in $items) {
         if ([string]$item.experiment -notmatch '^EXP-\d{3}$') { throw 'Every queue item requires an EXP-### identifier.' }
+        if ([string]$item.state -notin @('ready','completed')) { throw "$($item.experiment) has an unsupported queue state." }
         if ([string]$item.releaseState -ne 'Experimental') { throw "$($item.experiment) must remain Experimental." }
         if ([string]::IsNullOrWhiteSpace([string]$item.candidate)) { throw "$($item.experiment) has no single candidate." }
         if ([string]::IsNullOrWhiteSpace([string]$item.benchmark)) { throw "$($item.experiment) has no benchmark." }
@@ -379,8 +384,8 @@ function Export-CompletedEvidence {
         $markdown = @(
             "# $($Active.experiment) physical validation evidence",
             '',
-            "Release state: Experimental  ",
-            "Evidence status: $($report.evidenceStatus)  ",
+            'Release state: Experimental',
+            "Evidence status: $($report.evidenceStatus)",
             'Performance claim: none',
             '',
             'This package is a bounded, sanitized projection of machine-local raw evidence. It excludes machine and user identifiers, serials, paths, process IDs, credentials, browser/profile data, and customer content. Raw runs, exact original state, logs, and rollback artifacts remain on the operator-controlled lab machine.',

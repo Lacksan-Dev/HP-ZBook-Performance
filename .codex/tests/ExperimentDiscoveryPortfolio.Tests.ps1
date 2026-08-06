@@ -59,7 +59,7 @@ Describe 'Portfolio runbook and queue' {
         }
     }
 
-    It 'accepts multiple reviewed ready candidates in deterministic priority order' {
+    It 'retains completed history and accepts remaining candidates in deterministic priority order' {
         $queue.schemaVersion | Should -Be 1
         $items = @($queue.items)
         $items.Count | Should -BeGreaterThan 1
@@ -69,15 +69,19 @@ Describe 'Portfolio runbook and queue' {
         $items[0].experiment | Should -Be 'EXP-065'
         $items[1].experiment | Should -Be 'EXP-095'
         [int]$items[0].priority | Should -BeLessThan ([int]$items[1].priority)
+        $items[0].state | Should -Be 'completed'
+        $items[0].result | Should -Be 'unqualified'
+        $items[0].evidencePath | Should -Be 'evidence/physical/EXP-065/20260806-034334'
         foreach ($item in $items) {
             $item.track | Should -BeIn @('service-candidate','startup-responsiveness')
-            $item.state | Should -Be 'ready'
+            $item.state | Should -BeIn @('ready','completed')
             $item.releaseState | Should -Be 'Experimental'
             $item.runsPerArm | Should -Be 5
             @($item.verification).Count | Should -BeGreaterThan 0
             $item.rollback | Should -Not -BeNullOrEmpty
             Test-Path -LiteralPath (Join-Path $repoRoot ($item.harnessPath.Replace('/','\'))) | Should -BeTrue
         }
+        foreach ($item in @($items | Select-Object -Skip 1)) { $item.state | Should -Be 'ready' }
     }
 
     It 'declares every protected startup, network, and security scope on every candidate' {
@@ -108,15 +112,16 @@ Describe 'Guarded HP laptop validation runner' {
         $runner | Should -Match 'identifiersCommitted = \$false'
         $runner | Should -Match 'stableAssignment = \$false'
         $runner | Should -Match 'evidence\\physical'
+        $runner | Should -Match ([regex]::Escape("Join-Path `$DataRoot 'sanitized-evidence'"))
     }
 
     It 'inspects all ready candidates without creating machine-local state' {
         $testData = Join-Path $TestDrive 'portfolio-validation'
         $result = & $runnerPath -Action Inspect -QueuePath $queuePath -DataRoot $testData
         $result.mutationPerformed | Should -BeFalse
-        @($result.readyExperiments) | Should -Contain 'EXP-065'
+        @($result.readyExperiments) | Should -Not -Contain 'EXP-065'
         @($result.readyExperiments) | Should -Contain 'EXP-095'
-        @($result.readyExperiments)[0] | Should -Be 'EXP-065'
+        @($result.readyExperiments)[0] | Should -Be 'EXP-095'
         Test-Path -LiteralPath $testData | Should -BeFalse
     }
 
