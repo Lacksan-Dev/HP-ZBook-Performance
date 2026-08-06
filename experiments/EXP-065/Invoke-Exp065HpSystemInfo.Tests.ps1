@@ -121,6 +121,8 @@ Describe 'EXP-065 HP System Info controller contract' {
     $rollback | Should -Match 'Exact rollback verification failed'
     $rollback | Should -Match "\$o.State -eq 'Running'"
     $rollback | Should -Match "\$o.State -eq 'Stopped'"
+    $rollback | Should -Match 'runtimeOnly=\$configurationMatches'
+    $rollback | Should -Match 'if\(-not\$configurationMatches\)\{Set-StartupMode'
   }
   It 'preserves security updates drivers packages and protected remote access' {
     $text | Should -Match 'WinDefend'

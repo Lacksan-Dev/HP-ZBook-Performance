@@ -92,7 +92,27 @@ try {
     'Apply' {if(-not(Test-Path -LiteralPath $StatePath)){throw 'Capture required before Apply'};$state=Read-State;Assert-DriftSafe $state $support;$original=$state.support.Service;if($support.Service.StartMode -eq 'Manual'){if(-not(Same $support.Service.DelayedAutoStart $original.DelayedAutoStart)){throw 'Idempotent apply refused on delayed-start drift'};Write-Event 'apply' 'idempotent' @{mutationCount=0};return $support.Service};if($support.Service.StartMode -ne $original.StartMode -or -not(Same $support.Service.DelayedAutoStart $original.DelayedAutoStart)){throw 'Configuration drift detected before Apply'};$running=$support.Service.State;if($WhatIfPreference){Write-Event 'apply' 'whatif' @{mutationCount=0;to='Manual'};return};if($PSCmdlet.ShouldProcess($ServiceName,'Set startup mode to Manual while preserving running state')){Set-StartupMode 'Manual'}else{return};$after=Get-Candidate;if($after.Service.StartMode -ne 'Manual' -or $after.Service.State -ne $running -or -not(Same $after.Service.DelayedAutoStart $original.DelayedAutoStart)){throw 'Apply verification failed'};Write-Event 'apply' 'pass' @{mutationCount=1;before=$support.Service;after=$after.Service};$after.Service}
     'Verify' {$state=Read-State;Assert-DriftSafe $state $support;if($support.Service.StartMode -ne 'Manual'){throw 'Manual treatment absent'};if(-not(Same $support.Service.DelayedAutoStart $state.support.Service.DelayedAutoStart)){throw 'Delayed-start drift detected'};Write-Event 'verify' 'pass' $support.Service;$support.Service}
     'VerifyReboot' {$state=Read-State;Assert-DriftSafe $state $support;$boot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime();$capturedBoot=ConvertTo-UtcDateTime ([string]$state.capturedBootUtc);if($boot -le $capturedBoot){throw 'Later boot required for reboot persistence verification'};if($support.Service.StartMode -ne 'Manual'){throw 'Reboot persistence failed'};if(-not(Same $support.Service.DelayedAutoStart $state.support.Service.DelayedAutoStart)){throw 'Delayed-start drift detected after reboot'};Write-Event 'verify-reboot' 'pass' @{bootUtc=$boot.ToString('o');service=$support.Service;evidenceStatus='needs-evidence'};$support.Service}
-    'Rollback' {$state=Read-State;Assert-DriftSafe $state $support;$o=$state.support.Service;if($support.Service.StartMode -eq $o.StartMode -and $support.Service.State -eq $o.State -and (Same $support.Service.DelayedAutoStart $o.DelayedAutoStart)){Write-Event 'rollback' 'idempotent' @{mutationCount=0};return $support.Service};if($support.Service.StartMode -ne 'Manual'){throw 'Rollback collision detected'};if(-not(Same $support.Service.DelayedAutoStart $o.DelayedAutoStart)){throw 'Rollback refused on delayed-start drift'};if($WhatIfPreference){Write-Event 'rollback' 'whatif' @{restoreStartMode=$o.StartMode;restoreDelayedAutoStart=$o.DelayedAutoStart;restoreState=$o.State};return};if($PSCmdlet.ShouldProcess($ServiceName,'Restore exact captured service startup configuration and running state')){Set-StartupMode $o.StartMode;Set-RegistryValueState 'DelayedAutoStart' $o.DelayedAutoStart;$status=(Get-Service $ServiceName).Status;if($o.State -eq 'Running' -and $status -ne 'Running'){Start-Service $ServiceName}elseif($o.State -eq 'Stopped' -and $status -ne 'Stopped'){Stop-Service $ServiceName}}else{return};$after=Get-Candidate;if($after.Service.StartMode -ne $o.StartMode -or $after.Service.State -ne $o.State -or -not(Same $after.Service.DelayedAutoStart $o.DelayedAutoStart)){throw 'Exact rollback verification failed'};Write-Event 'rollback' 'pass' @{restoredExactOriginal=$true;after=$after.Service};$after.Service}
+    'Rollback' {
+      $state=Read-State
+      Assert-DriftSafe $state $support
+      $o=$state.support.Service
+      $configurationMatches=($support.Service.StartMode -eq $o.StartMode -and (Same $support.Service.DelayedAutoStart $o.DelayedAutoStart))
+      if($configurationMatches -and $support.Service.State -eq $o.State){Write-Event 'rollback' 'idempotent' @{mutationCount=0};return $support.Service}
+      if(-not$configurationMatches){
+        if($support.Service.StartMode -ne 'Manual'){throw 'Rollback collision detected'}
+        if(-not(Same $support.Service.DelayedAutoStart $o.DelayedAutoStart)){throw 'Rollback refused on delayed-start drift'}
+      }
+      if($WhatIfPreference){Write-Event 'rollback' 'whatif' @{restoreStartMode=$o.StartMode;restoreDelayedAutoStart=$o.DelayedAutoStart;restoreState=$o.State;runtimeOnly=$configurationMatches};return}
+      if($PSCmdlet.ShouldProcess($ServiceName,'Restore exact captured service startup configuration and running state')){
+        if(-not$configurationMatches){Set-StartupMode $o.StartMode;Set-RegistryValueState 'DelayedAutoStart' $o.DelayedAutoStart}
+        $status=(Get-Service $ServiceName).Status
+        if($o.State -eq 'Running' -and $status -ne 'Running'){Start-Service $ServiceName}elseif($o.State -eq 'Stopped' -and $status -ne 'Stopped'){Stop-Service $ServiceName}
+      }else{return}
+      $after=Get-Candidate
+      if($after.Service.StartMode -ne $o.StartMode -or $after.Service.State -ne $o.State -or -not(Same $after.Service.DelayedAutoStart $o.DelayedAutoStart)){throw 'Exact rollback verification failed'}
+      Write-Event 'rollback' 'pass' @{restoredExactOriginal=$true;runtimeOnly=$configurationMatches;after=$after.Service}
+      $after.Service
+    }
   }
 } catch {
   Write-Event 'failure' 'failed' @{message=$_.Exception.Message;type=$_.Exception.GetType().FullName}

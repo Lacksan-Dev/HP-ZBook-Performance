@@ -30,8 +30,12 @@ dry-run, verification, protected-scope, and exact-rollback review.
 Each entry contains one experiment, one candidate, one benchmark, functional and
 reboot verification, exact rollback, and the complete protected-scope declaration.
 Only `state: ready` entries are eligible, and the runner executes at most one at a
-time. After its sanitized evidence is merged, an entry moves to `state: completed`;
-completed entries remain as queue history but are never selected again.
+time. A lifecycle-only or otherwise unqualified package remains prior evidence and
+does not complete the queue entry when declared functional or protected-readiness
+checks are missing. After repeated baseline/treatment runs, functional verification,
+protected-scope readiness, reboot verification, summary, and exact rollback all pass
+and the sanitized evidence is merged, the entry moves to `state: completed`.
+Completed entries remain as queue history but are never selected again.
 
 ## Evidence boundary
 

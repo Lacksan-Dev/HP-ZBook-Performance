@@ -10,6 +10,8 @@ on:
       - 'experiments/EXP-065/Invoke-Exp065HpSystemInfo.Tests.ps1'
       - 'experiments/EXP-065/Invoke-Exp065LabHarness.ps1'
       - 'experiments/EXP-065/Invoke-Exp065LabHarness.Tests.ps1'
+      - 'experiments/EXP-065/Test-Exp065FunctionalReadiness.ps1'
+      - 'experiments/EXP-065/Test-Exp065FunctionalReadiness.Tests.ps1'
       - 'experiments/EXP-067/**'
       - 'experiments/EXP-087/**'
       - 'experiments/EXP-154/**'
@@ -77,6 +79,7 @@ jobs:
             '.codex/tests/LaptopCycle.Tests.ps1',
             'experiments/EXP-065/Invoke-Exp065HpSystemInfo.Tests.ps1',
             'experiments/EXP-065/Invoke-Exp065LabHarness.Tests.ps1',
+            'experiments/EXP-065/Test-Exp065FunctionalReadiness.Tests.ps1',
             'experiments/EXP-067/Invoke-Exp067HpDiagnostics.Tests.ps1',
             'experiments/EXP-067/Invoke-Exp067HpDiagnostics.Integration.Tests.ps1',
             'experiments/EXP-087/Invoke-Exp087LabHarness.Tests.ps1',

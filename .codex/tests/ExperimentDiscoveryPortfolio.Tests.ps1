@@ -69,9 +69,11 @@ Describe 'Portfolio runbook and queue' {
         $items[0].experiment | Should -Be 'EXP-065'
         $items[1].experiment | Should -Be 'EXP-095'
         [int]$items[0].priority | Should -BeLessThan ([int]$items[1].priority)
-        $items[0].state | Should -Be 'completed'
-        $items[0].result | Should -Be 'unqualified'
-        $items[0].evidencePath | Should -Be 'evidence/physical/EXP-065/20260806-034334'
+        $items[0].state | Should -Be 'ready'
+        @($items[0].priorResults).Count | Should -Be 1
+        $items[0].priorResults[0].result | Should -Be 'unqualified'
+        $items[0].priorResults[0].evidencePath | Should -Be 'evidence/physical/EXP-065/20260806-034334'
+        $items[0].priorResults[0].disposition | Should -Be 'incomplete-functional-verification'
         foreach ($item in $items) {
             $item.track | Should -BeIn @('service-candidate','startup-responsiveness')
             $item.state | Should -BeIn @('ready','completed')
@@ -81,7 +83,7 @@ Describe 'Portfolio runbook and queue' {
             $item.rollback | Should -Not -BeNullOrEmpty
             Test-Path -LiteralPath (Join-Path $repoRoot ($item.harnessPath.Replace('/','\'))) | Should -BeTrue
         }
-        foreach ($item in @($items | Select-Object -Skip 1)) { $item.state | Should -Be 'ready' }
+        foreach ($item in $items) { $item.state | Should -Be 'ready' }
     }
 
     It 'declares every protected startup, network, and security scope on every candidate' {
@@ -119,9 +121,9 @@ Describe 'Guarded HP laptop validation runner' {
         $testData = Join-Path $TestDrive 'portfolio-validation'
         $result = & $runnerPath -Action Inspect -QueuePath $queuePath -DataRoot $testData
         $result.mutationPerformed | Should -BeFalse
-        @($result.readyExperiments) | Should -Not -Contain 'EXP-065'
+        @($result.readyExperiments) | Should -Contain 'EXP-065'
         @($result.readyExperiments) | Should -Contain 'EXP-095'
-        @($result.readyExperiments)[0] | Should -Be 'EXP-095'
+        @($result.readyExperiments)[0] | Should -Be 'EXP-065'
         Test-Path -LiteralPath $testData | Should -BeFalse
     }
 
@@ -159,6 +161,14 @@ Describe 'Guarded HP laptop validation runner' {
                 Baseline = [ordered]@{ runs=5; cpuMedianPercent=[ordered]@{median=4.1;mad=0.2}; privatePath='C:\Users\secret' }
                 Treatment = [ordered]@{ runs=5; cpuMedianPercent=[ordered]@{median=3.8;mad=0.3}; userSid='S-1-5-21-secret' }
             }
+            verification = [ordered]@{
+                functional=$true
+                protectedScopes=$true
+                protectedScopeResults=[ordered]@{
+                    WindowsSecurity=$true;WindowsUpdate=$true;EdgeUpdate=$true;Credentials=$true;Recovery=$true;EnterpriseManagement=$true
+                    DeviceCriticalDrivers=$true;Networking=$true;Omnissa=$true;WindowsApp=$true;RemoteDesktop=$true;Tailscale=$true
+                }
+            }
         } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $runDirectory 'summary.json') -Encoding UTF8
         @(
             '{"action":"Capture","event":"state-captured","computer":"DESKTOP-SECRET","userSid":"S-1-5-21-secret"}',
@@ -169,12 +179,13 @@ Describe 'Guarded HP laptop validation runner' {
             '{"action":"Rollback","event":"rolled-back"}'
         ) | Set-Content -LiteralPath (Join-Path $runDirectory 'controller-events.jsonl') -Encoding UTF8
         New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
-        [ordered]@{
+        $active = [ordered]@{
             schemaVersion=1;experiment='EXP-065';issue=153;track='service-candidate';releaseState='Experimental'
-            harnessPath='experiments/EXP-065/Invoke-Exp065LabHarness.ps1';evidenceRoot=$evidenceRoot;sourceCommit='0123456789abcdef'
+            harnessPath='experiments/EXP-065/Invoke-Exp065LabHarness.ps1';evidenceRoot=$evidenceRoot;sourceCommit='0123456789abcdef';runsPerArm=5
             candidate='One bounded service startup-mode candidate.';benchmark='Five matched baseline and treatment boots.'
             protectedScopes=@($queue.items[0].protectedScopes);startedUtc='2026-08-04T00:00:00Z';status='harness-active'
-        } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $dataRoot 'active-cycle.json') -Encoding UTF8
+        }
+        $active | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $dataRoot 'active-cycle.json') -Encoding UTF8
 
         $result = & $runnerPath -Action Export -QueuePath $queuePath -DataRoot $dataRoot -EvidenceOutputRoot $outputRoot
         $publishedPath = @(Get-ChildItem -LiteralPath $outputRoot -Filter 'summary.json' -File -Recurse)[0].FullName
@@ -191,9 +202,29 @@ Describe 'Guarded HP laptop validation runner' {
         $published.lifecycle.verify | Should -BeTrue
         $published.lifecycle.verifyReboot | Should -BeTrue
         $published.lifecycle.rollback | Should -BeTrue
+        $published.verification.repeatedRuns | Should -BeTrue
+        $published.verification.functional | Should -BeTrue
+        $published.verification.protectedScopes | Should -BeTrue
+        $published.verification.verifiedProtectedScopeCount | Should -Be 12
+        @($published.verification.missingProtectedScopes).Count | Should -Be 0
         $published.rawEvidence.identifiersCommitted | Should -BeFalse
         $publishedText | Should -Not -Match 'DESKTOP-SECRET|S-1-5-21-secret|C:\\\\Users\\\\secret|privatePath|userSid'
         Test-Path -LiteralPath (Join-Path $dataRoot 'active-cycle.json') | Should -BeFalse
+
+        $incompleteSummary = Get-Content -LiteralPath (Join-Path $runDirectory 'summary.json') -Raw | ConvertFrom-Json
+        $incompleteSummary.generatedUtc = '2026-08-04T00:00:01Z'
+        $incompleteSummary.verification.protectedScopeResults.EdgeUpdate = $false
+        $incompleteSummary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $runDirectory 'summary.json') -Encoding UTF8
+        $active | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $dataRoot 'active-cycle.json') -Encoding UTF8
+        $incompleteOutput = Join-Path $TestDrive 'incomplete-evidence'
+        $incompleteResult = & $runnerPath -Action Export -QueuePath $queuePath -DataRoot $dataRoot -EvidenceOutputRoot $incompleteOutput
+        $incompleteResult.evidenceStatus | Should -Be 'needs-evidence'
+        @($incompleteResult.exactEvidenceRequest) -join ' ' | Should -Match 'EdgeUpdate'
+    }
+
+    It 'refuses completion without repeated functional and protected-scope proof' {
+        foreach($token in @('Get-VerificationProof','repeatedRuns','functional','protectedScopes','protectedScopeResults','missingProtectedScopes','Provide a passing guarded functional-verification result','Provide passing protected-scope results')){$runner|Should -Match ([regex]::Escape($token))}
+        $runner | Should -Match 'runsPerArm = \[int\]\$Item\.runsPerArm'
     }
 }
 

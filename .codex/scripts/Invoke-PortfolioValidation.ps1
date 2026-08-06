@@ -305,6 +305,50 @@ function Get-LifecycleProof {
     return [pscustomobject]$proof
 }
 
+function Get-VerificationProof {
+    param(
+        [Parameter(Mandatory=$true)]$Summary,
+        [Parameter(Mandatory=$true)]$Active
+    )
+    $groups = Get-OptionalProperty $Summary 'groups'
+    $baseline = if ($groups) { Get-OptionalProperty $groups 'Baseline' } else { $null }
+    $treatment = if ($groups) { Get-OptionalProperty $groups 'Treatment' } else { $null }
+    $verification = Get-OptionalProperty $Summary 'verification'
+    $requiredRuns = [int]$Active.runsPerArm
+    $baselineRuns = if ($baseline) { [int](Get-OptionalProperty $baseline 'runs') } else { 0 }
+    $treatmentRuns = if ($treatment) { [int](Get-OptionalProperty $treatment 'runs') } else { 0 }
+    $functional = $false
+    $protectedScopes = $false
+    $declaredScopes = @($Active.protectedScopes | ForEach-Object { [string]$_ })
+    $verifiedScopes = @()
+    $missingScopes = @()
+    $scopeResults = $null
+    if ($verification) {
+        $functional = [bool](Get-OptionalProperty $verification 'functional')
+        $scopeResults = Get-OptionalProperty $verification 'protectedScopeResults'
+    }
+    foreach ($scope in $declaredScopes) {
+        if ($scopeResults -and [bool](Get-OptionalProperty $scopeResults $scope)) {
+            $verifiedScopes += $scope
+        } else {
+            $missingScopes += $scope
+        }
+    }
+    if ($verification) {
+        $protectedScopes = ([bool](Get-OptionalProperty $verification 'protectedScopes') -and $declaredScopes.Count -gt 0 -and $missingScopes.Count -eq 0)
+    }
+    [pscustomobject][ordered]@{
+        baselineRuns = $baselineRuns
+        treatmentRuns = $treatmentRuns
+        repeatedRuns = ($baselineRuns -ge $requiredRuns -and $treatmentRuns -ge $requiredRuns)
+        functional = $functional
+        protectedScopes = $protectedScopes
+        declaredProtectedScopeCount = $declaredScopes.Count
+        verifiedProtectedScopeCount = $verifiedScopes.Count
+        missingProtectedScopes = $missingScopes
+    }
+}
+
 function Get-SafeEnvironmentSummary {
     $os = Get-CimInstance Win32_OperatingSystem
     $computer = Get-CimInstance Win32_ComputerSystem
@@ -337,9 +381,10 @@ function Export-CompletedEvidence {
     if ([string]$summary.experiment -ne [string]$Active.experiment) { throw 'Harness summary experiment identity mismatch.' }
     $runDirectory = Split-Path -Parent $summaryPath
     $proof = Get-LifecycleProof -RunDirectory $runDirectory
+    $verificationProof = Get-VerificationProof -Summary $summary -Active $Active
     $classification = [string](Get-OptionalProperty $summary 'classification')
     if ($classification -notmatch '^(?i)beneficial|adverse|inconclusive|neutral|unqualified$') { $classification = 'unqualified' }
-    $proofComplete = ($proof.capture -and $proof.dryRun -and $proof.apply -and $proof.verify -and $proof.verifyReboot -and $proof.rollback)
+    $proofComplete = ($proof.capture -and $proof.dryRun -and $proof.apply -and $proof.verify -and $proof.verifyReboot -and $proof.rollback -and $verificationProof.repeatedRuns -and $verificationProof.functional -and $verificationProof.protectedScopes)
     $exactRequest = @()
     if (-not $proof.capture) { $exactRequest += 'Provide a passing physical original-state capture event.' }
     if (-not $proof.dryRun) { $exactRequest += 'Provide a passing physical dry-run event before application.' }
@@ -347,6 +392,9 @@ function Export-CompletedEvidence {
     if (-not $proof.verify) { $exactRequest += 'Provide a passing immediate verification event after application.' }
     if (-not $proof.verifyReboot) { $exactRequest += 'Provide a passing post-reboot verification event.' }
     if (-not $proof.rollback) { $exactRequest += 'Provide a passing exact rollback event.' }
+    if (-not $verificationProof.repeatedRuns) { $exactRequest += "Provide at least $($Active.runsPerArm) matched baseline and $($Active.runsPerArm) matched treatment runs." }
+    if (-not $verificationProof.functional) { $exactRequest += 'Provide a passing guarded functional-verification result for the candidate and its declared customer workflows.' }
+    if (-not $verificationProof.protectedScopes) { $exactRequest += "Provide passing protected-scope results for every declared scope: $($verificationProof.missingProtectedScopes -join ', ')." }
     $rawHashes = @()
     foreach ($file in @(Get-ChildItem -LiteralPath $runDirectory -File | Where-Object Name -match '\.(json|jsonl)$')) {
         $rawHashes += [ordered]@{ role = if ($file.Name -eq 'summary.json') { 'summary' } elseif ($file.Name -match 'events') { 'structured-log' } else { 'raw-run-or-state' }; sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
@@ -371,6 +419,7 @@ function Export-CompletedEvidence {
         metrics = Convert-ToMetricNode -Value $summary.groups
         classification = $classification.ToLowerInvariant()
         lifecycle = $proof
+        verification = $verificationProof
         exactEvidenceRequest = $exactRequest
         protectedScopes = @($Active.protectedScopes)
         rawEvidence = [ordered]@{
@@ -444,6 +493,7 @@ function Start-ReadyValidation {
         candidate = [string]$Item.candidate
         benchmark = [string]$Item.benchmark
         protectedScopes = @($Item.protectedScopes)
+        runsPerArm = [int]$Item.runsPerArm
         startedUtc = [DateTime]::UtcNow.ToString('o')
         status = 'starting'
     }
