@@ -69,21 +69,26 @@ Describe 'Portfolio runbook and queue' {
         $items[0].experiment | Should -Be 'EXP-065'
         $items[1].experiment | Should -Be 'EXP-095'
         [int]$items[0].priority | Should -BeLessThan ([int]$items[1].priority)
-        $items[0].state | Should -Be 'ready'
+        $items[0].state | Should -Be 'needs-evidence'
+        $items[1].state | Should -Be 'needs-evidence'
         @($items[0].priorResults).Count | Should -Be 1
         $items[0].priorResults[0].result | Should -Be 'unqualified'
         $items[0].priorResults[0].evidencePath | Should -Be 'evidence/physical/EXP-065/20260806-034334'
         $items[0].priorResults[0].disposition | Should -Be 'incomplete-functional-verification'
         foreach ($item in $items) {
             $item.track | Should -BeIn @('service-candidate','startup-responsiveness')
-            $item.state | Should -BeIn @('ready','completed')
+            $item.state | Should -BeIn @('ready','needs-evidence','completed')
             $item.releaseState | Should -Be 'Experimental'
             $item.runsPerArm | Should -Be 5
             @($item.verification).Count | Should -BeGreaterThan 0
             $item.rollback | Should -Not -BeNullOrEmpty
             Test-Path -LiteralPath (Join-Path $repoRoot ($item.harnessPath.Replace('/','\'))) | Should -BeTrue
         }
-        foreach ($item in $items) { $item.state | Should -Be 'ready' }
+        foreach ($item in @($items | Where-Object state -eq 'needs-evidence')) {
+            @($item.exactEvidenceRequest).Count | Should -BeGreaterThan 0
+            @($item.exactEvidenceRequest | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count | Should -Be 0
+        }
+        @($items | Where-Object state -eq 'ready')[0].experiment | Should -Be 'EXP-087'
     }
 
     It 'declares every protected startup, network, and security scope on every candidate' {
@@ -121,10 +126,20 @@ Describe 'Guarded HP laptop validation runner' {
         $testData = Join-Path $TestDrive 'portfolio-validation'
         $result = & $runnerPath -Action Inspect -QueuePath $queuePath -DataRoot $testData
         $result.mutationPerformed | Should -BeFalse
-        @($result.readyExperiments) | Should -Contain 'EXP-065'
-        @($result.readyExperiments) | Should -Contain 'EXP-095'
-        @($result.readyExperiments)[0] | Should -Be 'EXP-065'
+        @($result.readyExperiments) | Should -Not -Contain 'EXP-065'
+        @($result.readyExperiments) | Should -Not -Contain 'EXP-095'
+        @($result.readyExperiments)[0] | Should -Be 'EXP-087'
         Test-Path -LiteralPath $testData | Should -BeFalse
+    }
+
+    It 'rejects a needs-evidence queue item without an exact request' {
+        $copy = $queue | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+        $target = @($copy.items | Where-Object experiment -eq 'EXP-087')[0]
+        $target.state = 'needs-evidence'
+        $target | Add-Member -NotePropertyName exactEvidenceRequest -NotePropertyValue @() -Force
+        $badQueue = Join-Path $TestDrive 'missing-evidence-request.json'
+        $copy | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $badQueue -Encoding UTF8
+        { & $runnerPath -Action Inspect -QueuePath $badQueue -DataRoot (Join-Path $TestDrive 'data') } | Should -Throw '*has no exact evidence request*'
     }
 
     It 'provides an explicit runner-owned recovery path that retains failures and never exports an incomplete run' {
