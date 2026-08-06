@@ -6,7 +6,10 @@
       "experiment": "EXP-065",
       "issue": 153,
       "track": "service-candidate",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Provide a bounded HP System Information workflow that reliably demand-starts HPSysInfoCap from Manual on this supported package, or revise the candidate so that the service remains available; the guarded treatment activation left the service Stopped while all 12 protected scopes passed, and exact rollback restored Running."
+      ],
       "priorResults": [
         {
           "completedAtUtc": "2026-08-06T03:43:34.1805940Z",
@@ -49,7 +52,11 @@
       "experiment": "EXP-095",
       "issue": 249,
       "track": "service-candidate",
-      "state": "ready",
+      "state": "needs-evidence",
+      "exactEvidenceRequest": [
+        "Provide exactly one supported signed HP CASL Framework Service hpqcaslwmiex instance on the bound ZBook and a bounded documented CASL-dependent functional probe.",
+        "Merge lifecycle hardening that atomically preserves immutable original state, separates application from the first treatment boot, rechecks AC, idle, pending-reboot, servicing, and local-session gates on every continuation, and verifies exact rollback after a distinct reboot."
+      ],
       "releaseState": "Experimental",
       "harnessPath": "experiments/EXP-095/Invoke-Exp095LabHarness.ps1",
       "runsPerArm": 5,

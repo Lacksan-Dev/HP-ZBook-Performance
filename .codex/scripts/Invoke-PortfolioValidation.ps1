@@ -90,7 +90,11 @@ function Get-Queue {
     if ($duplicates.Count -gt 0) { throw 'The validation queue contains duplicate experiment entries.' }
     foreach ($item in $items) {
         if ([string]$item.experiment -notmatch '^EXP-\d{3}$') { throw 'Every queue item requires an EXP-### identifier.' }
-        if ([string]$item.state -notin @('ready','completed')) { throw "$($item.experiment) has an unsupported queue state." }
+        if ([string]$item.state -notin @('ready','needs-evidence','completed')) { throw "$($item.experiment) has an unsupported queue state." }
+        if ([string]$item.state -eq 'needs-evidence') {
+            $requests = @((Get-OptionalProperty -Object $item -Name 'exactEvidenceRequest') | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            if ($requests.Count -eq 0) { throw "$($item.experiment) is needs-evidence but has no exact evidence request." }
+        }
         if ([string]$item.releaseState -ne 'Experimental') { throw "$($item.experiment) must remain Experimental." }
         if ([string]::IsNullOrWhiteSpace([string]$item.candidate)) { throw "$($item.experiment) has no single candidate." }
         if ([string]::IsNullOrWhiteSpace([string]$item.benchmark)) { throw "$($item.experiment) has no benchmark." }
