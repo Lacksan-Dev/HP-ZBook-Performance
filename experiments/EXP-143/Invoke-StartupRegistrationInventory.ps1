@@ -131,14 +131,34 @@ Get-AppxPackage -ErrorAction SilentlyContinue | Sort-Object PackageFamilyName,Pa
     } catch { }
 }
 
-# Sign-in/logon scheduled tasks. Export XML first because trigger CIM metadata differs across Windows PowerShell and PowerShell 7.
+# Sign-in/logon scheduled tasks. Export XML first because trigger/action CIM metadata differs across Windows PowerShell and PowerShell 7.
 # XML is read-only, provides a stable logon-trigger qualifier, and retains the exact task definition for later restore planning.
 Get-ScheduledTask -ErrorAction SilentlyContinue | ForEach-Object {
     $task = $_
     $xml = $null
     try { $xml = Export-ScheduledTask -TaskName $task.TaskName -TaskPath $task.TaskPath } catch { return }
     if ([string]::IsNullOrWhiteSpace($xml) -or $xml -notmatch '<LogonTrigger(?:\s|>)') { return }
-    $actions = ($task.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)".Trim() }) -join '; '
+
+    $actions = ''
+    try {
+        [xml]$taskDocument = $xml
+        $actionParts = @($taskDocument.SelectNodes("//*[local-name()='Actions']/*") | ForEach-Object {
+            $commandNode = $_.SelectSingleNode("./*[local-name()='Command']")
+            $argumentsNode = $_.SelectSingleNode("./*[local-name()='Arguments']")
+            $classNode = $_.SelectSingleNode("./*[local-name()='ClassId']")
+            if ($null -ne $commandNode) {
+                (([string]$commandNode.InnerText) + ' ' + $(if ($null -ne $argumentsNode) { [string]$argumentsNode.InnerText } else { '' })).Trim()
+            } elseif ($null -ne $classNode) {
+                'ComHandler ' + [string]$classNode.InnerText
+            } else {
+                $_.LocalName
+            }
+        })
+        $actions = ($actionParts -join '; ').Trim()
+    } catch {
+        $actions = 'needs-evidence'
+    }
+
     Add-Record $records 'ScheduledTask' "$($task.TaskPath)$($task.TaskName)" $actions @{ enabled=($task.State -ne 'Disabled'); xml=$xml }
 }
 
