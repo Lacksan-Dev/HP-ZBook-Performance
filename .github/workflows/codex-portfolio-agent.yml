@@ -123,7 +123,8 @@ jobs:
             'controller/tests/EdgeDisableNetworkPrediction.Tests.ps1',
             'controller/tests/EdgeDisableNetworkPrediction.Integration.Tests.ps1',
             'controller/tests/EXP-154.StartupTaskRollbackGate.Tests.ps1',
-            'controller/tests/EXP-154.StartupTaskRollbackGate.Integration.Tests.ps1'
+            'controller/tests/EXP-154.StartupTaskRollbackGate.Integration.Tests.ps1',
+            'controller/tests/UxRomPerformanceTuning.Tests.ps1'
           )
           $config.Run.Exit = $true
           $config.Output.Verbosity = 'Detailed'

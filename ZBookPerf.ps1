@@ -15,7 +15,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'FirmwareProfile', 'DriverProfile', 'KernelProfile', 'PowerProfile', 'SecurityProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status', 'EnrollmentCleanup', 'EnrollmentCleanupCheck', 'EnrollmentCleanupRollback', 'InstallLaptopCycle', 'RemoveLaptopCycle', 'LaptopCycleStatus')]
+    [ValidateSet('Menu', 'FullDiagnostics', 'ApplyAll', 'LayerWorkflow', 'LayerMap', 'Analyze', 'Watch', 'ThermalProfile', 'HardwareProfile', 'FirmwareProfile', 'DriverProfile', 'KernelProfile', 'PowerProfile', 'SecurityProfile', 'ShellProfile', 'WorkloadProfile', 'DependencyProfile', 'Enhance', 'Remeasure', 'Revert', 'Status', 'EnrollmentCleanup', 'EnrollmentCleanupCheck', 'EnrollmentCleanupRollback', 'PerformanceTune', 'PerformanceTuneRollback', 'InstallLaptopCycle', 'RemoveLaptopCycle', 'LaptopCycleStatus')]
     [string]$Action = 'Menu',
 
     [switch]$FullDiagnostics,
@@ -140,6 +140,9 @@ param(
     [switch]$SelfManagedEnrollmentConfirmed,
     [switch]$NoReboot,
     [string]$EnrollmentStatePath,
+    [switch]$IncludeOmnissaRedirectionCleanup,
+    [switch]$IncludeCoworkServiceCleanup,
+    [switch]$SkipHpDriverUpdates,
     [string]$RepositoryRoot,
     [ValidateRange(1,24)][int]$LaptopCycleIntervalHours = 2,
     [switch]$AllowAutomaticReboot
@@ -324,6 +327,25 @@ function Invoke-EnrollmentMaintenance {
     }
 }
 
+function Invoke-PerformanceTuningMaintenance {
+    param([ValidateSet('Apply','Rollback')][string]$Mode)
+    $helper = Resolve-UxRomComponent -RelativePath 'controller\maintenance\UxRomPerformanceTuning.ps1' -CacheName 'UxRomPerformanceTuning.ps1'
+    $arguments = @{
+        Action = $Mode
+        Root = (Join-Path $DataRoot 'performance-tuning')
+        IncludeOmnissaRedirection = [bool]$IncludeOmnissaRedirectionCleanup
+        IncludeCoworkService = [bool]$IncludeCoworkServiceCleanup
+        SkipHpDriverUpdates = [bool]$SkipHpDriverUpdates
+        AllowAutomaticReboot = [bool]$AllowAutomaticReboot
+    }
+    $policyState = Enter-UxRomProcessExecutionPolicy
+    try {
+        & $helper @arguments -WhatIf:$WhatIfPreference -Confirm:$false
+    } finally {
+        Exit-UxRomProcessExecutionPolicy -State $policyState
+    }
+}
+
 if ($EnrollmentCleanup) { $Action = 'EnrollmentCleanup' }
 
 if ($Action -eq 'EnrollmentCleanup') {
@@ -337,6 +359,15 @@ if ($Action -eq 'EnrollmentCleanupCheck') {
 if ($Action -eq 'EnrollmentCleanupRollback') {
     if (-not $EnrollmentStatePath) { throw '-EnrollmentStatePath is required for EnrollmentCleanupRollback.' }
     Invoke-EnrollmentMaintenance -Mode Rollback
+    return
+}
+
+if ($Action -in @('PerformanceTune','PerformanceTuneRollback')) {
+    $mode = @{
+        PerformanceTune = 'Apply'
+        PerformanceTuneRollback = 'Rollback'
+    }[$Action]
+    Invoke-PerformanceTuningMaintenance -Mode $mode
     return
 }
 
@@ -364,7 +395,7 @@ Write-UxRomAnimatedStage -Label 'Verifying controller' -Frames 7 -DelayMilliseco
 
 $forward = @{}
 foreach ($key in $PSBoundParameters.Keys) {
-    if ($key -notin @('EnrollmentCleanup','SelfManagedEnrollmentConfirmed','NoReboot','EnrollmentStatePath','RepositoryRoot','LaptopCycleIntervalHours','AllowAutomaticReboot')) {
+    if ($key -notin @('EnrollmentCleanup','SelfManagedEnrollmentConfirmed','NoReboot','EnrollmentStatePath','IncludeOmnissaRedirectionCleanup','IncludeCoworkServiceCleanup','SkipHpDriverUpdates','RepositoryRoot','LaptopCycleIntervalHours','AllowAutomaticReboot')) {
         $forward[$key] = $PSBoundParameters[$key]
     }
 }
