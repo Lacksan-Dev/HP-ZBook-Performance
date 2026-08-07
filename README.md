@@ -142,7 +142,39 @@ Useful non-interactive examples:
 
 # Restore the most recently applied ZBookPerf entry
 .\ZBookPerf.ps1 -Action Revert
+
+# Update the HP-recommended ME/WLAN/PointStyk drivers, request Best performance
+# on AC only, and remove the exact Logitech/Edge/OneNote sign-in registrations
+.\ZBookPerf.ps1 -Action PerformanceTune
+
+# Also make unused Omnissa redirection and Cowork services manual/stopped
+.\ZBookPerf.ps1 -Action PerformanceTune -IncludeOmnissaRedirectionCleanup -IncludeCoworkServiceCleanup
+
+# Restore the exact captured startup, power, service, and driver state
+.\ZBookPerf.ps1 -Action PerformanceTuneRollback
 ```
+
+`PerformanceTune` performs capture, preflight, application, and immediate
+verification in one command; it does not expose separate public check or
+dry-run actions. The Omnissa scanner, serial-port, and USB-redirection services
+and the Cowork background service are opt-in because UX-ROM cannot infer whether
+those features are required. Defender, Windows audio, Tailscale, the core
+Horizon client, Edge Update, installed applications, and unrelated drivers are
+outside the mutation scope. The driver packages are accepted only when their
+HP Authenticode signature is valid. No machine-wide execution-policy setting is
+changed, and no performance improvement is claimed without physical evidence.
+
+From a normal Windows PowerShell prompt, the dedicated one-line launcher
+downloads the current runner, requests one UAC elevation, and starts the same
+bounded tuning action with automatic reboot enabled:
+
+```powershell
+irm https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/refs/heads/main/win.ps1 | iex
+```
+
+The launcher uses `-ExecutionPolicy Bypass` only for its child PowerShell
+processes. It does not call `Set-ExecutionPolicy` or change a user- or
+machine-wide policy.
 
 The per-layer workflow captures a fresh baseline immediately before each
 change. Use the layer workflow or the apply-all batch for a complete measured
