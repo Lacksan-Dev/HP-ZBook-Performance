@@ -164,6 +164,18 @@ outside the mutation scope. The driver packages are accepted only when their
 HP Authenticode signature is valid. No machine-wide execution-policy setting is
 changed, and no performance improvement is claimed without physical evidence.
 
+From a normal Windows PowerShell prompt, the dedicated one-line launcher
+downloads the current runner, requests one UAC elevation, and starts the same
+bounded tuning action with automatic reboot enabled:
+
+```powershell
+irm https://raw.githubusercontent.com/Lacksan-Dev/HP-ZBook-Performance/refs/heads/main/win.ps1 | iex
+```
+
+The launcher uses `-ExecutionPolicy Bypass` only for its child PowerShell
+processes. It does not call `Set-ExecutionPolicy` or change a user- or
+machine-wide policy.
+
 The per-layer workflow captures a fresh baseline immediately before each
 change. Use the layer workflow or the apply-all batch for a complete measured
 change. A standalone `Analyze` run is now a completed diagnostic publication,

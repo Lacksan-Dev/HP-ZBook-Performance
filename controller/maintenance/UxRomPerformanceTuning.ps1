@@ -459,8 +459,7 @@ function Restore-StartupRecords {
             }
             if ($PSCmdlet.ShouldProcess("$($record.Path)::$($record.Name)",'Restore exact captured sign-in launch registration')) {
                 if (-not (Test-Path -LiteralPath $record.Path)) { New-Item -Path $record.Path -Force | Out-Null }
-                $kind = [Enum]::Parse([Microsoft.Win32.RegistryValueKind],[string]$record.Kind,$true)
-                (Get-Item -LiteralPath $record.Path).SetValue([string]$record.Name,[string]$record.Data,$kind)
+                New-ItemProperty -LiteralPath $record.Path -Name ([string]$record.Name) -Value ([string]$record.Data) -PropertyType ([string]$record.Kind) -Force | Out-Null
             }
         } else {
             if (Test-Path -LiteralPath $record.Path) {
@@ -645,6 +644,7 @@ function Invoke-Apply {
     $support = Get-SupportState
     Assert-Supported -Support $support
     $state = $null
+    $resumingCaptured = $false
     if (Test-Path -LiteralPath $script:PointerPath) {
         $state = Read-State
         if ($state.phase -eq 'applied') {
@@ -666,21 +666,38 @@ function Invoke-Apply {
             }
             if ([bool]$state.requiresReboot) {
                 $state.requiresReboot = $false
-                $state.driverRebootVerifiedUtc = [DateTime]::UtcNow.ToString('o')
+                $state | Add-Member -NotePropertyName driverRebootVerifiedUtc -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
                 Save-State -State $state
             }
             Write-Event -Event 'apply' -Result 'idempotent' -Data @{ mutationCount=0 }
             return [pscustomobject]@{ Applied=$true; Idempotent=$true; DriversVerified=$true; RequiresReboot=$false; PerformanceClaim=$false }
         }
-        if ($state.phase -ne 'rolled-back') { throw "An unfinished performance-tuning state exists in phase '$($state.phase)'." }
+        if ($state.phase -eq 'captured') {
+            if ([bool]$state.options.includeOmnissaRedirection -ne $IncludeOmnissaRedirection -or
+                [bool]$state.options.includeCoworkService -ne $IncludeCoworkService -or
+                [bool]$state.options.skipHpDriverUpdates -ne $SkipHpDriverUpdates) {
+                throw 'Requested tuning options differ from the interrupted state; use the same options or run PerformanceTuneRollback.'
+            }
+            if (-not (Test-ProtectedEquivalent -Before $state.protectedBefore -After (Get-ProtectedSnapshot))) {
+                throw 'Protected configuration changed after the interrupted capture; application cannot resume safely.'
+            }
+            $resumingCaptured = $true
+            Write-Event -Event 'resume-captured' -Result 'pass' -Data @{ capturedUtc=$state.capturedUtc }
+        } elseif ($state.phase -ne 'rolled-back') {
+            throw "An unfinished performance-tuning state exists in phase '$($state.phase)'."
+        }
     }
-    $state = Save-NewState -Support $support
+    if (-not $resumingCaptured) {
+        $state = Save-NewState -Support $support
+    }
     $plan = Get-MutationPlan -State $state
     Write-Event -Event 'internal-preflight' -Result 'pass' -Data $plan
     if ($WhatIfPreference) {
         $null = $PSCmdlet.ShouldProcess($support.Model,'Apply bounded UX-ROM performance tuning')
-        $state.phase = 'rolled-back'
-        Save-State -State $state
+        if (-not $resumingCaptured) {
+            $state.phase = 'rolled-back'
+            Save-State -State $state
+        }
         return [pscustomobject]@{ Applied=$false; WhatIf=$true; Plan=$plan }
     }
     if (-not (Test-ProtectedEquivalent -Before $state.protectedBefore -After (Get-ProtectedSnapshot))) { throw 'Protected configuration changed after capture; application refused.' }
@@ -698,7 +715,7 @@ function Invoke-Apply {
         if (-not $driversVerified) { $requiresReboot = $true }
         if (-not (Test-ProtectedEquivalent -Before $state.protectedBefore -After (Get-ProtectedSnapshot))) { throw 'A protected service or unrelated device-health scope changed during application.' }
         $state.phase = 'applied'
-        $state.appliedUtc = [DateTime]::UtcNow.ToString('o')
+        $state | Add-Member -NotePropertyName appliedUtc -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
         $state.requiresReboot = [bool]$requiresReboot
         Save-State -State $state
         Write-Event -Event 'apply' -Result 'pass' -Data ([ordered]@{

@@ -3,12 +3,14 @@ Describe 'UX-ROM bounded performance tuning maintenance' {
         $script:entryPath = Join-Path $PSScriptRoot '..\..\ZBookPerf.ps1'
         $script:helperPath = Join-Path $PSScriptRoot '..\maintenance\UxRomPerformanceTuning.ps1'
         $script:launcherInstallerPath = Join-Path $PSScriptRoot '..\..\scripts\Install-ZBookPerfSystem32Launcher.ps1'
+        $script:bootstrapPath = Join-Path $PSScriptRoot '..\..\win.ps1'
         $script:entry = Get-Content -LiteralPath $script:entryPath -Raw
         $script:helper = Get-Content -LiteralPath $script:helperPath -Raw
+        $script:bootstrap = Get-Content -LiteralPath $script:bootstrapPath -Raw
     }
 
     It 'parses the entry point and maintenance helper' {
-        foreach ($path in @($script:entryPath,$script:helperPath,$script:launcherInstallerPath)) {
+        foreach ($path in @($script:entryPath,$script:helperPath,$script:launcherInstallerPath,$script:bootstrapPath)) {
             $tokens = $null
             $errors = $null
             [Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors) | Out-Null
@@ -81,6 +83,15 @@ Describe 'UX-ROM bounded performance tuning maintenance' {
         $script:helper | Should -Match 'performanceClaim=\$false'
     }
 
+    It 'resumes an interrupted captured transaction and safely adds state timestamps' {
+        $script:helper | Should -Match "phase -eq 'captured'"
+        $script:helper | Should -Match "Event 'resume-captured'"
+        $script:helper | Should -Match 'Add-Member -NotePropertyName appliedUtc'
+        $script:helper | Should -Match 'Add-Member -NotePropertyName driverRebootVerifiedUtc'
+        $script:helper | Should -Not -Match '\$state\.appliedUtc\s*='
+        $script:helper | Should -Match 'New-ItemProperty[^\r\n]+-PropertyType'
+    }
+
     It 'does not contain broad application security update or execution-policy mutations' {
         foreach ($forbidden in @(
             'Remove-AppxPackage','Uninstall-Package','Win32_Product','Set-MpPreference','DisableRealtimeMonitoring',
@@ -96,5 +107,14 @@ Describe 'UX-ROM bounded performance tuning maintenance' {
         }
         $installer | Should -Not -Match 'Set-ExecutionPolicy'
         $installer | Should -Not -Match 'Remove-Item\s+[^\r\n]*-Recurse'
+    }
+
+    It 'provides a one-line web bootstrap with one UAC elevation and a process-scoped bypass' {
+        foreach ($token in @('Invoke-RestMethod','Start-Process','-Verb RunAs','-ExecutionPolicy Bypass','ZBookPerf.ps1','UxRomPerformanceTuning.ps1','PerformanceTune','AllowAutomaticReboot')) {
+            $script:bootstrap | Should -Match ([regex]::Escape($token))
+        }
+        $script:bootstrap | Should -Match 'refs/heads/main'
+        $script:bootstrap | Should -Match 'refs/heads/agent/manual-performance-tuning'
+        $script:bootstrap | Should -Not -Match 'Set-ExecutionPolicy'
     }
 }
